@@ -3,14 +3,11 @@ pub mod errors;
 use std::{fmt::Formatter, path::PathBuf, str::FromStr};
 
 use clap::Parser;
-use futures::{StreamExt, future::AbortHandle};
-use async_signal::{Signal, Signals};
-use hopr_lib::{config::HoprLibConfig, HoprKeys, HoprLibProcesses, ToHex};
-use signal_hook::low_level;
+use futures::future::{AbortHandle, abortable};
+use hopr_lib::{Hopr, HoprKeys, HoprLibProcesses, ToHex, config::HoprLibConfig};
 use tracing::info;
 
 use crate::errors::EdgliError;
-
 
 /// Takes all CLI arguments whose structure is known at compile-time.
 /// Arguments whose structure, e.g. their default values depend on
@@ -32,7 +29,7 @@ pub struct CliArgs {
         long,
         env = "HOPR_EDGE_IDENTITY_FILE_PATH",
         help = "The path to the identity file to use",
-        required = true,
+        required = true
     )]
     pub identity_file_path: PathBuf,
 
@@ -46,8 +43,9 @@ pub struct CliArgs {
     pub config: PathBuf,
 }
 
-enum EdgliProcesses {
+pub enum EdgliProcesses {
     HoprLib(HoprLibProcesses, AbortHandle),
+    Hopr(AbortHandle),
 }
 
 // Manual implementation needed, since Strum does not support skipping arguments
@@ -55,6 +53,7 @@ impl std::fmt::Display for EdgliProcesses {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             EdgliProcesses::HoprLib(p, _) => write!(f, "HoprLib process: {p}"),
+            EdgliProcesses::Hopr(_) => write!(f, "Hopr actor process"),
         }
     }
 }
@@ -66,9 +65,33 @@ impl std::fmt::Debug for EdgliProcesses {
     }
 }
 
-pub async fn run_hopr_edge_node(cfg: HoprLibConfig, hopr_keys: HoprKeys) -> anyhow::Result<()> {
+#[cfg(feature = "runtime-tokio")]
+pub async fn run_hopr_edge_node_with<F, T>(
+    cfg: HoprLibConfig,
+    hopr_keys: HoprKeys,
+    f: F,
+) -> anyhow::Result<Vec<EdgliProcesses>>
+where
+    F: Fn(Hopr) -> T,
+    T: std::future::Future<Output = ()> + Send + 'static,
+{
+    let (hopr, mut processes) = run_hopr_edge_node(cfg, hopr_keys).await?;
+
+    let (proc, abort_handle) = abortable(f(hopr));
+    let _jh = tokio::spawn(proc);
+
+    processes.push(EdgliProcesses::Hopr(abort_handle));
+
+    Ok(processes)
+}
+
+pub async fn run_hopr_edge_node(
+    cfg: HoprLibConfig,
+    hopr_keys: HoprKeys,
+) -> anyhow::Result<(Hopr, Vec<EdgliProcesses>)> {
     if let hopr_lib::HostType::IPv4(address) = &cfg.host.address {
-        let ipv4 = std::net::Ipv4Addr::from_str(address).map_err(|e| EdgliError::ConfigError(e.to_string()))?;
+        let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
+            .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
 
         if ipv4.is_loopback() && !cfg.transport.announce_local_addresses {
             Err(hopr_lib::errors::HoprLibError::GeneralError(
@@ -79,55 +102,25 @@ pub async fn run_hopr_edge_node(cfg: HoprLibConfig, hopr_keys: HoprKeys) -> anyh
 
     info!(
         packet_key = hopr_lib::Keypair::public(&hopr_keys.packet_key).to_peerid_str(),
-        blockchain_address = hopr_lib::Keypair::public(&hopr_keys.chain_key).to_address().to_hex(),
+        blockchain_address = hopr_lib::Keypair::public(&hopr_keys.chain_key)
+            .to_address()
+            .to_hex(),
         "Node public identifiers"
     );
 
     // Create the node instance
     info!("Creating the HOPR edge node instance from hopr-lib");
-    let node = hopr_lib::Hopr::new(
-        cfg.clone(),
-        &hopr_keys.packet_key,
-        &hopr_keys.chain_key,
-    )?;
+    let node = hopr_lib::Hopr::new(cfg.clone(), &hopr_keys.packet_key, &hopr_keys.chain_key)?;
 
     let mut processes: Vec<EdgliProcesses> = Vec::new();
 
-    let (_hopr_socket, hopr_processes) = node
-        .run()
-        .await?;
+    let (_hopr_socket, hopr_processes) = node.run().await?;
 
-    processes.extend(hopr_processes.into_iter().map(|(k, v)| EdgliProcesses::HoprLib(k, v)));
+    processes.extend(
+        hopr_processes
+            .into_iter()
+            .map(|(k, v)| EdgliProcesses::HoprLib(k, v)),
+    );
 
-    let mut signals = Signals::new([Signal::Hup, Signal::Int]).map_err(|e| EdgliError::OsError(e.to_string()))?;
-    while let Some(Ok(signal)) = signals.next().await {
-        match signal {
-            Signal::Hup => {
-                info!("Received the HUP signal... not doing anything");
-            }
-            Signal::Int => {
-                info!("Received the INT signal... tearing down the node");
-                futures::stream::iter(processes)
-                    .then(|process| async move {
-                        let mut abort_handles: Vec<AbortHandle> = Vec::new();
-                        info!("Stopping process '{process}'");
-                        match process {
-                            EdgliProcesses::HoprLib(_, ah) => abort_handles.push(ah),
-                        }
-                        futures::stream::iter(abort_handles)
-                    })
-                    .flatten()
-                    .for_each_concurrent(None, |ah| async move { ah.abort() })
-                    .await;
-
-                info!("All processes stopped... emulating the default handler...");
-                low_level::emulate_default_handler(signal as i32)?;
-                info!("Shutting down!");
-                break;
-            }
-            _ => low_level::emulate_default_handler(signal as i32)?,
-        }
-    }
-
-    Ok(())
+    Ok((node, processes))
 }

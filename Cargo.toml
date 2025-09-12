@@ -10,17 +10,9 @@ license = "GPL-3.0-only"
 build = "build.rs"
 
 [features]
-default = [
-  "prometheus",
-  "runtime-tokio"
-] 
-prometheus = [
-  "hopr-lib/prometheus",
-]
-runtime-tokio = [
-  "dep:tokio",
-  "hopr-lib/runtime-tokio",
-]
+default = ["prometheus", "runtime-tokio"]
+prometheus = ["hopr-lib/prometheus"]
+runtime-tokio = ["dep:tokio", "hopr-lib/runtime-tokio"]
 telemetry = [
   "dep:opentelemetry",
   "dep:opentelemetry-otlp",
@@ -75,4 +67,3 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "e0ae8a1cb50d42be
 [build-dependencies]
 vergen-gix = { version = "1.0.9", features = ["build"] }
 anyhow = "1.0.99"
-
