@@ -1,3 +1,3 @@
 # edge-client
 
-The edge client implementing the HOPR protocol without the heavy integration of the RPC provider and blockchain data processing.
+An edge client implementing the HOPR protocol without heavy integration of an RPC provider or blockchain data processing.
