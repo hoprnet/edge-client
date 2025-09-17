@@ -1,5 +1,7 @@
 pub mod errors;
 
+pub use hopr_lib;
+
 use std::{fmt::Formatter, path::PathBuf, str::FromStr};
 
 use clap::Parser;
