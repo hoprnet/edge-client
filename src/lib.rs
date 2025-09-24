@@ -6,7 +6,7 @@ use std::{fmt::Formatter, path::PathBuf, str::FromStr};
 
 use clap::Parser;
 use futures::future::{AbortHandle, abortable};
-use hopr_lib::{Hopr, HoprKeys, HoprLibProcesses, ToHex, config::HoprLibConfig};
+use hopr_lib::{Hopr, HoprKeys, state::HoprLibProcesses, ToHex, config::HoprLibConfig};
 use tracing::info;
 
 use crate::errors::EdgliError;
