@@ -56,9 +56,10 @@ opentelemetry-otlp = { version = "0.30.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.30.0", optional = true }
 tracing-opentelemetry = { version = "0.31.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "ded57bc313fe86c247e5bc24fa4eac0dbc654ea6", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "ef1c1122ffa1b4a16d54b732d4219cf7a9250872", features = [
   "runtime-tokio",
   "session-client",
+  "utils_session"
 ] }
 
 # Target-specific dependencies for memory allocators
