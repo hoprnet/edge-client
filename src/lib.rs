@@ -2,11 +2,11 @@ pub mod errors;
 
 pub use hopr_lib;
 
-use std::{fmt::Formatter, path::PathBuf, str::FromStr};
+use std::{fmt::Formatter, path::PathBuf, str::FromStr, sync::Arc};
 
 use clap::Parser;
 use futures::future::{AbortHandle, abortable};
-use hopr_lib::{Hopr, HoprKeys, state::HoprLibProcesses, ToHex, config::HoprLibConfig};
+use hopr_lib::{config::HoprLibConfig, errors::HoprLibError, state::HoprLibProcesses, Hopr, HoprKeys, ToHex};
 use tracing::info;
 
 use crate::errors::EdgliError;
@@ -74,10 +74,11 @@ pub async fn run_hopr_edge_node_with<F, T>(
     f: F,
 ) -> anyhow::Result<Vec<EdgliProcesses>>
 where
-    F: Fn(Hopr) -> T,
+    F: Fn(Arc<Hopr>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
-    let (hopr, mut processes) = run_hopr_edge_node(cfg, hopr_keys).await?;
+    let (hopr, processes) = run_hopr_edge_node(cfg, hopr_keys).await?;
+    let mut processes = processes.await?;
 
     let (proc, abort_handle) = abortable(f(hopr));
     let _jh = tokio::spawn(proc);
@@ -90,7 +91,7 @@ where
 pub async fn run_hopr_edge_node(
     cfg: HoprLibConfig,
     hopr_keys: HoprKeys,
-) -> anyhow::Result<(Hopr, Vec<EdgliProcesses>)> {
+) -> anyhow::Result<(Arc<Hopr>, impl std::future::Future<Output = std::result::Result<Vec<EdgliProcesses>, HoprLibError>>)> {
     if let hopr_lib::HostType::IPv4(address) = &cfg.host.address {
         let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
             .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
@@ -112,17 +113,18 @@ pub async fn run_hopr_edge_node(
 
     // Create the node instance
     info!("Creating the HOPR edge node instance from hopr-lib");
-    let node = hopr_lib::Hopr::new(cfg.clone(), &hopr_keys.packet_key, &hopr_keys.chain_key)?;
+    let node = Arc::new(hopr_lib::Hopr::new(cfg.clone(), &hopr_keys.packet_key, &hopr_keys.chain_key)?);
 
-    let mut processes: Vec<EdgliProcesses> = Vec::new();
-
-    let (_hopr_socket, hopr_processes) = node.run().await?;
-
-    processes.extend(
-        hopr_processes
-            .into_iter()
-            .map(|(k, v)| EdgliProcesses::HoprLib(k, v)),
-    );
-
-    Ok((node, processes))
+    let node_clone = node.clone();
+    Ok((node, async move {
+        let mut processes: Vec<EdgliProcesses> = Vec::new();
+    
+        node_clone.run().await.map(|(_socket, hopr_processes)| {
+            processes.extend(
+                hopr_processes
+                .into_iter()
+                .map(|(k, v)| EdgliProcesses::HoprLib(k, v)));
+            processes
+        })
+    }))
 }

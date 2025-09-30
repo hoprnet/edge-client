@@ -193,6 +193,7 @@ async fn main() -> anyhow::Result<()> {
     //
     // Pending decision on future interfaces (e.g. REST, gRPC,...)
     let (_hopr, processes) = edgli::run_hopr_edge_node(cfg, hopr_keys).await?;
+    let processes = processes.await?;
 
     let mut signals =
         Signals::new([Signal::Hup, Signal::Int]).map_err(|e| EdgliError::OsError(e.to_string()))?;
