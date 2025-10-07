@@ -4285,7 +4285,11 @@ dependencies = [
 [[package]]
 name = "hopr-api"
 version = "0.2.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "async-trait",
  "chrono",
@@ -4304,7 +4308,11 @@ dependencies = [
 [[package]]
 name = "hopr-async-runtime"
 version = "0.3.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "futures",
  "tokio",
@@ -4313,7 +4321,11 @@ dependencies = [
 [[package]]
 name = "hopr-bindings"
 version = "0.2.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "alloy",
  "anyhow",
@@ -4323,7 +4335,11 @@ dependencies = [
 [[package]]
 name = "hopr-chain-actions"
 version = "0.10.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "alloy",
  "async-lock 3.4.1",
@@ -4351,7 +4367,11 @@ dependencies = [
 [[package]]
 name = "hopr-chain-api"
 version = "0.8.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "alloy",
  "async-trait",
@@ -4378,7 +4398,11 @@ dependencies = [
 [[package]]
 name = "hopr-chain-config"
 version = "1.1.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "anyhow",
  "hopr-chain-types",
@@ -4395,7 +4419,11 @@ dependencies = [
 [[package]]
 name = "hopr-chain-indexer"
 version = "0.10.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "alloy",
  "async-compression",
@@ -4429,7 +4457,11 @@ dependencies = [
 [[package]]
 name = "hopr-chain-rpc"
 version = "0.7.2"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "alloy",
  "async-stream",
@@ -4463,7 +4495,11 @@ dependencies = [
 [[package]]
 name = "hopr-chain-types"
 version = "0.9.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "alloy",
  "hex-literal",
@@ -4483,7 +4519,11 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-keypair"
 version = "0.4.1"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "hex",
  "hopr-crypto-random",
@@ -4502,7 +4542,11 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-packet"
 version = "1.0.1"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "flagset",
  "hex",
@@ -4523,7 +4567,11 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-random"
 version = "0.2.2"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "generic-array 1.2.0",
  "rand 0.8.5",
@@ -4532,7 +4580,11 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-sphinx"
 version = "0.10.1"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "bimap",
  "curve25519-dalek",
@@ -4552,7 +4604,11 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-types"
 version = "0.7.2"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "aes",
  "blake3",
@@ -4586,7 +4642,11 @@ dependencies = [
 [[package]]
 name = "hopr-db-entity"
 version = "0.4.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "anyhow",
  "chrono",
@@ -4606,7 +4666,11 @@ dependencies = [
 [[package]]
 name = "hopr-db-migration"
 version = "0.2.2"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "hopr-internal-types",
  "hopr-primitive-types",
@@ -4617,7 +4681,11 @@ dependencies = [
 [[package]]
 name = "hopr-db-node"
 version = "0.1.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "async-lock 3.4.1",
  "async-stream",
@@ -4655,7 +4723,11 @@ dependencies = [
 [[package]]
 name = "hopr-db-sql"
 version = "0.19.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "async-trait",
  "chrono",
@@ -4683,7 +4755,11 @@ dependencies = [
 [[package]]
 name = "hopr-internal-types"
 version = "0.11.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "aquamarine",
  "hex-literal",
@@ -4703,7 +4779,11 @@ dependencies = [
 [[package]]
 name = "hopr-lib"
 version = "3.1.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "alloy",
  "async-lock 3.4.1",
@@ -4712,7 +4792,6 @@ dependencies = [
  "backon",
  "base64 0.22.1",
  "bytesize",
- "cfg-if",
  "const_format",
  "dashmap",
  "futures",
@@ -4751,7 +4830,11 @@ dependencies = [
 [[package]]
 name = "hopr-metrics"
 version = "1.3.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "prometheus",
 ]
@@ -4759,7 +4842,11 @@ dependencies = [
 [[package]]
 name = "hopr-network-types"
 version = "1.0.2"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "arrayvec",
  "cfg-if",
@@ -4791,7 +4878,11 @@ dependencies = [
 [[package]]
 name = "hopr-parallelize"
 version = "0.1.1"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "futures",
  "rayon",
@@ -4800,7 +4891,11 @@ dependencies = [
 [[package]]
 name = "hopr-path"
 version = "0.8.4"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "async-lock 3.4.1",
  "async-trait",
@@ -4823,7 +4918,11 @@ dependencies = [
 [[package]]
 name = "hopr-platform"
 version = "0.2.1"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "thiserror 2.0.17",
 ]
@@ -4831,7 +4930,11 @@ dependencies = [
 [[package]]
 name = "hopr-primitive-types"
 version = "0.9.1"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "alloy",
  "bigdecimal",
@@ -4850,7 +4953,11 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-app"
 version = "1.0.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "hopr-crypto-packet",
  "hopr-primitive-types",
@@ -4863,7 +4970,11 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-session"
 version = "1.0.2"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "aquamarine",
  "asynchronous-codec",
@@ -4896,7 +5007,11 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-start"
 version = "1.0.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "aquamarine",
  "hopr-crypto-packet",
@@ -4910,7 +5025,11 @@ dependencies = [
 [[package]]
 name = "hopr-strategy"
 version = "0.15.2"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "async-trait",
  "futures",
@@ -4935,7 +5054,11 @@ dependencies = [
 [[package]]
 name = "hopr-transport"
 version = "0.14.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "async-lock 3.4.1",
  "async-trait",
@@ -4976,7 +5099,11 @@ dependencies = [
 [[package]]
 name = "hopr-transport-bloom"
 version = "0.2.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "bloomfilter",
  "hopr-crypto-random",
@@ -4987,7 +5114,11 @@ dependencies = [
 [[package]]
 name = "hopr-transport-identity"
 version = "0.1.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "libp2p-identity",
  "multiaddr",
@@ -4997,7 +5128,11 @@ dependencies = [
 [[package]]
 name = "hopr-transport-mixer"
 version = "0.1.0"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "futures",
  "futures-timer",
@@ -5013,7 +5148,11 @@ dependencies = [
 [[package]]
 name = "hopr-transport-network"
 version = "0.8.1"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "futures",
  "hopr-api",
@@ -5038,7 +5177,11 @@ dependencies = [
 [[package]]
 name = "hopr-transport-p2p"
 version = "0.8.1"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "async-trait",
  "futures",
@@ -5058,7 +5201,11 @@ dependencies = [
 [[package]]
 name = "hopr-transport-probe"
 version = "0.2.1"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "anyhow",
  "async-stream",
@@ -5091,7 +5238,11 @@ dependencies = [
 [[package]]
 name = "hopr-transport-protocol"
 version = "0.11.3"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5132,7 +5283,11 @@ dependencies = [
 [[package]]
 name = "hopr-transport-session"
 version = "0.13.4"
+<<<<<<< HEAD
 source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Fhopr-lib%2Fapi-modifications-for-external-tools#4f8d9bdb73a87e36e71a64e76df5bd9c3a924ccd"
+=======
+source = "git+https://github.com/hoprnet/hoprnet?rev=063462f0d63527e403728f2f3e842f55d2ff913e#063462f0d63527e403728f2f3e842f55d2ff913e"
+>>>>>>> 4e514cc (chore(deps): update edgli)
 dependencies = [
  "arrayvec",
  "async-trait",
