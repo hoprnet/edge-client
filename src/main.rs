@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use async_signal::{Signal, Signals};
 use clap::Parser;
-use futures::{StreamExt, future::AbortHandle};
-use hopr_lib::{HoprKeys, IdentityRetrievalModes, config::HoprLibConfig};
+use futures::{future::AbortHandle, StreamExt};
+use hopr_lib::{config::HoprLibConfig, HoprKeys, IdentityRetrievalModes};
 use signal_hook::low_level;
 use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
@@ -16,16 +16,16 @@ use {
 };
 
 use edgli::{
-    EdgliProcesses,
     //cli::CliArgs,
     errors::EdgliError,
+    EdgliProcesses,
 };
 
 // Avoid musl's default allocator due to degraded performance
 // https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance
 #[cfg(target_os = "linux")]
 #[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static GLOBAL: mimalloc::MiMalloc = mimallo::MiMalloc;
 
 /// Takes all CLI arguments whose structure is known at compile-time.
 /// Arguments whose structure, e.g. their default values depend on

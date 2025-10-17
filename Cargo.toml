@@ -64,7 +64,7 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "c7510ba2b1160de3
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
-tikv-jemallocator = "0.6.0"
+mimalloc = { version = "0.1.48", default-features = false, features = [ "secure" ]}
 
 [dev-dependencies]
 
