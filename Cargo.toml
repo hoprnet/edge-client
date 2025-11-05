@@ -56,7 +56,7 @@ opentelemetry-otlp = { version = "0.31.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.31.0", optional = true }
 tracing-opentelemetry = { version = "0.32.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "c470d36b7b2316d2d956dbb29511d3f67a968399", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "620a80baa5a4fdb7d554dfc86d6c1b58c2882317", features = [
   "session-client",
   "utils_session",
 ] }
