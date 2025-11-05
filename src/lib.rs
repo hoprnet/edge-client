@@ -113,7 +113,7 @@ pub async fn run_hopr_edge_node(
 
     // Create the node instance
     info!("Creating the HOPR edge node instance from hopr-lib");
-    let node = Arc::new(hopr_lib::Hopr::new(cfg.clone(), &hopr_keys.packet_key, &hopr_keys.chain_key)?);
+    let node = Arc::new(hopr_lib::Hopr::new(cfg.clone(), &hopr_keys.packet_key, &hopr_keys.chain_key).await?);
 
     let node_clone = node.clone();
     Ok((node, async move {
