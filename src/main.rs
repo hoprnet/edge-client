@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
+use async_signal::{Signal, Signals};
 use clap::Parser;
+use futures::{future::AbortHandle, StreamExt};
 use hopr_lib::{config::HoprLibConfig, HoprKeys, IdentityRetrievalModes};
+use signal_hook::low_level;
 use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
 
@@ -14,14 +17,15 @@ use {
 
 use edgli::{
     //cli::CliArgs,
-    errors::EdgliError
+    errors::EdgliError,
+    EdgliProcesses,
 };
 
 // Avoid musl's default allocator due to degraded performance
 // https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance
+#[cfg(target_os = "linux")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 
 /// Takes all CLI arguments whose structure is known at compile-time.
 /// Arguments whose structure, e.g. their default values depend on
@@ -43,7 +47,7 @@ pub struct CliArgs {
         long,
         env = "HOPR_EDGE_IDENTITY_FILE_PATH",
         help = "The path to the identity file to use",
-        required = true,
+        required = true
     )]
     pub identity_file_path: PathBuf,
 
@@ -56,7 +60,6 @@ pub struct CliArgs {
     )]
     pub config: PathBuf,
 }
-
 
 fn init_logger() -> anyhow::Result<()> {
     let env_filter = match tracing_subscriber::EnvFilter::try_from_default_env() {
@@ -152,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
         info!("Executable was built using the RELEASE profile.");
     }
 
-    let args =  <CliArgs as clap::Parser>::parse();
+    let args = <CliArgs as clap::Parser>::parse();
     if !args.identity_file_path.exists() {
         return Err(EdgliError::ConfigError(format!(
             "The identity file '{}' does not exist",
@@ -169,14 +172,13 @@ async fn main() -> anyhow::Result<()> {
         .into());
     }
 
-
     let cfg: HoprLibConfig = serde_yaml::from_str(&std::fs::read_to_string(args.config)?)?;
 
     // Find or create an identity
     let hopr_keys: HoprKeys = IdentityRetrievalModes::FromFile {
-            password: &args.identity_password,
-            id_path: &args.identity_file_path.display().to_string(),
-        }
+        password: &args.identity_password,
+        id_path: &args.identity_file_path.display().to_string(),
+    }
     .try_into()?;
 
     let git_hash = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
@@ -187,5 +189,43 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    edgli::run_hopr_edge_node(cfg, hopr_keys).await
+    // TODO: not doing anything much, an edge node without the possibility of externally calling it.
+    //
+    // Pending decision on future interfaces (e.g. REST, gRPC,...)
+    let (_hopr, processes) = edgli::run_hopr_edge_node(cfg, hopr_keys).await?;
+    let processes = processes.await?;
+
+    let mut signals =
+        Signals::new([Signal::Hup, Signal::Int]).map_err(|e| EdgliError::OsError(e.to_string()))?;
+    while let Some(Ok(signal)) = signals.next().await {
+        match signal {
+            Signal::Hup => {
+                info!("Received the HUP signal... not doing anything");
+            }
+            Signal::Int => {
+                info!("Received the INT signal... tearing down the node");
+                futures::stream::iter(processes)
+                    .then(|process| async move {
+                        let mut abort_handles: Vec<AbortHandle> = Vec::new();
+                        info!("Stopping process '{process}'");
+                        match process {
+                            EdgliProcesses::HoprLib(_, ah) => abort_handles.push(ah),
+                            EdgliProcesses::Hopr(ah) => abort_handles.push(ah),
+                        }
+                        futures::stream::iter(abort_handles)
+                    })
+                    .flatten()
+                    .for_each_concurrent(None, |ah| async move { ah.abort() })
+                    .await;
+
+                info!("All processes stopped... emulating the default handler...");
+                low_level::emulate_default_handler(signal as i32)?;
+                info!("Shutting down!");
+                break;
+            }
+            _ => low_level::emulate_default_handler(signal as i32)?,
+        }
+    }
+
+    Ok(())
 }

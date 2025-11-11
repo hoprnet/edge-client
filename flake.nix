@@ -10,6 +10,9 @@
       url = "github:ipetkov/crane";
     };
 
+    pre-commit.url = "github:cachix/git-hooks.nix";
+    pre-commit.inputs.nixpkgs.follows = "nixpkgs";
+
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -35,6 +38,7 @@
       crane,
       advisory-db,
       treefmt-nix,
+      pre-commit,
       ...
     }:
     flake-parts.lib.mkFlake { inherit inputs; } {
@@ -62,6 +66,7 @@
           ...
         }:
         let
+          rev = toString (self.shortRev or self.dirtyShortRev);
           pkgs = (
             import nixpkgs {
               localSystem = system;
@@ -98,19 +103,19 @@
             inherit src;
             strictDeps = true;
 
-            nativeBuildInputs =
-              [ pkgs.pkg-config ]
-              ++ lib.optionals pkgs.stdenv.isLinux [
-                pkgs.mold
-              ];
-            buildInputs =
-              [
-                pkgs.pkgsStatic.openssl
-              ]
-              ++ lib.optionals pkgs.stdenv.isDarwin [
-                # Additional darwin specific inputs can be set here
-                pkgs.libiconv
-              ];
+            nativeBuildInputs = [
+              pkgs.pkg-config
+            ]
+            ++ lib.optionals pkgs.stdenv.isLinux [
+              pkgs.mold
+            ];
+            buildInputs = [
+              pkgs.pkgsStatic.openssl
+            ]
+            ++ lib.optionals pkgs.stdenv.isDarwin [
+              # Additional darwin specific inputs can be set here
+              pkgs.libiconv
+            ];
 
             # Additional environment variables can be set directly
             # MY_CUSTOM_VAR = "some value";
@@ -134,6 +139,7 @@
             fileset = lib.fileset.unions [
               ./Cargo.toml
               ./Cargo.lock
+              ./build.rs
               (craneLib.fileset.commonCargoSources ./src)
             ];
           };
@@ -175,6 +181,25 @@
             }
           );
 
+          pre-commit-check = pre-commit.lib.${system}.run {
+            src = ./.;
+            hooks = {
+              # https://github.com/cachix/git-hooks.nix
+              treefmt.enable = false;
+              treefmt.package = config.treefmt.build.wrapper;
+              check-executables-have-shebangs.enable = true;
+              check-shebang-scripts-are-executable.enable = true;
+              check-case-conflicts.enable = true;
+              check-symlinks.enable = true;
+              check-merge-conflicts.enable = true;
+              check-added-large-files.enable = true;
+              commitizen.enable = true;
+            };
+            tools = pkgs;
+            excludes = [
+            ];
+          };
+
           treefmt = {
             projectRootFile = "LICENSE";
 
@@ -189,8 +214,8 @@
               enable = pkgs.lib.meta.availableOn pkgs.stdenv.buildPlatform pkgs.nixfmt-rfc-style.compiler;
               package = pkgs.nixfmt-rfc-style;
             };
-            programs.prettier.enable = true;
-            settings.formatter.prettier.excludes = [
+            programs.deno.enable = true;
+            settings.formatter.deno.excludes = [
               "*.toml"
               "*.yml"
               "*.yaml"
@@ -217,6 +242,7 @@
 
         in
         {
+          inherit treefmt;
           # Per-system attributes can be defined here. The self' and inputs'
           # module parameters provide easy access to attributes of the same
           # system.
@@ -274,10 +300,12 @@
           # Equivalent to  inputs'.nixpkgs.legacyPackages.hello;
           packages = {
             inherit edgli;
+            inherit pre-commit-check;
             default = edgli;
           };
 
           devShells.default = craneLib.devShell {
+            inherit pre-commit-check;
             # Inherit inputs from checks.
             checks = self.checks.${system};
             # Additional dev-shell environment variables can be set directly
@@ -285,9 +313,10 @@
 
             # Extra inputs can be added here; cargo and rustc are provided by default.
             packages = [ ];
+
+            VERGEN_GIT_SHA = toString (self.shortRev or self.dirtyShortRev);
           };
 
-          treefmt = treefmt;
           formatter = config.treefmt.build.wrapper;
         };
       flake = {
