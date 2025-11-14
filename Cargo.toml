@@ -19,6 +19,8 @@ telemetry = [
   "dep:opentelemetry_sdk",
   "dep:tracing-opentelemetry",
 ]
+testing = ["hopr-lib/testing"]
+
 # To use profiling:
 # 1. Set RUSTFLAGS="--cfg tokio_unstable" before building
 # 2. Enable the 'prof' feature: cargo build --feature prof
