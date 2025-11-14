@@ -13,6 +13,7 @@ build = "build.rs"
 default = ["prometheus", "runtime-tokio"]
 prometheus = ["hopr-lib/prometheus"]
 runtime-tokio = ["dep:tokio", "hopr-lib/runtime-tokio"]
+session-server = ["hopr-lib/session-server"]
 telemetry = [
   "dep:opentelemetry",
   "dep:opentelemetry-otlp",
