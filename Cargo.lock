@@ -1503,14 +1503,20 @@ version = "0.8.0"
 source = "git+https://github.com/hoprnet/blokli?rev=e2dc682#e2dc682c52bdd4f78fe7899bbbd86356dc1de7d6"
 dependencies = [
  "anyhow",
+ "async-broadcast",
  "async-trait",
+ "chrono",
  "cynic",
  "cynic-codegen",
  "eventsource-client",
  "futures",
  "futures-time",
  "hex",
+ "indexmap 2.12.0",
+ "parking_lot",
+ "rand 0.9.2",
  "reqwest",
+ "serde",
  "serde_json",
  "smart-default",
  "thiserror 2.0.17",
@@ -1710,8 +1716,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "145052bdd345b87320e369255277e3fb5152762ad123a901ef5c262dd38fe8d2"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link 0.2.1",
 ]
 
@@ -2511,7 +2519,6 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "validator",
  "vergen-gix",
 ]
 
@@ -4272,6 +4279,7 @@ dependencies = [
  "futures",
  "futures-concurrency",
  "futures-time",
+ "hex",
  "hopr-api",
  "hopr-async-runtime",
  "hopr-chain-types",
@@ -4511,6 +4519,7 @@ dependencies = [
  "dashmap",
  "futures",
  "futures-time",
+ "hex-literal",
  "hopr-api",
  "hopr-async-runtime",
  "hopr-chain-connector",
@@ -4528,6 +4537,8 @@ dependencies = [
  "human-bandwidth",
  "lazy_static",
  "parking_lot",
+ "rand 0.8.5",
+ "rstest",
  "serde",
  "serde_with",
  "smart-default",
