@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use async_signal::{Signal, Signals};
 use clap::Parser;
-use futures::{future::AbortHandle, StreamExt};
-use hopr_lib::{config::HoprLibConfig, HoprKeys, IdentityRetrievalModes};
+use futures::StreamExt;
+use hopr_lib::{HoprKeys, IdentityRetrievalModes, config::HoprLibConfig};
 use signal_hook::low_level;
 use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
@@ -15,11 +15,7 @@ use {
     opentelemetry_sdk::trace::{RandomIdGenerator, Sampler},
 };
 
-use edgli::{
-    //cli::CliArgs,
-    errors::EdgliError,
-    EdgliProcesses,
-};
+use edgli::errors::EdgliError;
 
 // Avoid musl's default allocator due to degraded performance
 // https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance
@@ -59,6 +55,15 @@ pub struct CliArgs {
         required = true
     )]
     pub config: PathBuf,
+
+    /// HOPR db directory path
+    #[arg(
+        long,
+        env = "HOPR_EDGE_DB_DIRECTORY_PATH",
+        help = "The path to the configuration path for the HOPR client",
+        required = true
+    )]
+    pub db_dir_path: PathBuf,
 }
 
 fn init_logger() -> anyhow::Result<()> {
@@ -192,8 +197,7 @@ async fn main() -> anyhow::Result<()> {
     // TODO: not doing anything much, an edge node without the possibility of externally calling it.
     //
     // Pending decision on future interfaces (e.g. REST, gRPC,...)
-    let (_hopr, processes) = edgli::run_hopr_edge_node(cfg, hopr_keys).await?;
-    let processes = processes.await?;
+    let hopr = edgli::run_hopr_edge_node(cfg, &args.db_dir_path, hopr_keys).await?;
 
     let mut signals =
         Signals::new([Signal::Hup, Signal::Int]).map_err(|e| EdgliError::OsError(e.to_string()))?;
@@ -204,19 +208,9 @@ async fn main() -> anyhow::Result<()> {
             }
             Signal::Int => {
                 info!("Received the INT signal... tearing down the node");
-                futures::stream::iter(processes)
-                    .then(|process| async move {
-                        let mut abort_handles: Vec<AbortHandle> = Vec::new();
-                        info!("Stopping process '{process}'");
-                        match process {
-                            EdgliProcesses::HoprLib(_, ah) => abort_handles.push(ah),
-                            EdgliProcesses::Hopr(ah) => abort_handles.push(ah),
-                        }
-                        futures::stream::iter(abort_handles)
-                    })
-                    .flatten()
-                    .for_each_concurrent(None, |ah| async move { ah.abort() })
-                    .await;
+                if let Err(error) = hopr.shutdown() {
+                    tracing::warn!("Error while shutting down HOPR node: {}", error);
+                }
 
                 info!("All processes stopped... emulating the default handler...");
                 low_level::emulate_default_handler(signal as i32)?;

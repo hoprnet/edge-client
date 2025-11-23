@@ -30,7 +30,7 @@ prof = [
 anyhow = "1.0.100"
 async-signal = "0.2.12"
 cfg-if = "1.0.4"
-clap = { version = "4.5.51", features = ["derive", "env", "string"] }
+clap = { version = "4.5.53", features = ["derive", "env", "string"] }
 console-subscriber = { version = "0.5.0", optional = true }
 futures = "0.3.31"
 signal-hook = "0.3.18"
@@ -56,15 +56,19 @@ opentelemetry-otlp = { version = "0.31.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.31.0", optional = true }
 tracing-opentelemetry = { version = "0.32.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "f57f777c946d03dd36aaffff13d891e2aad141af", features = [
-  "transport-use-quic",   # use quic transport, but do not announce it
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "1670f0f19d86b40d41bb5c8243ded087104983b9", features = [
+  "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
   "utils_session",
+  "utils_blokli",
+  "utils_db",
 ] }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
-mimalloc = { version = "0.1.48", default-features = false, features = [ "secure" ]}
+mimalloc = { version = "0.1.48", default-features = false, features = [
+  "secure",
+] }
 
 [dev-dependencies]
 
