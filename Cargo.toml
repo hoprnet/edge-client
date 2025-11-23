@@ -59,7 +59,7 @@ opentelemetry-otlp = { version = "0.31.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "f95be2b69e58ec19add036aa77236a4cb74ed63c", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "82a12d29111a14a7ebfaa79227886147ac269cb7", features = [
   "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
   "utils_session",
