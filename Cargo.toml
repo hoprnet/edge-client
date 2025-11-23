@@ -13,12 +13,15 @@ build = "build.rs"
 default = ["prometheus", "runtime-tokio"]
 prometheus = ["hopr-lib/prometheus"]
 runtime-tokio = ["dep:tokio", "hopr-lib/runtime-tokio"]
+session-server = ["hopr-lib/session-server"]
 telemetry = [
   "dep:opentelemetry",
   "dep:opentelemetry-otlp",
   "dep:opentelemetry_sdk",
   "dep:tracing-opentelemetry",
 ]
+testing = ["hopr-lib/testing"]
+
 # To use profiling:
 # 1. Set RUSTFLAGS="--cfg tokio_unstable" before building
 # 2. Enable the 'prof' feature: cargo build --feature prof
