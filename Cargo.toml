@@ -59,12 +59,12 @@ opentelemetry-otlp = { version = "0.31.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "5ccb77619e4173715ffef08f8d6459baffe6967d", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "3f2d1944e2719c653b68e1c378f5b5767620dee4", features = [
   "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
 ] }
-hopr-utils-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "5ccb77619e4173715ffef08f8d6459baffe6967d", features = ["runtime-tokio"] }
-hopr-utils-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "5ccb77619e4173715ffef08f8d6459baffe6967d", features = ["runtime-tokio"] }
+hopr-utils-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "3f2d1944e2719c653b68e1c378f5b5767620dee4", features = ["runtime-tokio"] }
+hopr-utils-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "3f2d1944e2719c653b68e1c378f5b5767620dee4", features = ["runtime-tokio"] }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
