@@ -63,9 +63,8 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "5ccb77619e417371
   "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
 ] }
-hopr-utils-session = { git = "https://github.com/hoprnet/hoprnet", rev = "5ccb77619e4173715ffef08f8d6459baffe6967d" }
-hopr-utils-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "5ccb77619e4173715ffef08f8d6459baffe6967d" }
-hopr-utils-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "5ccb77619e4173715ffef08f8d6459baffe6967d" }
+hopr-utils-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "5ccb77619e4173715ffef08f8d6459baffe6967d", features = ["runtime-tokio"] }
+hopr-utils-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "5ccb77619e4173715ffef08f8d6459baffe6967d", features = ["runtime-tokio"] }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
