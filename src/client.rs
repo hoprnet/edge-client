@@ -1,6 +1,7 @@
 use std::{path::{Path}, str::FromStr, sync::Arc};
 
 pub use hopr_utils_chain_connector;
+pub type HoprEdgeClient = Hopr<Arc<HoprBlockchainSafeConnector<BlokliClient>>, HoprNodeDb>;
 
 use futures::future::{AbortHandle, abortable};
 use hopr_lib::{
@@ -20,7 +21,7 @@ pub async fn run_hopr_edge_node_with<F, T>(
     f: F,
 ) -> anyhow::Result<AbortHandle>
 where
-    F: Fn(Arc<Hopr<Arc<HoprBlockchainSafeConnector<BlokliClient>>, HoprNodeDb>>) -> T,
+    F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
     let hopr = run_hopr_edge_node(cfg, db_data_path, hopr_keys).await?;
@@ -35,7 +36,7 @@ pub async fn run_hopr_edge_node(
     cfg: HoprLibConfig,
     db_data_path: &Path,
     hopr_keys: HoprKeys,
-) -> anyhow::Result<Arc<Hopr<Arc<HoprBlockchainSafeConnector<BlokliClient>>, HoprNodeDb>>> {
+) -> anyhow::Result<Arc<HoprEdgeClient>> {
     if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
         let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
             .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
