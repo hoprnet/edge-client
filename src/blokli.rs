@@ -17,7 +17,7 @@ pub type HoprBlockchainSafelessConnector<C> = HoprBlockchainConnector<
 
 pub async fn with_sefeless_blokli_connector<F, T>(chain_key: &ChainKeypair, blokli_provider: Url, f: F) -> anyhow::Result<T> 
 where
-    F: Fn(&HoprBlockchainSafelessConnector<BlokliClient>) -> T
+    F: Fn(HoprBlockchainSafelessConnector<BlokliClient>) -> T
 {
     let blokli_client = BlokliClient::new(
     blokli_provider.as_ref().parse()?,
@@ -39,5 +39,5 @@ where
         payload_gen,
     );
 
-    Ok(f(&connector))
+    Ok(f(connector))
 }
