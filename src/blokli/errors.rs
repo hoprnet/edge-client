@@ -1,4 +1,4 @@
-use hopr_utils_chain_connector::reexports::alloy::{
+use hopr_chain_connector::reexports::alloy::{
     contract::Error as ContractError,
     providers::{MulticallError, PendingTransactionError},
     signers::k256::ecdsa::Error as SigningKeyError,

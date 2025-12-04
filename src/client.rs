@@ -1,6 +1,6 @@
 use std::{path::{Path}, str::FromStr, sync::Arc};
 
-pub use hopr_utils_chain_connector;
+pub use hopr_chain_connector;
 pub type HoprEdgeClient = Hopr<Arc<HoprBlockchainSafeConnector<BlokliClient>>, HoprNodeDb>;
 
 use futures::future::{AbortHandle, abortable};
@@ -8,8 +8,8 @@ use hopr_lib::{
     DummyCoverTrafficType, Hopr, HoprKeys, ToHex,
     config::HoprLibConfig,
 };
-use hopr_utils_chain_connector::{blokli_client::BlokliClient,{HoprBlockchainSafeConnector, init_blokli_connector}};
-use hopr_utils_db_node::{HoprNodeDb, init_db};
+use hopr_chain_connector::{blokli_client::BlokliClient,{HoprBlockchainSafeConnector, init_blokli_connector}};
+use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
 use tracing::info;
 
 use crate::errors::EdgliError;
@@ -41,7 +41,7 @@ pub async fn run_hopr_edge_node(
         let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
             .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
 
-        if ipv4.is_loopback() && !cfg.transport.announce_local_addresses {
+        if ipv4.is_loopback() && !cfg.protocol.transport.prefer_local_addresses {
             Err(hopr_lib::errors::HoprLibError::GeneralError(
                 "Cannot announce a loopback address".into(),
             ))?;
@@ -59,8 +59,7 @@ pub async fn run_hopr_edge_node(
     // TODO: stored tickets need to be emitted from the Hopr object (addressed in #7575)
     //
     // edge_clients do not store tickets, since they are originators only.
-    let (node_db, _stored_tickets) = init_db(
-        &hopr_keys.chain_key,
+    let node_db = init_hopr_node_db(
         db_data_path
             .to_str()
             .ok_or_else(|| EdgliError::ConfigError("Invalid database path".into()))?,
@@ -82,11 +81,10 @@ pub async fn run_hopr_edge_node(
     info!("Creating the HOPR edge node instance from hopr-lib");
     let node = Arc::new(
         hopr_lib::Hopr::new(
-            cfg.clone(),
+            (&hopr_keys.chain_key, &hopr_keys.packet_key),
             chain_connector,
             node_db,
-            &hopr_keys.packet_key,
-            &hopr_keys.chain_key,
+            cfg.clone(),
         )
         .await?,
     );
