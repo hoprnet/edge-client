@@ -1,15 +1,15 @@
-use std::{path::{Path}, str::FromStr, sync::Arc};
+use std::{path::Path, str::FromStr, sync::Arc};
 
 pub use hopr_chain_connector;
 pub type HoprEdgeClient = Hopr<Arc<HoprBlockchainSafeConnector<BlokliClient>>, HoprNodeDb>;
 
 use futures::future::{AbortHandle, abortable};
-use hopr_lib::{
-    DummyCoverTrafficType, Hopr, HoprKeys, ToHex,
-    config::HoprLibConfig,
+use hopr_chain_connector::{
+    blokli_client::BlokliClient,
+    {HoprBlockchainSafeConnector, init_blokli_connector},
 };
-use hopr_chain_connector::{blokli_client::BlokliClient,{HoprBlockchainSafeConnector, init_blokli_connector}};
 use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
+use hopr_lib::{DummyCoverTrafficType, Hopr, HoprKeys, ToHex, config::HoprLibConfig};
 use tracing::info;
 
 use crate::errors::EdgliError;

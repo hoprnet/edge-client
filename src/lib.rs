@@ -1,12 +1,12 @@
-pub mod errors;
 #[cfg(feature = "runtime-tokio")]
 pub mod client;
+pub mod errors;
 
 #[cfg(feature = "blokli")]
 pub mod blokli;
 
 pub use hopr_lib;
 
-pub use client::*;
 #[cfg(feature = "blokli")]
 pub use blokli::*;
+pub use client::*;
