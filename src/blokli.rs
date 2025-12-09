@@ -1,9 +1,7 @@
 use hopr_chain_connector::{
-    BasicPayloadGenerator, HoprBlockchainConnector, PayloadGenerator, TempDbBackend,
-    blokli_client::{BlokliClient, BlokliClientConfig, BlokliQueryClient},
-    errors::ConnectorError,
+    BasicPayloadGenerator, ContractAddresses, HoprBlockchainConnector, PayloadGenerator, TempDbBackend, blokli_client::{BlokliClient, BlokliClientConfig, BlokliQueryClient}, errors::ConnectorError
 };
-use hopr_lib::Keypair;
+use hopr_lib::{Address, Keypair};
 use url::Url;
 
 pub use hopr_chain_connector as connector;
@@ -49,4 +47,29 @@ where
     );
 
     Ok(f(connector))
+}
+
+#[derive(Clone, Debug)]
+pub struct SafeModuleDeploymentInputs {
+    pub token_amount: hopr_lib::U256,
+    pub nonce: hopr_lib::U256,
+    pub admins: Vec<Address>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SafeModuleDeploymentResult {
+    pub safe_address: Address,
+    pub module_address: Address,
+}
+
+pub async fn safe_creation_payload_generator(connector: &HoprBlockchainSafelessConnector<BlokliClient>, inputs: SafeModuleDeploymentInputs) -> anyhow::Result<Vec<u8>> {
+    let info = connector.client().query_chain_info().await?;
+    let contract_addrs: ContractAddresses = serde_json::from_str(&info.contract_addresses.0).map_err(|e| {
+        ConnectorError::TypeConversion(format!("contract addresses not a valid JSON: {e}"))
+    })?;
+
+    // let safe_address = hopli_lib::payloads::edge_node_predict_safe_address(contract_addrs.node_stake_factory, contract_addrs.channels, inputs.nonce.into(), inputs.admins.into())?;
+    // let data = hopli_lib::payloads::edge_node_deploy_safe_module_with_targets_and_nodes_payload();
+
+    todo!("finish by returning the constructed payload")
 }
