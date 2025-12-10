@@ -31,6 +31,7 @@ where
         blokli_provider.as_ref().parse()?,
         BlokliClientConfig {
             timeout: std::time::Duration::from_secs(5),
+            ..Default::default()
         },
     );
 

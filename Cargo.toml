@@ -45,7 +45,7 @@ tokio = { version = "1.48.0", features = [
   "macros",
   "tracing",
 ], optional = true }
-tracing = { version = "0.1.43" }
+tracing = { version = "0.1.43", features = ["release_max_level_debug"] }
 tracing-subscriber = { version = "0.3.22", features = ["fmt", "json"] }
 # validator = { version = "0.20.0", features = ["derive"] }
 serde_json = { version = "1.0.145", optional = true }
@@ -61,15 +61,15 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.7"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "94d8f76101ffae8f1e9dd93fe74f859b08141189", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "38daceef1de1b052636e3e9550f55d9e5a65ff71", features = [
   "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
   "serde",
 ] }
-hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "94d8f76101ffae8f1e9dd93fe74f859b08141189", features = [
+hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "38daceef1de1b052636e3e9550f55d9e5a65ff71", features = [
   "runtime-tokio",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "94d8f76101ffae8f1e9dd93fe74f859b08141189", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "38daceef1de1b052636e3e9550f55d9e5a65ff71", features = [
   "runtime-tokio",
 ] }
 hopli = { git = "https://github.com/hoprnet/hopli/", rev = "23300eae543295ff34dc764c869050a7add32820", optional = true }
