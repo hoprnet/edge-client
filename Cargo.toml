@@ -21,7 +21,7 @@ telemetry = [
   # "dep:tracing-opentelemetry",
 ]
 testing = ["hopr-lib/testing"]
-blokli = ["dep:serde_json"]
+blokli = ["dep:serde_json", "dep:hopli"]
 
 # To use profiling:
 # 1. Set RUSTFLAGS="--cfg tokio_unstable" before building
@@ -72,7 +72,7 @@ hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "94d8f76101ff
 hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "94d8f76101ffae8f1e9dd93fe74f859b08141189", features = [
   "runtime-tokio",
 ] }
-hopli = { git = "https://github.com/hoprnet/hopli/", rev = "32bf183"}
+hopli = { git = "https://github.com/hoprnet/hopli/", rev = "23300eae543295ff34dc764c869050a7add32820", optional = true }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]

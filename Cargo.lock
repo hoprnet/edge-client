@@ -4219,7 +4219,7 @@ dependencies = [
 [[package]]
 name = "hopli"
 version = "1.0.0"
-source = "git+https://github.com/hoprnet/hopli/?rev=32bf183#32bf18377af3b4e5d523afbf89916e547c3b8959"
+source = "git+https://github.com/hoprnet/hopli/?rev=23300eae543295ff34dc764c869050a7add32820#23300eae543295ff34dc764c869050a7add32820"
 dependencies = [
  "anyhow",
  "clap",
