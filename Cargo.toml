@@ -73,6 +73,7 @@ hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "4242
   "runtime-tokio",
 ] }
 hopr-ct-telemetry = { git = "https://github.com/hoprnet/hoprnet", rev = "424258e9016c0b6ca62047bf0c75277e835bbc22" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "424258e9016c0b6ca62047bf0c75277e835bbc22" }
 hopli = { git = "https://github.com/hoprnet/hopli/", rev = "23300eae543295ff34dc764c869050a7add32820", optional = true }
 
 # Target-specific dependencies for memory allocators

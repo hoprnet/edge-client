@@ -197,7 +197,17 @@ async fn main() -> anyhow::Result<()> {
     // TODO: not doing anything much, an edge node without the possibility of externally calling it.
     //
     // Pending decision on future interfaces (e.g. REST, gRPC,...)
-    let hopr = edgli::run_hopr_edge_node(cfg, &args.db_dir_path, hopr_keys).await?;
+    let chain_connector = std::sync::Arc::new(
+        hopr_chain_connector::init_blokli_connector(
+            &hopr_keys.chain_key,
+            None, // read the provider URL from the default env variable for now
+            cfg.safe_module.module_address,
+        )
+        .await?,
+    );
+
+    let hopr =
+        edgli::run_hopr_edge_node(cfg, &args.db_dir_path, chain_connector, hopr_keys).await?;
 
     let mut signals =
         Signals::new([Signal::Hup, Signal::Int]).map_err(|e| EdgliError::OsError(e.to_string()))?;

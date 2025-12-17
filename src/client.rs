@@ -9,10 +9,20 @@ use hopr_chain_connector::{
     {HoprBlockchainSafeConnector, init_blokli_connector},
 };
 use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
-use hopr_lib::{Hopr, HoprKeys, ToHex, config::HoprLibConfig};
+use hopr_lib::{
+    Hopr, HoprKeys, Keypair, ToHex,
+    api::chain::{ChainEvents, HoprChainApi},
+    config::HoprLibConfig,
+};
 use tracing::info;
 
 use crate::errors::EdgliError;
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum EdgeProcessType {
+    Hopr,
+    Strategy,
+}
 
 pub async fn run_hopr_edge_node_with<F, T>(
     cfg: HoprLibConfig,
@@ -24,7 +34,16 @@ where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
-    let hopr = run_hopr_edge_node(cfg, db_data_path, hopr_keys).await?;
+    let chain_connector = Arc::new(
+        init_blokli_connector(
+            &hopr_keys.chain_key,
+            None, // read the provider URL from the default env variable for now
+            cfg.safe_module.module_address,
+        )
+        .await?,
+    );
+
+    let hopr = run_hopr_edge_node(cfg, db_data_path, chain_connector, hopr_keys).await?;
 
     let (proc, abort_handle) = abortable(f(hopr));
     let _jh = tokio::spawn(proc);
@@ -32,11 +51,62 @@ where
     Ok(abort_handle)
 }
 
-pub async fn run_hopr_edge_node(
+pub async fn run_hopr_edge_node_with_strategies_and<F, T, S>(
     cfg: HoprLibConfig,
     db_data_path: &Path,
     hopr_keys: HoprKeys,
-) -> anyhow::Result<Arc<HoprEdgeClient>> {
+    strategy: std::sync::Arc<S>,
+    f: F,
+) -> anyhow::Result<std::collections::HashMap<EdgeProcessType, AbortHandle>>
+where
+    F: Fn(Arc<HoprEdgeClient>) -> T,
+    T: std::future::Future<Output = ()> + Send + 'static,
+    S: hopr_strategy::strategy::SingularStrategy + Send + Sync + 'static,
+{
+    let mut processes = std::collections::HashMap::new();
+
+    let chain_connector = Arc::new(
+        init_blokli_connector(
+            &hopr_keys.chain_key,
+            None, // read the provider URL from the default env variable for now
+            cfg.safe_module.module_address,
+        )
+        .await?,
+    );
+
+    let chain_events = chain_connector.subscribe()?;
+    let my_address = hopr_keys.chain_key.public().to_address();
+
+    let hopr = run_hopr_edge_node(cfg, db_data_path, chain_connector, hopr_keys).await?;
+
+    processes.insert(
+        EdgeProcessType::Strategy,
+        hopr_strategy::stream_events_to_strategy_with_tick(
+            strategy,
+            chain_events,
+            hopr.subscribe_winning_tickets(),
+            std::time::Duration::from_secs(5),
+            my_address,
+        ),
+    );
+
+    let (proc, abort_handle) = abortable(f(hopr));
+    let _jh = tokio::spawn(proc);
+
+    processes.insert(EdgeProcessType::Hopr, abort_handle);
+
+    Ok(processes)
+}
+
+pub async fn run_hopr_edge_node<Chain>(
+    cfg: HoprLibConfig,
+    db_data_path: &Path,
+    chain_connector: Chain,
+    hopr_keys: HoprKeys,
+) -> anyhow::Result<Arc<Hopr<Chain, HoprNodeDb>>>
+where
+    Chain: HoprChainApi + Clone + Send + Sync + 'static,
+{
     if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
         let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
             .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
@@ -68,15 +138,6 @@ pub async fn run_hopr_edge_node(
     )
     .await?;
 
-    let chain_connector = Arc::new(
-        init_blokli_connector(
-            &hopr_keys.chain_key,
-            None, // read the provider URL from the default env variable
-            cfg.safe_module.module_address,
-        )
-        .await?,
-    );
-
     // Create the node instance
     info!("Creating the HOPR edge node instance from hopr-lib");
     let node = Arc::new(
@@ -89,7 +150,10 @@ pub async fn run_hopr_edge_node(
         .await?,
     );
 
-    node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(Default::default())).await?;
+    node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(
+        Default::default(),
+    ))
+    .await?;
 
     Ok(node)
 }
