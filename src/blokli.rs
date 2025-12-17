@@ -99,7 +99,7 @@ pub async fn safe_creation_payload_generator(
     )?;
 
     let signed_payload = payload
-        .sign_and_encode_to_eip2718(nonce.try_into()?, chain_id, None, &chain_key)
+        .sign_and_encode_to_eip2718(nonce.try_into()?, chain_id, None, chain_key)
         .await?;
 
     Ok(Vec::from(signed_payload))
