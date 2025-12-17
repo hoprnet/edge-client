@@ -9,7 +9,7 @@ use hopr_chain_connector::{
     {HoprBlockchainSafeConnector, init_blokli_connector},
 };
 use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
-use hopr_lib::{DummyCoverTrafficType, Hopr, HoprKeys, ToHex, config::HoprLibConfig};
+use hopr_lib::{Hopr, HoprKeys, ToHex, config::HoprLibConfig};
 use tracing::info;
 
 use crate::errors::EdgliError;
@@ -89,7 +89,7 @@ pub async fn run_hopr_edge_node(
         .await?,
     );
 
-    node.run(None::<DummyCoverTrafficType>).await?;
+    node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(Default::default())).await?;
 
     Ok(node)
 }

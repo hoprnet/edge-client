@@ -4,7 +4,7 @@ use hopr_chain_connector::{
     blokli_client::{BlokliClient, BlokliClientConfig, BlokliQueryClient},
     errors::ConnectorError,
 };
-use hopr_lib::{Address, IntoEndian, Keypair};
+use hopr_lib::{Address, IntoEndian, Keypair, exports::types::chain::prelude::SignableTransaction};
 use url::Url;
 
 pub use hopr_chain_connector as connector;
@@ -67,6 +67,7 @@ pub struct SafeModuleDeploymentResult {
 }
 
 pub async fn safe_creation_payload_generator(
+    chain_key: &ChainKeypair,
     connector: &HoprBlockchainSafelessConnector<BlokliClient>,
     inputs: SafeModuleDeploymentInputs,
 ) -> anyhow::Result<Vec<u8>> {
@@ -76,7 +77,8 @@ pub async fn safe_creation_payload_generator(
             ConnectorError::TypeConversion(format!("contract addresses not a valid JSON: {e}"))
         })?;
 
-    let nonce =
+    let chain_id = info.chain_id as u64;
+    let nonce: hopli_lib::exports::alloy::primitives::Uint<256, 4> =
         hopli_lib::exports::alloy::primitives::U256::from_be_bytes(inputs.nonce.to_be_bytes());
     let token_amount = hopli_lib::exports::alloy::primitives::U256::from_be_bytes(
         inputs.token_amount.to_be_bytes(),
@@ -96,12 +98,7 @@ pub async fn safe_creation_payload_generator(
         true,
     )?;
 
-    payload
-        .input
-        .input
-        .ok_or_else(|| anyhow::anyhow!("No input data found for safe creation payload"))
-        .map(|bytes| {
-            let vec: Vec<u8> = bytes.into();
-            vec
-        })
+    let signed_payload = payload.sign_and_encode_to_eip2718(nonce.try_into()?, chain_id, None, &chain_key).await?;
+
+    Ok(Vec::from(signed_payload))
 }
