@@ -60,20 +60,16 @@ where
 /// Edge strategies comprise:
 /// 1. automatically funding the channels when out of funds
 /// 2. automatically closing the channels in pending to close state
-pub async fn run_hopr_edge_node_with_edge_strategies_and<F, T>(
+pub async fn run_hopr_edge_node_with_edge_strategies(
     cfg: HoprLibConfig,
     db_data_path: &Path,
     hopr_keys: HoprKeys,
     top_up_amount: HoprBalance,
     min_channel_balance: HoprBalance,
-    f: F,
 ) -> anyhow::Result<(
     Arc<HoprEdgeClient>,
     std::collections::HashMap<EdgeProcessType, AbortHandle>,
 )>
-where
-    F: Fn(Arc<HoprEdgeClient>) -> T,
-    T: std::future::Future<Output = ()> + Send + 'static,
 {
     let mut processes = std::collections::HashMap::new();
 
@@ -123,11 +119,6 @@ where
             my_address,
         ),
     );
-
-    let (proc, abort_handle) = abortable(f(hopr.clone()));
-    let _jh = tokio::spawn(proc);
-
-    processes.insert(EdgeProcessType::Hopr, abort_handle);
 
     Ok((hopr, processes))
 }
