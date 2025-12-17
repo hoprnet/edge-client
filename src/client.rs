@@ -10,13 +10,13 @@ use hopr_chain_connector::{
 };
 use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
 use hopr_lib::{
-    Hopr, HoprKeys, Keypair, ToHex,
-    api::chain::{ChainEvents, HoprChainApi},
-    config::HoprLibConfig,
+    Hopr, HoprBalance, HoprKeys, Keypair, ToHex, api::chain::{ChainEvents, HoprChainApi}, config::HoprLibConfig
 };
+use hopr_strategy::{Strategy, auto_funding::AutoFundingStrategyConfig, channel_finalizer::ClosureFinalizerStrategyConfig, strategy::MultiStrategyConfig};
 use tracing::info;
 
 use crate::errors::EdgliError;
+
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum EdgeProcessType {
@@ -51,17 +51,22 @@ where
     Ok(abort_handle)
 }
 
-pub async fn run_hopr_edge_node_with_strategies_and<F, T, S>(
+/// Run a node with HOPR edge strategies integrated.
+/// 
+/// Edge strategies comprise:
+/// 1. automatically funding the channels when out of funds
+/// 2. automatically closing the channels in pending to close state
+pub async fn run_hopr_edge_node_with_edge_strategies_and<F, T>(
     cfg: HoprLibConfig,
     db_data_path: &Path,
     hopr_keys: HoprKeys,
-    strategy: std::sync::Arc<S>,
+    top_up_amount: HoprBalance,
+    min_channel_balance: HoprBalance,
     f: F,
 ) -> anyhow::Result<std::collections::HashMap<EdgeProcessType, AbortHandle>>
 where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
-    S: hopr_strategy::strategy::SingularStrategy + Send + Sync + 'static,
 {
     let mut processes = std::collections::HashMap::new();
 
@@ -76,13 +81,32 @@ where
 
     let chain_events = chain_connector.subscribe()?;
     let my_address = hopr_keys.chain_key.public().to_address();
+    let chain_connector_strategy = chain_connector.clone();
 
     let hopr = run_hopr_edge_node(cfg, db_data_path, chain_connector, hopr_keys).await?;
+
+    let strategy_cfg = MultiStrategyConfig {
+        on_fail_continue: true,
+        allow_recursive: false,
+        execution_interval: std::time::Duration::from_secs(60),
+        strategies: vec![
+            Strategy::AutoFunding(
+                AutoFundingStrategyConfig {min_stake_threshold:min_channel_balance, funding_amount: top_up_amount },
+            ),
+            Strategy::ClosureFinalizer(ClosureFinalizerStrategyConfig{ max_closure_overdue: std::time::Duration::from_secs(300) })
+        ]
+    };
+
+    let multi_strategy = Arc::new(hopr_strategy::strategy::MultiStrategy::new(
+        strategy_cfg,
+        chain_connector_strategy,
+        hopr.redemption_requests()?,
+    ));
 
     processes.insert(
         EdgeProcessType::Strategy,
         hopr_strategy::stream_events_to_strategy_with_tick(
-            strategy,
+            multi_strategy,
             chain_events,
             hopr.subscribe_winning_tickets(),
             std::time::Duration::from_secs(5),
