@@ -10,7 +10,7 @@ use url::Url;
 pub use hopr_chain_connector as connector;
 pub use hopr_lib::ChainKeypair;
 
-pub const DEFAULT_BLOKLI_URL: &str = "https://blokli.stage.hoprnet.link";
+pub const DEFAULT_BLOKLI_URL: &str = "https://blokli.staging.hoprnet.link";
 
 pub type HoprBlockchainSafelessConnector<C> = HoprBlockchainConnector<
     C,
