@@ -2507,6 +2507,7 @@ dependencies = [
  "hopr-db-node",
  "hopr-lib",
  "hopr-strategy",
+ "lazy_static",
  "mimalloc",
  "opentelemetry",
  "opentelemetry-otlp",

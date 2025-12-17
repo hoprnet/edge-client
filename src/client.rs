@@ -9,11 +9,7 @@ use hopr_chain_connector::{
     {HoprBlockchainSafeConnector, init_blokli_connector},
 };
 use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
-use hopr_lib::{
-    Hopr, HoprKeys, ToHex,
-    api::chain::ChainEvents,
-    config::HoprLibConfig,
-};
+use hopr_lib::{Hopr, HoprKeys, ToHex, api::chain::ChainEvents, config::HoprLibConfig};
 use tracing::info;
 
 use crate::errors::EdgliError;
@@ -53,69 +49,70 @@ impl std::ops::Deref for Edgli {
     }
 }
 
-impl Edgli { 
+impl Edgli {
     pub async fn new(
         cfg: HoprLibConfig,
         db_data_path: &Path,
         hopr_keys: HoprKeys,
     ) -> anyhow::Result<Self> {
-            if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
-        let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
-            .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
+        if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
+            let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
+                .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
 
-        if ipv4.is_loopback() && !cfg.protocol.transport.prefer_local_addresses {
-            Err(hopr_lib::errors::HoprLibError::GeneralError(
-                "Cannot announce a loopback address".into(),
-            ))?;
+            if ipv4.is_loopback() && !cfg.protocol.transport.prefer_local_addresses {
+                Err(hopr_lib::errors::HoprLibError::GeneralError(
+                    "Cannot announce a loopback address".into(),
+                ))?;
+            }
         }
-    }
 
-    info!(
-        packet_key = hopr_lib::Keypair::public(&hopr_keys.packet_key).to_peerid_str(),
-        blockchain_address = hopr_lib::Keypair::public(&hopr_keys.chain_key)
-            .to_address()
-            .to_hex(),
-        "Node public identifiers"
-    );
+        info!(
+            packet_key = hopr_lib::Keypair::public(&hopr_keys.packet_key).to_peerid_str(),
+            blockchain_address = hopr_lib::Keypair::public(&hopr_keys.chain_key)
+                .to_address()
+                .to_hex(),
+            "Node public identifiers"
+        );
 
-    // TODO: stored tickets need to be emitted from the Hopr object (addressed in #7575)
-    //
-    // edge_clients do not store tickets, since they are originators only.
-    let node_db = init_hopr_node_db(
-        db_data_path
-            .to_str()
-            .ok_or_else(|| EdgliError::ConfigError("Invalid database path".into()))?,
-        true,
-        false,
-    )
-    .await?;
-
-    #[cfg(feature = "blokli")]
-    let chain_connector = Arc::new(
-        init_blokli_connector(
-            &hopr_keys.chain_key,
-            None, // read the provider URL from the default env variable for now
-            cfg.safe_module.module_address,
+        // TODO: stored tickets need to be emitted from the Hopr object (addressed in #7575)
+        //
+        // edge_clients do not store tickets, since they are originators only.
+        let node_db = init_hopr_node_db(
+            db_data_path
+                .to_str()
+                .ok_or_else(|| EdgliError::ConfigError("Invalid database path".into()))?,
+            true,
+            false,
         )
-        .await?,
-    );
+        .await?;
+
+        #[cfg(feature = "blokli")]
+        let chain_connector = Arc::new(
+            init_blokli_connector(
+                &hopr_keys.chain_key,
+                None, // read the provider URL from the default env variable for now
+                cfg.safe_module.module_address,
+            )
+            .await?,
+        );
 
         // Create the node instance
-    info!("Creating the HOPR edge node instance from hopr-lib");
-    let node = Arc::new(
-        hopr_lib::Hopr::new(
-            (&hopr_keys.chain_key, &hopr_keys.packet_key),
-            #[cfg(feature = "blokli")] chain_connector.clone(),
-            node_db,
-            cfg.clone(),
-        )
-        .await?,
-    );
+        info!("Creating the HOPR edge node instance from hopr-lib");
+        let node = Arc::new(
+            hopr_lib::Hopr::new(
+                (&hopr_keys.chain_key, &hopr_keys.packet_key),
+                #[cfg(feature = "blokli")]
+                chain_connector.clone(),
+                node_db,
+                cfg.clone(),
+            )
+            .await?,
+        );
 
-    node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(
-        Default::default(),
-    ))
-    .await?;
+        node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(
+            Default::default(),
+        ))
+        .await?;
 
         Ok(Self {
             hopr: node,
@@ -149,4 +146,3 @@ impl Edgli {
         ))
     }
 }
-
