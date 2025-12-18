@@ -121,6 +121,10 @@ impl Edgli {
         })
     }
 
+    pub fn as_hopr(&self) -> Arc<HoprEdgeClient> {
+        self.hopr.clone()
+    }
+
     /// Run a node with HOPR edge strategies integrated.
     ///
     /// Edge strategies comprise:
