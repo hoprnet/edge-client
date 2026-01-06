@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use hopli_lib::exports::alloy::network::TransactionBuilder;
 use hopr_chain_connector::{
     BasicPayloadGenerator, ContractAddresses, HoprBlockchainConnector, PayloadGenerator,
     TempDbBackend,
@@ -88,10 +89,7 @@ impl SafelessInteractor {
     ) -> anyhow::Result<SafeModuleDeploymentResult> {
         let me = self.chain_key.public().to_address();
 
-        let signed_tx = self
-            .create_safe_deployment_payload(inputs)
-            .await
-            .map_err(anyhow::Error::from)?;
+        let signed_tx = self.create_safe_deployment_payload(inputs).await?;
 
         let transaction = connector::blokli_client::BlokliTransactionClient::submit_transaction(
             self.connector.client(),
@@ -169,7 +167,7 @@ impl SafelessInteractor {
             contract_addrs.node_stake_factory,
             contract_addrs.token,
             contract_addrs.channels,
-            nonce,
+            nonce, // TODO this one should be randomly generated
             token_amount,
             inputs
                 .admins
@@ -177,7 +175,12 @@ impl SafelessInteractor {
                 .map(|v| hopli_lib::Address::from_slice(v.as_ref()))
                 .collect(),
             true,
-        )?;
+        )?
+        .gas_limit(10_000_000u64)
+        .max_fee_per_gas(10_000_000u128)
+        .max_priority_fee_per_gas(2_000_000u128)
+        .with_chain_id(chain_id)
+        .nonce(inputs.nonce.as_u64()); // actual wallet nonce
 
         let signed_payload = payload
             .sign_and_encode_to_eip2718(nonce.try_into()?, chain_id, None, &self.chain_key)
