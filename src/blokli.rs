@@ -89,7 +89,9 @@ impl SafelessInteractor {
         let me = self.chain_key.public().to_address();
         let connector = self.connector.clone();
         let subscription_handle = tokio::spawn(async move {
-            connector.await_safe_deployment(SafeSelector::Owner(me), SAFE_RETRIEVAL_TIMEOUT).await
+            connector
+                .await_safe_deployment(SafeSelector::Owner(me), SAFE_RETRIEVAL_TIMEOUT)
+                .await
         });
 
         let signed_tx = self.create_safe_deployment_payload(inputs, me).await?;
@@ -151,7 +153,11 @@ impl SafelessInteractor {
         inputs: SafeModuleDeploymentInputs,
         address: hopr_lib::Address,
     ) -> anyhow::Result<Vec<u8>> {
-        let mut tx_nonce = self.connector.client().query_transaction_count(&address.into()).await?;
+        let mut tx_nonce = self
+            .connector
+            .client()
+            .query_transaction_count(&address.into())
+            .await?;
         // keep initial nonce as zero - otherwise increment
         if tx_nonce > 0 {
             tx_nonce += 1;
@@ -163,8 +169,10 @@ impl SafelessInteractor {
             })?;
 
         let chain_id = info.chain_id as u64;
-        let nonce: hopli_lib::exports::alloy::primitives::Uint<256, 4> =
-            hopli_lib::exports::alloy::primitives::U256::from_be_bytes(inputs.nonce.to_be_bytes());
+        let random_nonce: hopli_lib::exports::alloy::primitives::Uint<256, 4> =
+            hopli_lib::exports::alloy::primitives::U256::from_be_bytes(
+                inputs.random_nonce.to_be_bytes(),
+            );
         let token_amount = hopli_lib::exports::alloy::primitives::U256::from_be_bytes(
             inputs.token_amount.to_be_bytes(),
         );
@@ -173,7 +181,7 @@ impl SafelessInteractor {
             contract_addrs.node_stake_factory,
             contract_addrs.token,
             contract_addrs.channels,
-            nonce,
+            random_nonce,
             token_amount,
             inputs
                 .admins
@@ -184,7 +192,6 @@ impl SafelessInteractor {
         )?;
 
         tracing::debug!(?payload, "created safe deployment payload");
-
 
         let signed_payload = payload
             .sign_and_encode_to_eip2718(tx_nonce, chain_id, None, &self.chain_key)
@@ -197,7 +204,7 @@ impl SafelessInteractor {
 #[derive(Clone, Debug)]
 pub struct SafeModuleDeploymentInputs {
     pub token_amount: hopr_lib::U256,
-    pub nonce: hopr_lib::U256,
+    pub random_nonce: hopr_lib::U256,
     pub admins: Vec<Address>,
 }
 
