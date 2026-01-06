@@ -67,12 +67,9 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "c435dda0021577ba
   "session-client",
   "serde",
 ] }
-hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "c435dda0021577ba23201899b88fb16bba458369", features = [
-  "runtime-tokio",
-] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "c435dda0021577ba23201899b88fb16bba458369", features = [
-  "runtime-tokio",
-] }
+hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "c435dda0021577ba23201899b88fb16bba458369", features = [ "runtime-tokio" ] }
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "c435dda0021577ba23201899b88fb16bba458369", features = [ "runtime-tokio" ] }
+hopr-chain-types = { git = "https://github.com/hoprnet/hoprnet", rev = "c435dda0021577ba23201899b88fb16bba458369" }
 hopr-ct-telemetry = { git = "https://github.com/hoprnet/hoprnet", rev = "c435dda0021577ba23201899b88fb16bba458369" }
 hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "c435dda0021577ba23201899b88fb16bba458369" }
 hopli = { git = "https://github.com/hoprnet/hopli/", rev = "a98845ebfcacb72fc01a2db01d2cbe47de1f604f", optional = true }

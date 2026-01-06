@@ -2518,6 +2518,7 @@ dependencies = [
  "futures",
  "hopli",
  "hopr-chain-connector",
+ "hopr-chain-types 0.12.1 (git+https://github.com/hoprnet/hoprnet?rev=c435dda0021577ba23201899b88fb16bba458369)",
  "hopr-ct-telemetry",
  "hopr-db-node",
  "hopr-lib",

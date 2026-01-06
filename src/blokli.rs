@@ -9,8 +9,8 @@ use hopr_chain_connector::{
 use hopr_lib::{
     Address, Balance, HoprBalance, IntoEndian, Keypair, WxHOPR, XDai, XDaiBalance,
     api::chain::{ChainReadSafeOperations, SafeSelector},
-    exports::types::chain::prelude::SignableTransaction,
 };
+use hopr_chain_types::prelude::SignableTransaction;
 use url::Url;
 
 pub use hopr_chain_connector as connector;
