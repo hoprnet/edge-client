@@ -92,7 +92,7 @@ impl SafelessInteractor {
             connector.await_safe_deployment(SafeSelector::Owner(me), SAFE_RETRIEVAL_TIMEOUT).await
         });
 
-        let signed_tx = self.create_safe_deployment_payload(inputs).await?;
+        let signed_tx = self.create_safe_deployment_payload(inputs, me).await?;
         let transaction = connector::blokli_client::BlokliTransactionClient::submit_transaction(
             self.connector.client(),
             signed_tx.as_ref(),
@@ -149,7 +149,13 @@ impl SafelessInteractor {
     async fn create_safe_deployment_payload(
         &self,
         inputs: SafeModuleDeploymentInputs,
+        address: hopr_lib::Address,
     ) -> anyhow::Result<Vec<u8>> {
+        let mut tx_nonce = self.connector.client().query_transaction_count(&address.into()).await?;
+        // keep initial nonce as zero - otherwise increment
+        if tx_nonce > 0 {
+            tx_nonce += 1;
+        }
         let info = self.connector.client().query_chain_info().await?;
         let contract_addrs: ContractAddresses = serde_json::from_str(&info.contract_addresses.0)
             .map_err(|e| {
@@ -167,7 +173,7 @@ impl SafelessInteractor {
             contract_addrs.node_stake_factory,
             contract_addrs.token,
             contract_addrs.channels,
-            nonce, // TODO this one should be randomly generated
+            nonce,
             token_amount,
             inputs
                 .admins
@@ -179,8 +185,9 @@ impl SafelessInteractor {
 
         tracing::debug!(?payload, "created safe deployment payload");
 
+
         let signed_payload = payload
-            .sign_and_encode_to_eip2718(nonce.try_into()?, chain_id, None, &self.chain_key)
+            .sign_and_encode_to_eip2718(tx_nonce, chain_id, None, &self.chain_key)
             .await?;
 
         Ok(Vec::from(signed_payload))
