@@ -176,6 +176,9 @@ impl SafelessInteractor {
                 .collect(),
             true,
         )?;
+
+        tracing::debug!(?payload, "created safe deployment payload");
+
         let signed_payload = payload
             .sign_and_encode_to_eip2718(nonce.try_into()?, chain_id, None, &self.chain_key)
             .await?;
