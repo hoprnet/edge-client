@@ -91,24 +91,28 @@ impl SafelessInteractor {
 
         let signed_tx = self.create_safe_deployment_payload(inputs).await?;
 
-        let transaction = connector::blokli_client::BlokliTransactionClient::submit_transaction(
+        // tokio::spawn(|| async move {
+//        let safe = self
+//            .connector
+//            .await_safe_deployment(SafeSelector::Owner(me), SAFE_RETRIEVAL_TIMEOUT)
+//            .await
+//            .map_err(anyhow::Error::from)?;
+
+        let transaction = connector::blokli_client::BlokliTransactionClient::submit_and_confirm_transaction(
             self.connector.client(),
             signed_tx.as_ref(),
+            4,
         )
         .await;
 
         tracing::debug!(?transaction, "safe deployment transaction submitted");
 
-        let safe = self
-            .connector
-            .await_safe_deployment(SafeSelector::Owner(me), SAFE_RETRIEVAL_TIMEOUT)
-            .await
-            .map_err(anyhow::Error::from)?;
 
-        Ok(SafeModuleDeploymentResult {
-            safe_address: safe.address,
-            module_address: safe.module,
-        })
+        unimplemented!("Safe deployment retrieval not implemented yet");
+        // Ok(SafeModuleDeploymentResult {
+            // safe_address: safe.address,
+            // module_address: safe.module,
+        // })
     }
 
     pub async fn ticket_stats(&self) -> anyhow::Result<TicketStats> {
