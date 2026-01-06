@@ -64,6 +64,15 @@ pub struct CliArgs {
         required = true
     )]
     pub db_dir_path: PathBuf,
+
+    /// Blokli URL
+    #[arg(
+        long,
+        env = "HOPR_EDGE_BLOKLI_URL",
+        help = "The URL of the blokli provider to use",
+        required = false
+    )]
+    pub blokli_url: Option<String>,
 }
 
 fn init_logger() -> anyhow::Result<()> {
@@ -194,7 +203,7 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    let edgli = edgli::Edgli::new(cfg, &args.db_dir_path, hopr_keys).await?;
+    let edgli = edgli::Edgli::new(cfg, &args.db_dir_path, hopr_keys, args.blokli_url).await?;
 
     let mut signals =
         Signals::new([Signal::Hup, Signal::Int]).map_err(|e| EdgliError::OsError(e.to_string()))?;

@@ -18,13 +18,14 @@ pub async fn run_hopr_edge_node_with<F, T>(
     cfg: HoprLibConfig,
     db_data_path: &Path,
     hopr_keys: HoprKeys,
+    blokli_url: Option<String>,
     f: F,
 ) -> anyhow::Result<AbortHandle>
 where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
-    let edgli = Edgli::new(cfg, db_data_path, hopr_keys).await?;
+    let edgli = Edgli::new(cfg, db_data_path, hopr_keys, blokli_url).await?;
 
     let (proc, abort_handle) = abortable(f(edgli.hopr));
     let _jh = tokio::spawn(proc);
@@ -54,6 +55,7 @@ impl Edgli {
         cfg: HoprLibConfig,
         db_data_path: &Path,
         hopr_keys: HoprKeys,
+        blokli_url: Option<String>,
     ) -> anyhow::Result<Self> {
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
             let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
@@ -90,7 +92,7 @@ impl Edgli {
         let chain_connector = Arc::new(
             init_blokli_connector(
                 &hopr_keys.chain_key,
-                None, // read the provider URL from the default env variable for now
+                blokli_url,
                 cfg.safe_module.module_address,
             )
             .await?,
