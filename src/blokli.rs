@@ -49,7 +49,7 @@ impl SafelessInteractor {
         let blokli_client = BlokliClient::new(
             blokli_provider.unwrap_or_else(|| DEFAULT_BLOKLI_URL.clone()),
             BlokliClientConfig {
-                timeout: std::time::Duration::from_secs(5),
+                timeout: std::time::Duration::from_secs(120),
                 ..Default::default()
             },
         );
