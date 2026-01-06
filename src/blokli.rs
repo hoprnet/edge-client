@@ -6,11 +6,11 @@ use hopr_chain_connector::{
     blokli_client::{BlokliClient, BlokliClientConfig, BlokliQueryClient},
     errors::ConnectorError,
 };
+use hopr_chain_types::prelude::SignableTransaction;
 use hopr_lib::{
     Address, Balance, HoprBalance, IntoEndian, Keypair, WxHOPR, XDai, XDaiBalance,
     api::chain::{ChainReadSafeOperations, SafeSelector},
 };
-use hopr_chain_types::prelude::SignableTransaction;
 use url::Url;
 
 pub use hopr_chain_connector as connector;
