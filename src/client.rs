@@ -4,10 +4,7 @@ pub use hopr_chain_connector;
 pub type HoprEdgeClient = Hopr<Arc<HoprBlockchainSafeConnector<BlokliClient>>, HoprNodeDb>;
 
 use futures::future::{AbortHandle, abortable};
-use hopr_chain_connector::{
-    blokli_client::BlokliClient,
-    {HoprBlockchainSafeConnector, init_blokli_connector},
-};
+use hopr_chain_connector::{HoprBlockchainSafeConnector, blokli_client::BlokliClient};
 use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
 use hopr_lib::{Hopr, HoprKeys, ToHex, api::chain::ChainEvents, config::HoprLibConfig};
 use tracing::info;
@@ -89,14 +86,29 @@ impl Edgli {
         .await?;
 
         #[cfg(feature = "blokli")]
-        let chain_connector = Arc::new(
-            init_blokli_connector(
+        let chain_connector = Arc::new({
+            let mut connector = hopr_chain_connector::create_trustful_hopr_blokli_connector(
                 &hopr_keys.chain_key,
-                blokli_url,
+                hopr_chain_connector::BlockchainConnectorConfig {
+                    tx_confirm_timeout: std::time::Duration::from_secs(30),
+                    connection_timeout: std::time::Duration::from_mins(1),
+                },
+                hopr_chain_connector::blokli_client::BlokliClient::new(
+                    blokli_url
+                        .as_deref()
+                        .unwrap_or(hopr_chain_connector::DEFAULT_BLOKLI_URL)
+                        .parse()?,
+                    hopr_chain_connector::blokli_client::BlokliClientConfig {
+                        timeout: std::time::Duration::from_secs(120),
+                        stream_reconnect_timeout: std::time::Duration::from_secs(30),
+                    },
+                ),
                 cfg.safe_module.module_address,
             )
-            .await?,
-        );
+            .await?;
+            connector.connect().await?;
+            connector
+        });
 
         // Create the node instance
         info!("Creating the HOPR edge node instance from hopr-lib");
