@@ -82,6 +82,7 @@ impl SafelessInteractor {
         Ok(f(self.connector.clone()))
     }
 
+    #[tracing::instrument(skip(self, inputs), ret)]
     pub async fn deploy_safe(
         &self,
         inputs: SafeModuleDeploymentInputs,
@@ -96,7 +97,9 @@ impl SafelessInteractor {
         }
 
         let connector = self.connector.clone();
+
         let subscription_handle = tokio::spawn(async move {
+            tracing::debug!("subscribing to safe deployment event");
             connector
                 .await_safe_deployment(SafeSelector::Owner(me), SAFE_RETRIEVAL_TIMEOUT)
                 .await
@@ -156,11 +159,13 @@ impl SafelessInteractor {
         .await
     }
 
+    #[tracing::instrument(skip(self, inputs))]
     async fn create_safe_deployment_payload(
         &self,
         inputs: SafeModuleDeploymentInputs,
         address: hopr_lib::Address,
     ) -> anyhow::Result<Vec<u8>> {
+        tracing::debug!("creating safe deployment payload");
         let mut tx_nonce = self
             .connector
             .client()
@@ -170,12 +175,12 @@ impl SafelessInteractor {
         if tx_nonce > 0 {
             tx_nonce += 1;
         }
+
         let info = self.connector.client().query_chain_info().await?;
         let contract_addrs: ContractAddresses = serde_json::from_str(&info.contract_addresses.0)
             .map_err(|e| {
                 ConnectorError::TypeConversion(format!("contract addresses not a valid JSON: {e}"))
             })?;
-
         let chain_id = info.chain_id as u64;
         let random_nonce: hopli_lib::exports::alloy::primitives::Uint<256, 4> =
             hopli_lib::exports::alloy::primitives::U256::from_be_bytes(
@@ -184,7 +189,6 @@ impl SafelessInteractor {
         let token_amount = hopli_lib::exports::alloy::primitives::U256::from_be_bytes(
             inputs.token_amount.to_be_bytes(),
         );
-
         let payload = hopli_lib::payloads::edge_node_deploy_safe_module_and_maybe_include_node(
             contract_addrs.node_stake_factory,
             contract_addrs.token,
@@ -204,6 +208,8 @@ impl SafelessInteractor {
         let signed_payload = payload
             .sign_and_encode_to_eip2718(tx_nonce, chain_id, None, &self.chain_key)
             .await?;
+
+        tracing::debug!(%tx_nonce, "signed safe deployment payload");
 
         Ok(Vec::from(signed_payload))
     }
