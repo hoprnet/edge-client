@@ -87,6 +87,14 @@ impl SafelessInteractor {
         inputs: SafeModuleDeploymentInputs,
     ) -> anyhow::Result<SafeModuleDeploymentResult> {
         let me = self.chain_key.public().to_address();
+        if let Some(safe_info) = self.connector.safe_info(SafeSelector::Owner(me)).await? {
+            tracing::debug!(?safe_info, "safe already deployed");
+            return Ok(SafeModuleDeploymentResult {
+                safe_address: safe_info.address,
+                module_address: safe_info.module,
+            });
+        }
+
         let connector = self.connector.clone();
         let subscription_handle = tokio::spawn(async move {
             connector
