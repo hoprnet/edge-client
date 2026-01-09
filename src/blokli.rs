@@ -25,7 +25,7 @@ pub fn new_blokli_client(url: Option<Url>) -> BlokliClient {
         url.unwrap_or(DEFAULT_BLOKLI_URL.clone()),
         BlokliClientConfig {
             timeout: std::time::Duration::from_secs(120),
-            ..Default::default()
+            stream_reconnect_timeout: std::time::Duration::from_secs(30),
         },
     )
 }
@@ -48,12 +48,16 @@ impl SafelessInteractor {
     ) -> anyhow::Result<Self> {
         let blokli_client = new_blokli_client(blokli_provider);
 
-        let connector = create_trustful_safeless_hopr_blokli_connector(
+        let mut connector = create_trustful_safeless_hopr_blokli_connector(
             chain_key,
-            BlockchainConnectorConfig::default(),
+            BlockchainConnectorConfig {
+                tx_confirm_timeout: std::time::Duration::from_secs(30),
+                connection_timeout: std::time::Duration::from_mins(1),
+            },
             blokli_client,
         )
         .await?;
+        connector.connect().await?;
 
         Ok(Self {
             connector: Arc::new(connector),
@@ -68,7 +72,7 @@ impl SafelessInteractor {
         Ok(f(self.connector.clone()))
     }
 
-    #[tracing::instrument(skip(self, inputs), ret)]
+    #[tracing::instrument(skip(self, token_amount), ret)]
     pub async fn deploy_safe(
         &self,
         token_amount: HoprBalance,

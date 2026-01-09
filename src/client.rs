@@ -90,8 +90,8 @@ impl Edgli {
         .await?;
 
         #[cfg(feature = "blokli")]
-        let chain_connector = Arc::new(
-            create_trustful_hopr_blokli_connector(
+        let chain_connector = {
+            let mut connector = create_trustful_hopr_blokli_connector(
                 &hopr_keys.chain_key,
                 BlockchainConnectorConfig::default(),
                 new_blokli_client(blokli_url.map(|url| url.parse()).transpose()?),
@@ -99,8 +99,9 @@ impl Edgli {
             )
             .await?;
             connector.connect().await?;
-            connector
-        });
+
+            Arc::new(connector)
+        };
 
         // Create the node instance
         info!("Creating the HOPR edge node instance from hopr-lib");
