@@ -1,18 +1,20 @@
 use std::{path::Path, str::FromStr, sync::Arc};
 
-pub use hopr_chain_connector;
-pub type HoprEdgeClient = Hopr<Arc<HoprBlockchainSafeConnector<BlokliClient>>, HoprNodeDb>;
-
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{
-    blokli_client::BlokliClient,
-    {HoprBlockchainSafeConnector, init_blokli_connector},
+    BlockchainConnectorConfig, HoprBlockchainSafeConnector, blokli_client::BlokliClient,
+    create_trustful_hopr_blokli_connector,
 };
 use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
 use hopr_lib::{Hopr, HoprKeys, ToHex, api::chain::ChainEvents, config::HoprLibConfig};
 use tracing::info;
 
 use crate::errors::EdgliError;
+use crate::new_blokli_client;
+
+pub use hopr_chain_connector;
+
+pub type HoprEdgeClient = Hopr<Arc<HoprBlockchainSafeConnector<BlokliClient>>, HoprNodeDb>;
 
 pub async fn run_hopr_edge_node_with<F, T>(
     cfg: HoprLibConfig,
@@ -76,7 +78,6 @@ impl Edgli {
             "Node public identifiers"
         );
 
-        // TODO: stored tickets need to be emitted from the Hopr object (addressed in #7575)
         //
         // edge_clients do not store tickets, since they are originators only.
         let node_db = init_hopr_node_db(
@@ -90,9 +91,10 @@ impl Edgli {
 
         #[cfg(feature = "blokli")]
         let chain_connector = Arc::new(
-            init_blokli_connector(
+            create_trustful_hopr_blokli_connector(
                 &hopr_keys.chain_key,
-                blokli_url,
+                BlockchainConnectorConfig::default(),
+                new_blokli_client(blokli_url.map(|url| url.parse()).transpose()?),
                 cfg.safe_module.module_address,
             )
             .await?,
@@ -147,7 +149,7 @@ impl Edgli {
             multi_strategy,
             self.blokli_connector.subscribe()?,
             self.hopr.subscribe_winning_tickets(),
-            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(60),
             self.hopr.me_onchain(),
         ))
     }

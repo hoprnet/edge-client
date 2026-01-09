@@ -1,33 +1,34 @@
-use std::sync::Arc;
-
 use hopr_chain_connector::{
-    BasicPayloadGenerator, ContractAddresses, HoprBlockchainConnector, PayloadGenerator,
-    TempDbBackend,
-    blokli_client::{BlokliClient, BlokliClientConfig, BlokliQueryClient},
-    errors::ConnectorError,
+    BlockchainConnectorConfig, HoprBlockchainBasicConnector,
+    blokli_client::{BlokliClient, BlokliClientConfig},
+    create_trustful_safeless_hopr_blokli_connector,
 };
-use hopr_chain_types::prelude::SignableTransaction;
 use hopr_lib::{
-    Address, Balance, HoprBalance, IntoEndian, Keypair, WxHOPR, XDai, XDaiBalance,
+    Address, Balance, HoprBalance, Keypair, WxHOPR, XDai, XDaiBalance,
     api::chain::{ChainReadSafeOperations, SafeSelector},
 };
+use std::sync::Arc;
 use url::Url;
 
 pub use hopr_chain_connector as connector;
 pub use hopr_lib::ChainKeypair;
+use hopr_lib::api::chain::ChainWriteSafeOperations;
 
 lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.staging.hoprnet.link".parse().unwrap();
 }
 
-pub type HoprBlockchainSafelessConnector<C> = HoprBlockchainConnector<
-    C,
-    TempDbBackend,
-    BasicPayloadGenerator,
-    <BasicPayloadGenerator as PayloadGenerator>::TxRequest,
->;
-
 pub const SAFE_RETRIEVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub fn new_blokli_client(url: Option<Url>) -> BlokliClient {
+    BlokliClient::new(
+        url.unwrap_or(DEFAULT_BLOKLI_URL.clone()),
+        BlokliClientConfig {
+            timeout: std::time::Duration::from_secs(120),
+            ..Default::default()
+        },
+    )
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct TicketStats {
@@ -36,7 +37,7 @@ pub struct TicketStats {
 }
 
 pub struct SafelessInteractor {
-    connector: Arc<HoprBlockchainSafelessConnector<BlokliClient>>,
+    connector: Arc<HoprBlockchainBasicConnector<BlokliClient>>,
     chain_key: ChainKeypair,
 }
 
@@ -45,29 +46,14 @@ impl SafelessInteractor {
         blokli_provider: Option<Url>,
         chain_key: &ChainKeypair,
     ) -> anyhow::Result<Self> {
-        let blokli_client = BlokliClient::new(
-            blokli_provider.unwrap_or_else(|| DEFAULT_BLOKLI_URL.clone()),
-            BlokliClientConfig {
-                timeout: std::time::Duration::from_secs(120),
-                ..Default::default()
-            },
-        );
+        let blokli_client = new_blokli_client(blokli_provider);
 
-        let info = blokli_client.query_chain_info().await?;
-        let contract_addrs = serde_json::from_str(&info.contract_addresses.0).map_err(|e| {
-            ConnectorError::TypeConversion(format!("contract addresses not a valid JSON: {e}"))
-        })?;
-
-        let payload_gen =
-            BasicPayloadGenerator::new(chain_key.public().to_address(), contract_addrs);
-
-        let connector = HoprBlockchainConnector::new(
-            chain_key.clone(),
-            Default::default(),
+        let connector = create_trustful_safeless_hopr_blokli_connector(
+            chain_key,
+            BlockchainConnectorConfig::default(),
             blokli_client,
-            TempDbBackend::new()?,
-            payload_gen,
-        );
+        )
+        .await?;
 
         Ok(Self {
             connector: Arc::new(connector),
@@ -77,14 +63,14 @@ impl SafelessInteractor {
 
     pub async fn execute<F, T>(&self, f: F) -> anyhow::Result<T>
     where
-        F: Fn(Arc<HoprBlockchainSafelessConnector<BlokliClient>>) -> T,
+        F: Fn(Arc<HoprBlockchainBasicConnector<BlokliClient>>) -> T,
     {
         Ok(f(self.connector.clone()))
     }
 
     pub async fn deploy_safe(
         &self,
-        inputs: SafeModuleDeploymentInputs,
+        token_amount: HoprBalance,
     ) -> anyhow::Result<SafeModuleDeploymentResult> {
         let me = self.chain_key.public().to_address();
         if let Some(safe_info) = self.connector.safe_info(SafeSelector::Owner(me)).await? {
@@ -102,14 +88,8 @@ impl SafelessInteractor {
                 .await
         });
 
-        let signed_tx = self.create_safe_deployment_payload(inputs, me).await?;
-        let transaction = connector::blokli_client::BlokliTransactionClient::submit_transaction(
-            self.connector.client(),
-            signed_tx.as_ref(),
-        )
-        .await;
-
-        tracing::debug!(?transaction, "safe deployment transaction submitted");
+        let tx_hash = self.connector.deploy_safe(token_amount).await?.await?;
+        tracing::debug!(%tx_hash, "safe deployment transaction submitted");
 
         let safe = subscription_handle
             .await
@@ -155,65 +135,6 @@ impl SafelessInteractor {
         .await?
         .await
     }
-
-    async fn create_safe_deployment_payload(
-        &self,
-        inputs: SafeModuleDeploymentInputs,
-        address: hopr_lib::Address,
-    ) -> anyhow::Result<Vec<u8>> {
-        let mut tx_nonce = self
-            .connector
-            .client()
-            .query_transaction_count(&address.into())
-            .await?;
-        // keep initial nonce as zero - otherwise increment
-        if tx_nonce > 0 {
-            tx_nonce += 1;
-        }
-        let info = self.connector.client().query_chain_info().await?;
-        let contract_addrs: ContractAddresses = serde_json::from_str(&info.contract_addresses.0)
-            .map_err(|e| {
-                ConnectorError::TypeConversion(format!("contract addresses not a valid JSON: {e}"))
-            })?;
-
-        let chain_id = info.chain_id as u64;
-        let random_nonce: hopli_lib::exports::alloy::primitives::Uint<256, 4> =
-            hopli_lib::exports::alloy::primitives::U256::from_be_bytes(
-                inputs.random_nonce.to_be_bytes(),
-            );
-        let token_amount = hopli_lib::exports::alloy::primitives::U256::from_be_bytes(
-            inputs.token_amount.to_be_bytes(),
-        );
-
-        let payload = hopli_lib::payloads::edge_node_deploy_safe_module_and_maybe_include_node(
-            contract_addrs.node_stake_factory,
-            contract_addrs.token,
-            contract_addrs.channels,
-            random_nonce,
-            token_amount,
-            inputs
-                .admins
-                .into_iter()
-                .map(|v| hopli_lib::Address::from_slice(v.as_ref()))
-                .collect(),
-            true,
-        )?;
-
-        tracing::debug!(?payload, "created safe deployment payload");
-
-        let signed_payload = payload
-            .sign_and_encode_to_eip2718(tx_nonce, chain_id, None, &self.chain_key)
-            .await?;
-
-        Ok(Vec::from(signed_payload))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct SafeModuleDeploymentInputs {
-    pub token_amount: hopr_lib::U256,
-    pub random_nonce: hopr_lib::U256,
-    pub admins: Vec<Address>,
 }
 
 #[derive(Clone, Debug)]
