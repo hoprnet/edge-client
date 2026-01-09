@@ -72,7 +72,7 @@ impl SafelessInteractor {
         Ok(f(self.connector.clone()))
     }
 
-    #[tracing::instrument(skip(self, token_amount), ret)]
+    #[tracing::instrument(skip(self), ret)]
     pub async fn deploy_safe(
         &self,
         token_amount: HoprBalance,
