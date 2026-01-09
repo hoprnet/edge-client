@@ -68,6 +68,7 @@ impl SafelessInteractor {
         Ok(f(self.connector.clone()))
     }
 
+    #[tracing::instrument(skip(self, inputs), ret)]
     pub async fn deploy_safe(
         &self,
         token_amount: HoprBalance,
@@ -82,7 +83,9 @@ impl SafelessInteractor {
         }
 
         let connector = self.connector.clone();
+
         let subscription_handle = tokio::spawn(async move {
+            tracing::debug!("subscribing to safe deployment event");
             connector
                 .await_safe_deployment(SafeSelector::Owner(me), SAFE_RETRIEVAL_TIMEOUT)
                 .await

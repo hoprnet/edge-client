@@ -97,8 +97,10 @@ impl Edgli {
                 new_blokli_client(blokli_url.map(|url| url.parse()).transpose()?),
                 cfg.safe_module.module_address,
             )
-            .await?,
-        );
+            .await?;
+            connector.connect().await?;
+            connector
+        });
 
         // Create the node instance
         info!("Creating the HOPR edge node instance from hopr-lib");
