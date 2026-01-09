@@ -124,20 +124,14 @@ impl SafelessInteractor {
     pub async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
         let me = self.chain_key.public().to_address();
         self.execute(move |connector| async move {
-            let balance_wxhopr = hopr_lib::api::chain::ChainValues::balance::<
-                WxHOPR,
-                hopr_lib::Address,
-            >(&connector, me)
-            .await
-            .map_err(anyhow::Error::from)?;
-            let balance_xdai =
-                hopr_lib::api::chain::ChainValues::balance::<XDai, hopr_lib::Address>(
-                    &connector, me,
-                )
-                .await
-                .map_err(anyhow::Error::from)?;
-
-            Ok::<_, anyhow::Error>((balance_wxhopr, balance_xdai))
+            Ok((
+                hopr_lib::api::chain::ChainValues::balance(&connector, me)
+                    .await
+                    .map_err(anyhow::Error::from)?,
+                hopr_lib::api::chain::ChainValues::balance(&connector, me)
+                    .await
+                    .map_err(anyhow::Error::from)?,
+            ))
         })
         .await?
         .await
