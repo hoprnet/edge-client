@@ -48,7 +48,7 @@ impl SafelessInteractor {
     ) -> anyhow::Result<Self> {
         let blokli_client = new_blokli_client(blokli_provider);
 
-        let mut connector = create_trustful_safeless_hopr_blokli_connector(
+        let connector = create_trustful_safeless_hopr_blokli_connector(
             chain_key,
             BlockchainConnectorConfig {
                 tx_confirm_timeout: std::time::Duration::from_secs(30),
