@@ -57,7 +57,7 @@ impl SafelessInteractor {
             blokli_client,
         )
         .await?;
-        connector.connect().await?;
+        // connector.connect().await?; No connection is needed
 
         Ok(Self {
             connector: Arc::new(connector),
