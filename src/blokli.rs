@@ -4,7 +4,7 @@ use hopr_chain_connector::{
     create_trustful_safeless_hopr_blokli_connector,
 };
 use hopr_lib::{
-    Address, Balance, HoprBalance, Keypair, WxHOPR, XDai, XDaiBalance,
+    Address, Balance, HoprBalance, Keypair, WxHOPR, XDaiBalance,
     api::chain::{ChainReadSafeOperations, SafeSelector},
 };
 use std::sync::Arc;
