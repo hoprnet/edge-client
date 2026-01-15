@@ -7,10 +7,9 @@ description = "Light client implementing the minimum HOPR protocol to serve as a
 homepage = "https://hoprnet.org/"
 repository = "https://github.com/hoprnet/edge-client"
 license = "GPL-3.0-only"
-build = "build.rs"
 
 [features]
-default = ["prometheus", "runtime-tokio"]
+default = ["prometheus", "runtime-tokio", "blokli"]
 prometheus = ["hopr-lib/prometheus"]
 runtime-tokio = ["dep:tokio", "hopr-lib/runtime-tokio"]
 session-server = ["hopr-lib/session-server"]
@@ -18,9 +17,10 @@ telemetry = [
   "dep:opentelemetry",
   "dep:opentelemetry-otlp",
   "dep:opentelemetry_sdk",
-  "dep:tracing-opentelemetry",
+  # "dep:tracing-opentelemetry",
 ]
 testing = ["hopr-lib/testing"]
+blokli = ["dep:serde_json"]
 
 # To use profiling:
 # 1. Set RUSTFLAGS="--cfg tokio_unstable" before building
@@ -33,9 +33,10 @@ prof = [
 anyhow = "1.0.100"
 async-signal = "0.2.12"
 cfg-if = "1.0.4"
-clap = { version = "4.5.51", features = ["derive", "env", "string"] }
+clap = { version = "4.5.53", features = ["derive", "env", "string"] }
 console-subscriber = { version = "0.5.0", optional = true }
 futures = "0.3.31"
+lazy_static = "1.5.0"
 signal-hook = "0.3.18"
 serde_yaml = { version = "0.9.34-deprecated" }
 thiserror = "2.0.17"
@@ -44,10 +45,10 @@ tokio = { version = "1.48.0", features = [
   "macros",
   "tracing",
 ], optional = true }
-tracing = { version = "0.1.41" }
-tracing-subscriber = { version = "0.3.20", features = ["fmt", "json"] }
-validator = { version = "0.20.0", features = ["derive"] }
-
+tracing = { version = "0.1.43", features = ["release_max_level_debug"] }
+tracing-subscriber = { version = "0.3.22", features = ["fmt", "json"] }
+# validator = { version = "0.20.0", features = ["derive"] }
+serde_json = { version = "1.0.145", optional = true }
 opentelemetry = { version = "0.31.0", optional = true }
 opentelemetry-otlp = { version = "0.31.0", default-features = false, features = [
   "trace",
@@ -57,20 +58,30 @@ opentelemetry-otlp = { version = "0.31.0", default-features = false, features = 
   "grpc-tonic",
 ], optional = true }
 opentelemetry_sdk = { version = "0.31.0", optional = true }
-tracing-opentelemetry = { version = "0.32.0", optional = true }
+# tracing-opentelemetry = { version = "0.32.0", optional = true }
+url = "2.5.7"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "f57f777c946d03dd36aaffff13d891e2aad141af", features = [
-  "transport-use-quic",   # use quic transport, but do not announce it
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "763ab4bd34eba522d526e48b1310db959a6af6ce", features = [
+  "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
-  "utils_session",
+  "serde",
 ] }
+hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "763ab4bd34eba522d526e48b1310db959a6af6ce", features = [
+  "runtime-tokio",
+] }
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "763ab4bd34eba522d526e48b1310db959a6af6ce", features = [
+  "runtime-tokio",
+] }
+hopr-ct-telemetry = { git = "https://github.com/hoprnet/hoprnet", rev = "763ab4bd34eba522d526e48b1310db959a6af6ce" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "763ab4bd34eba522d526e48b1310db959a6af6ce" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
-mimalloc = { version = "0.1.48", default-features = false, features = [ "secure" ]}
+mimalloc = { version = "0.1.48", default-features = false, features = [
+  "secure",
+] }
 
 [dev-dependencies]
 
 [build-dependencies]
-vergen-gix = { version = "1.0.9", features = ["build"] }
 anyhow = "1.0.100"
