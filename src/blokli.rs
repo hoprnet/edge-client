@@ -58,9 +58,6 @@ impl SafelessInteractor {
         )
         .await?;
 
-        // Needed for the transaction sender to be started
-        connector.connect().await?;
-
         Ok(Self {
             connector: Arc::new(connector),
             chain_key: chain_key.clone(),
