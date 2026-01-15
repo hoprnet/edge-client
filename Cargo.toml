@@ -7,7 +7,6 @@ description = "Light client implementing the minimum HOPR protocol to serve as a
 homepage = "https://hoprnet.org/"
 repository = "https://github.com/hoprnet/edge-client"
 license = "GPL-3.0-only"
-build = "build.rs"
 
 [features]
 default = ["prometheus", "runtime-tokio", "blokli"]
@@ -85,5 +84,4 @@ mimalloc = { version = "0.1.48", default-features = false, features = [
 [dev-dependencies]
 
 [build-dependencies]
-vergen-gix = { version = "1.0.9", features = ["build"] }
 anyhow = "1.0.100"

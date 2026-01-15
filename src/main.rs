@@ -195,10 +195,8 @@ async fn main() -> anyhow::Result<()> {
     }
     .try_into()?;
 
-    let git_hash = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
     info!(
         version = hopr_lib::constants::APP_VERSION,
-        hash = git_hash,
         ?cfg,
         "Starting Edgli"
     );
