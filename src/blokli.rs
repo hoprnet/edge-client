@@ -48,7 +48,7 @@ impl SafelessInteractor {
     ) -> anyhow::Result<Self> {
         let blokli_client = new_blokli_client(blokli_provider);
 
-        let mut connector = create_trustful_safeless_hopr_blokli_connector(
+        let connector = create_trustful_safeless_hopr_blokli_connector(
             chain_key,
             BlockchainConnectorConfig {
                 tx_confirm_timeout: std::time::Duration::from_secs(30),
@@ -58,16 +58,13 @@ impl SafelessInteractor {
         )
         .await?;
 
-        // Needed for the transaction sender to be started
-        connector.connect().await?;
-
         Ok(Self {
             connector: Arc::new(connector),
             chain_key: chain_key.clone(),
         })
     }
 
-    pub async fn execute<F, T>(&self, f: F) -> anyhow::Result<T>
+    async fn execute<F, T>(&self, f: F) -> anyhow::Result<T>
     where
         F: Fn(Arc<HoprBlockchainBasicConnector<BlokliClient>>) -> T,
     {
