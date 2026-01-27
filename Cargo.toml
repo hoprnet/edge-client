@@ -61,19 +61,19 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.7"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "74b3c76f3b994fc58671b95fed7cb28c40bc4e22", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591", features = [
   "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
   "serde",
 ] }
-hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "74b3c76f3b994fc58671b95fed7cb28c40bc4e22", features = [
+hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591", features = [
   "runtime-tokio",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "74b3c76f3b994fc58671b95fed7cb28c40bc4e22", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591", features = [
   "runtime-tokio",
 ] }
-hopr-ct-telemetry = { git = "https://github.com/hoprnet/hoprnet", rev = "74b3c76f3b994fc58671b95fed7cb28c40bc4e22" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "74b3c76f3b994fc58671b95fed7cb28c40bc4e22" }
+hopr-ct-telemetry = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
