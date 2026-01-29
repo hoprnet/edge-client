@@ -33,13 +33,13 @@ prof = [
 anyhow = "1.0.100"
 async-signal = "0.2.12"
 cfg-if = "1.0.4"
-clap = { version = "4.5.53", features = ["derive", "env", "string"] }
+clap = { version = "4.5.55", features = ["derive", "env", "string"] }
 console-subscriber = { version = "0.5.0", optional = true }
 futures = "0.3.31"
 lazy_static = "1.5.0"
-signal-hook = "0.4.1"
+signal-hook = "0.4.3"
 serde_yaml = { version = "0.9.34-deprecated" }
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 tokio = { version = "1.48.0", features = [
   "rt-multi-thread",
   "macros",
@@ -61,19 +61,19 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.7"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "b81434abcf1cce279ce15887d9214988c86128d1", features = [
   "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
   "serde",
 ] }
-hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591", features = [
+hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "b81434abcf1cce279ce15887d9214988c86128d1", features = [
   "runtime-tokio",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "b81434abcf1cce279ce15887d9214988c86128d1", features = [
   "runtime-tokio",
 ] }
-hopr-ct-telemetry = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "296fd34324a2d20fe2a677ec1bec87deb6299591" }
+hopr-ct-telemetry = { git = "https://github.com/hoprnet/hoprnet", rev = "b81434abcf1cce279ce15887d9214988c86128d1" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "b81434abcf1cce279ce15887d9214988c86128d1" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
