@@ -76,16 +76,12 @@ impl SafelessInteractor {
         let me = self.chain_key.public().to_address();
         let res = self.connector.safe_info(SafeSelector::Owner(me)).await?;
         match res {
-        Some(safe_info) => {
-            Ok(Some(SafeModuleDeploymentResult {
+            Some(safe_info) => Ok(Some(SafeModuleDeploymentResult {
                 safe_address: safe_info.address,
                 module_address: safe_info.module,
-            }))
+            })),
+            None => Ok(None),
         }
-        None => {
-            Ok(None)
-        }
-    }
     }
 
     #[tracing::instrument(skip(self), ret)]
