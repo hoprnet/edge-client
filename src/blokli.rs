@@ -72,17 +72,29 @@ impl SafelessInteractor {
     }
 
     #[tracing::instrument(skip(self), ret)]
+    pub async fn retrieve_safe(&self) -> anyhow::Result<SafeModuleDeploymentResult> {
+        let me = self.chain_key.public().to_address();
+        let res = self.connector.safe_info(SafeSelector::Owner(me)).await? {
+match res {
+        Some(safe_info) -> {
+            Ok(SafeModuleDeploymentResult {
+                safe_address: safe_info.address,
+                module_address: safe_info.module,
+            })
+        }
+        None -> {
+            Err(anyhow::anyhow!("no safe deployed for address {}", me))
+        }
+    }
+
+    #[tracing::instrument(skip(self), ret)]
     pub async fn deploy_safe(
         &self,
         token_amount: HoprBalance,
     ) -> anyhow::Result<SafeModuleDeploymentResult> {
-        let me = self.chain_key.public().to_address();
-        if let Some(safe_info) = self.connector.safe_info(SafeSelector::Owner(me)).await? {
+        if let Some(safe_info) = self.retrieve_safe().await {
             tracing::debug!(?safe_info, "safe already deployed");
-            return Ok(SafeModuleDeploymentResult {
-                safe_address: safe_info.address,
-                module_address: safe_info.module,
-            });
+            return Ok(safe_info);
         }
 
         let connector = self.connector.clone();
