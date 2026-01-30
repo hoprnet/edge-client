@@ -18,13 +18,11 @@ lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.staging.hoprnet.link".parse().unwrap();
 }
 
-pub const SAFE_RETRIEVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-
 pub fn new_blokli_client(url: Option<Url>) -> BlokliClient {
     BlokliClient::new(
         url.unwrap_or(DEFAULT_BLOKLI_URL.clone()),
         BlokliClientConfig {
-            timeout: std::time::Duration::from_secs(120),
+            timeout: std::time::Duration::from_mins(2),
             stream_reconnect_timeout: std::time::Duration::from_secs(30),
         },
     )
@@ -52,7 +50,7 @@ impl SafelessInteractor {
             chain_key,
             BlockchainConnectorConfig {
                 tx_confirm_timeout: std::time::Duration::from_secs(90),
-                connection_timeout: std::time::Duration::from_secs(120),
+                connection_timeout: std::time::Duration::from_mins(2),
             },
             blokli_client,
         )
@@ -100,7 +98,7 @@ impl SafelessInteractor {
         let subscription_handle = tokio::spawn(async move {
             tracing::debug!("subscribing to safe deployment event");
             connector
-                .await_safe_deployment(SafeSelector::Owner(me), SAFE_RETRIEVAL_TIMEOUT)
+                .await_safe_deployment(SafeSelector::Owner(me), std::time::Duration::from_mins(2))
                 .await
         });
 
