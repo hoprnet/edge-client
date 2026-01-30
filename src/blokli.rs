@@ -51,8 +51,8 @@ impl SafelessInteractor {
         let connector = create_trustful_safeless_hopr_blokli_connector(
             chain_key,
             BlockchainConnectorConfig {
-                tx_confirm_timeout: std::time::Duration::from_secs(30),
-                connection_timeout: std::time::Duration::from_mins(1),
+                tx_confirm_timeout: std::time::Duration::from_secs(90),
+                connection_timeout: std::time::Duration::from_secs(120),
             },
             blokli_client,
         )
