@@ -18,13 +18,11 @@ lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.staging.hoprnet.link".parse().unwrap();
 }
 
-pub const SAFE_RETRIEVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-
 pub fn new_blokli_client(url: Option<Url>) -> BlokliClient {
     BlokliClient::new(
         url.unwrap_or(DEFAULT_BLOKLI_URL.clone()),
         BlokliClientConfig {
-            timeout: std::time::Duration::from_secs(120),
+            timeout: std::time::Duration::from_mins(2),
             stream_reconnect_timeout: std::time::Duration::from_secs(30),
         },
     )
@@ -51,8 +49,8 @@ impl SafelessInteractor {
         let connector = create_trustful_safeless_hopr_blokli_connector(
             chain_key,
             BlockchainConnectorConfig {
-                tx_confirm_timeout: std::time::Duration::from_secs(30),
-                connection_timeout: std::time::Duration::from_mins(1),
+                tx_confirm_timeout: std::time::Duration::from_secs(90),
+                connection_timeout: std::time::Duration::from_mins(2),
             },
             blokli_client,
         )
@@ -72,25 +70,35 @@ impl SafelessInteractor {
     }
 
     #[tracing::instrument(skip(self), ret)]
+    pub async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>> {
+        let me = self.chain_key.public().to_address();
+        let res = self.connector.safe_info(SafeSelector::Owner(me)).await?;
+        match res {
+            Some(safe_info) => Ok(Some(SafeModuleDeploymentResult {
+                safe_address: safe_info.address,
+                module_address: safe_info.module,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    #[tracing::instrument(skip(self), ret)]
     pub async fn deploy_safe(
         &self,
         token_amount: HoprBalance,
     ) -> anyhow::Result<SafeModuleDeploymentResult> {
-        let me = self.chain_key.public().to_address();
-        if let Some(safe_info) = self.connector.safe_info(SafeSelector::Owner(me)).await? {
+        if let Some(safe_info) = self.retrieve_safe().await? {
             tracing::debug!(?safe_info, "safe already deployed");
-            return Ok(SafeModuleDeploymentResult {
-                safe_address: safe_info.address,
-                module_address: safe_info.module,
-            });
+            return Ok(safe_info);
         }
 
         let connector = self.connector.clone();
 
+        let me = self.chain_key.public().to_address();
         let subscription_handle = tokio::spawn(async move {
             tracing::debug!("subscribing to safe deployment event");
             connector
-                .await_safe_deployment(SafeSelector::Owner(me), SAFE_RETRIEVAL_TIMEOUT)
+                .await_safe_deployment(SafeSelector::Owner(me), std::time::Duration::from_mins(2))
                 .await
         });
 

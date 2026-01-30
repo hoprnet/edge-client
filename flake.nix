@@ -42,14 +42,7 @@
       ...
     }:
     flake-parts.lib.mkFlake { inherit inputs; } {
-      imports = [
-        # To import a flake module
-        # 1. Add foo to inputs
-        # 2. Add foo as a parameter to the outputs function
-        # 3. Add here: foo.flakeModule
-
-        treefmt-nix.flakeModule
-      ];
+      imports = [ treefmt-nix.flakeModule ];
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -209,10 +202,7 @@
               "modules/*"
             ];
 
-            programs.nixfmt = {
-              enable = pkgs.lib.meta.availableOn pkgs.stdenv.buildPlatform pkgs.nixfmt-rfc-style.compiler;
-              package = pkgs.nixfmt-rfc-style;
-            };
+            programs.nixfmt.enable = pkgs.lib.meta.availableOn pkgs.stdenv.buildPlatform pkgs.nixfmt.compiler;
             programs.deno.enable = true;
             settings.formatter.deno.excludes = [
               "*.toml"
@@ -220,9 +210,6 @@
               "*.yaml"
             ];
             programs.rustfmt.enable = true;
-            settings.formatter.rustfmt = {
-              command = "${pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default)}/bin/rustfmt";
-            };
             programs.shellcheck.enable = true;
             programs.shfmt = {
               enable = true;
