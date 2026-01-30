@@ -72,19 +72,20 @@ impl SafelessInteractor {
     }
 
     #[tracing::instrument(skip(self), ret)]
-    pub async fn retrieve_safe(&self) -> anyhow::Result<SafeModuleDeploymentResult> {
+    pub async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>> {
         let me = self.chain_key.public().to_address();
-        let res = self.connector.safe_info(SafeSelector::Owner(me)).await? {
-match res {
-        Some(safe_info) -> {
-            Ok(SafeModuleDeploymentResult {
+        let res = self.connector.safe_info(SafeSelector::Owner(me)).await?;
+        match res {
+        Some(safe_info) => {
+            Ok(Some(SafeModuleDeploymentResult {
                 safe_address: safe_info.address,
                 module_address: safe_info.module,
-            })
+            }))
         }
-        None -> {
-            Err(anyhow::anyhow!("no safe deployed for address {}", me))
+        None => {
+            Ok(None)
         }
+    }
     }
 
     #[tracing::instrument(skip(self), ret)]
@@ -92,13 +93,14 @@ match res {
         &self,
         token_amount: HoprBalance,
     ) -> anyhow::Result<SafeModuleDeploymentResult> {
-        if let Some(safe_info) = self.retrieve_safe().await {
+        if let Some(safe_info) = self.retrieve_safe().await? {
             tracing::debug!(?safe_info, "safe already deployed");
             return Ok(safe_info);
         }
 
         let connector = self.connector.clone();
 
+        let me = self.chain_key.public().to_address();
         let subscription_handle = tokio::spawn(async move {
             tracing::debug!("subscribing to safe deployment event");
             connector
