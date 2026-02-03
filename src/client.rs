@@ -94,8 +94,8 @@ impl Edgli {
             let mut connector = create_trustful_hopr_blokli_connector(
                 &hopr_keys.chain_key,
                 BlockchainConnectorConfig {
-                    tx_confirm_timeout: std::time::Duration::from_secs(30),
-                    connection_timeout: std::time::Duration::from_mins(1),
+                    tx_confirm_timeout: std::time::Duration::from_secs(90),
+                    connection_timeout: std::time::Duration::from_mins(2),
                 },
                 new_blokli_client(blokli_url.map(|url| url.parse()).transpose()?),
                 cfg.safe_module.module_address,
