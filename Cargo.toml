@@ -39,6 +39,7 @@ futures = "0.3.31"
 lazy_static = "1.5.0"
 signal-hook = "0.4.3"
 serde_yaml = { version = "0.9.34-deprecated" }
+strum = { version = "0.26", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = [
   "rt-multi-thread",
