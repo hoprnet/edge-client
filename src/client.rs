@@ -1,13 +1,13 @@
 use std::{path::Path, str::FromStr, sync::Arc};
 
 use futures::future::{AbortHandle, abortable};
-use strum::{AsRefStr, EnumString};
 use hopr_chain_connector::{
     BlockchainConnectorConfig, HoprBlockchainSafeConnector, blokli_client::BlokliClient,
     create_trustful_hopr_blokli_connector,
 };
 use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
 use hopr_lib::{Hopr, HoprKeys, ToHex, api::chain::ChainEvents, config::HoprLibConfig};
+use strum::{AsRefStr, EnumString};
 use tracing::info;
 
 use crate::errors::EdgliError;
@@ -62,7 +62,14 @@ where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
-    let edgli = Edgli::new(cfg, db_data_path, hopr_keys, blokli_url, None::<fn(EdgliInitState)>).await?;
+    let edgli = Edgli::new(
+        cfg,
+        db_data_path,
+        hopr_keys,
+        blokli_url,
+        None::<fn(EdgliInitState)>,
+    )
+    .await?;
 
     let (proc, abort_handle) = abortable(f(edgli.hopr));
     let _jh = tokio::spawn(proc);
