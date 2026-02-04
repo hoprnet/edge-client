@@ -15,15 +15,15 @@ pub use hopr_lib::ChainKeypair;
 use hopr_lib::api::chain::ChainWriteSafeOperations;
 
 lazy_static::lazy_static! {
-    pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.staging.hoprnet.link".parse().unwrap();
+    pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.rotsee.hoprnet.link".parse().unwrap();
 }
 
 pub fn new_blokli_client(url: Option<Url>) -> BlokliClient {
     BlokliClient::new(
         url.unwrap_or(DEFAULT_BLOKLI_URL.clone()),
         BlokliClientConfig {
-            timeout: std::time::Duration::from_mins(2),
-            stream_reconnect_timeout: std::time::Duration::from_secs(30),
+            timeout: std::time::Duration::from_secs(120),
+            stream_reconnect_timeout: std::time::Duration::from_millis(500),
         },
     )
 }
