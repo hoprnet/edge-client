@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "1.0.4"
+version = "1.0.5"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
