@@ -7,6 +7,7 @@ use hopr_chain_connector::{
 };
 use hopr_db_node::{HoprNodeDb, init_hopr_node_db};
 use hopr_lib::{Hopr, HoprKeys, ToHex, api::chain::ChainEvents, config::HoprLibConfig};
+use strum::{AsRefStr, EnumString};
 use tracing::info;
 
 use crate::errors::EdgliError;
@@ -15,6 +16,40 @@ use crate::new_blokli_client;
 pub use hopr_chain_connector;
 
 pub type HoprEdgeClient = Hopr<Arc<HoprBlockchainSafeConnector<BlokliClient>>, HoprNodeDb>;
+
+/// Represents the initialization states of the Edgli client.
+/// Each state corresponds to a step in the `new()` function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, AsRefStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum EdgliInitState {
+    /// Validating the host configuration and network address settings
+    #[strum(to_string = "Validating host configuration...")]
+    ValidatingConfig,
+
+    /// Logging node public identifiers (packet key and blockchain address)
+    #[strum(to_string = "Identifying node public keys...")]
+    IdentifyingNode,
+
+    /// Initializing the node database for persistent storage
+    #[strum(to_string = "Initializing node database...")]
+    InitializingDatabase,
+
+    /// Creating and connecting to the blockchain via the chain connector
+    #[strum(to_string = "Establishing blockchain connection to read the chain events...")]
+    ConnectingBlockchain,
+
+    /// Creating the HOPR edge node instance from hopr-lib
+    #[strum(to_string = "Creating HOPR edge node instance...")]
+    CreatingNode,
+
+    /// Starting the node and its network protocols
+    #[strum(to_string = "Starting node and network protocols...")]
+    StartingNode,
+
+    /// Initialization completed successfully
+    #[strum(to_string = "Initialization complete.")]
+    Ready,
+}
 
 pub async fn run_hopr_edge_node_with<F, T>(
     cfg: HoprLibConfig,
@@ -27,7 +62,14 @@ where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
-    let edgli = Edgli::new(cfg, db_data_path, hopr_keys, blokli_url).await?;
+    let edgli = Edgli::new(
+        cfg,
+        db_data_path,
+        hopr_keys,
+        blokli_url,
+        None::<fn(EdgliInitState)>,
+    )
+    .await?;
 
     let (proc, abort_handle) = abortable(f(edgli.hopr));
     let _jh = tokio::spawn(proc);
@@ -53,12 +95,19 @@ impl std::ops::Deref for Edgli {
 }
 
 impl Edgli {
-    pub async fn new(
+    pub async fn new<V>(
         cfg: HoprLibConfig,
         db_data_path: &Path,
         hopr_keys: HoprKeys,
         blokli_url: Option<String>,
-    ) -> anyhow::Result<Self> {
+        mut visitor: Option<V>,
+    ) -> anyhow::Result<Self>
+    where
+        V: FnMut(EdgliInitState),
+    {
+        if let Some(ref mut v) = visitor {
+            v(EdgliInitState::ValidatingConfig);
+        }
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
             let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
                 .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
@@ -70,6 +119,9 @@ impl Edgli {
             }
         }
 
+        if let Some(ref mut v) = visitor {
+            v(EdgliInitState::IdentifyingNode);
+        }
         info!(
             packet_key = hopr_lib::Keypair::public(&hopr_keys.packet_key).to_peerid_str(),
             blockchain_address = hopr_lib::Keypair::public(&hopr_keys.chain_key)
@@ -78,8 +130,10 @@ impl Edgli {
             "Node public identifiers"
         );
 
-        //
         // edge_clients do not store tickets, since they are originators only.
+        if let Some(ref mut v) = visitor {
+            v(EdgliInitState::InitializingDatabase);
+        }
         let node_db = init_hopr_node_db(
             db_data_path
                 .to_str()
@@ -91,6 +145,9 @@ impl Edgli {
 
         #[cfg(feature = "blokli")]
         let chain_connector = {
+            if let Some(ref mut v) = visitor {
+                v(EdgliInitState::ConnectingBlockchain);
+            }
             let mut connector = create_trustful_hopr_blokli_connector(
                 &hopr_keys.chain_key,
                 BlockchainConnectorConfig {
@@ -107,6 +164,9 @@ impl Edgli {
         };
 
         // Create the node instance
+        if let Some(ref mut v) = visitor {
+            v(EdgliInitState::CreatingNode);
+        }
         info!("Creating the HOPR edge node instance from hopr-lib");
         let node = Arc::new(
             hopr_lib::Hopr::new(
@@ -119,11 +179,17 @@ impl Edgli {
             .await?,
         );
 
+        if let Some(ref mut v) = visitor {
+            v(EdgliInitState::StartingNode);
+        }
         node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(
             Default::default(),
         ))
         .await?;
 
+        if let Some(ref mut v) = visitor {
+            v(EdgliInitState::Ready);
+        }
         Ok(Self {
             hopr: node,
             #[cfg(feature = "blokli")]
