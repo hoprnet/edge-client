@@ -57,19 +57,13 @@ pub async fn run_hopr_edge_node_with<F, T>(
     hopr_keys: HoprKeys,
     blokli_url: Option<String>,
     f: F,
+    visitor: Option<V>,
 ) -> anyhow::Result<AbortHandle>
 where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
-    let edgli = Edgli::new(
-        cfg,
-        db_data_path,
-        hopr_keys,
-        blokli_url,
-        None::<fn(EdgliInitState)>,
-    )
-    .await?;
+    let edgli = Edgli::new(cfg, db_data_path, hopr_keys, blokli_url, visitor).await?;
 
     let (proc, abort_handle) = abortable(f(edgli.hopr));
     let _jh = tokio::spawn(proc);
@@ -100,17 +94,17 @@ impl Edgli {
         db_data_path: &Path,
         hopr_keys: HoprKeys,
         blokli_url: Option<String>,
-        mut visitor: Option<V>,
+        visitor: Option<V>,
     ) -> anyhow::Result<Self>
     where
-        V: FnMut(EdgliInitState),
+        V: Fn(EdgliInitState),
     {
-        if let Some(ref mut v) = visitor {
+        if let Some(ref v) = visitor {
             v(EdgliInitState::ValidatingConfig);
         }
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
-            let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
-                .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
+            let ipv4: std::net::Ipv4Addr =
+                std::net::Ipv4Addr::from_str(address).map_err(|e| EdgliError::ConfigError(e.to_string()))?;
 
             if ipv4.is_loopback() && !cfg.protocol.transport.prefer_local_addresses {
                 Err(hopr_lib::errors::HoprLibError::GeneralError(
@@ -119,19 +113,17 @@ impl Edgli {
             }
         }
 
-        if let Some(ref mut v) = visitor {
+        if let Some(ref v) = visitor {
             v(EdgliInitState::IdentifyingNode);
         }
         info!(
             packet_key = hopr_lib::Keypair::public(&hopr_keys.packet_key).to_peerid_str(),
-            blockchain_address = hopr_lib::Keypair::public(&hopr_keys.chain_key)
-                .to_address()
-                .to_hex(),
+            blockchain_address = hopr_lib::Keypair::public(&hopr_keys.chain_key).to_address().to_hex(),
             "Node public identifiers"
         );
 
         // edge_clients do not store tickets, since they are originators only.
-        if let Some(ref mut v) = visitor {
+        if let Some(ref v) = visitor {
             v(EdgliInitState::InitializingDatabase);
         }
         let node_db = init_hopr_node_db(
@@ -145,7 +137,7 @@ impl Edgli {
 
         #[cfg(feature = "blokli")]
         let chain_connector = {
-            if let Some(ref mut v) = visitor {
+            if let Some(ref v) = visitor {
                 v(EdgliInitState::ConnectingBlockchain);
             }
             let mut connector = create_trustful_hopr_blokli_connector(
@@ -164,7 +156,7 @@ impl Edgli {
         };
 
         // Create the node instance
-        if let Some(ref mut v) = visitor {
+        if let Some(ref v) = visitor {
             v(EdgliInitState::CreatingNode);
         }
         info!("Creating the HOPR edge node instance from hopr-lib");
@@ -179,15 +171,13 @@ impl Edgli {
             .await?,
         );
 
-        if let Some(ref mut v) = visitor {
+        if let Some(ref v) = visitor {
             v(EdgliInitState::StartingNode);
         }
-        node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(
-            Default::default(),
-        ))
-        .await?;
+        node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(Default::default()))
+            .await?;
 
-        if let Some(ref mut v) = visitor {
+        if let Some(ref v) = visitor {
             v(EdgliInitState::Ready);
         }
         Ok(Self {
@@ -207,10 +197,7 @@ impl Edgli {
     /// 1. automatically funding the channels when out of funds
     /// 2. automatically closing the channels in pending to close state
     #[cfg(feature = "blokli")]
-    pub fn run_reactor_from_cfg(
-        &self,
-        cfg: super::strategy::MultiStrategyConfig,
-    ) -> anyhow::Result<AbortHandle> {
+    pub fn run_reactor_from_cfg(&self, cfg: super::strategy::MultiStrategyConfig) -> anyhow::Result<AbortHandle> {
         let multi_strategy = Arc::new(hopr_strategy::strategy::MultiStrategy::new(
             cfg,
             self.blokli_connector.clone(),
