@@ -62,7 +62,7 @@ pub async fn run_hopr_edge_node_with<F, T, V>(
 where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
-    V: Fn(EdgliInitState),
+    V: Fn(EdgliInitState) + Send + 'static,
 {
     let edgli = Edgli::new(cfg, db_data_path, hopr_keys, blokli_url, visitor).await?;
     let (proc, abort_handle) = abortable(f(edgli.hopr));
@@ -96,7 +96,7 @@ impl Edgli {
         visitor: Option<V>,
     ) -> anyhow::Result<Self>
     where
-        V: Fn(EdgliInitState),
+    V: Fn(EdgliInitState) + Send + 'static,
     {
         if let Some(ref v) = visitor {
             v(EdgliInitState::ValidatingConfig);
