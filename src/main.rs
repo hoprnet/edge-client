@@ -201,15 +201,9 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    let edgli = edgli::Edgli::new(
-        cfg,
-        &args.db_dir_path,
-        hopr_keys,
-        args.blokli_url,
-        |s| {
-            info!(?s, "Initialization stage");
-        },
-    )
+    let edgli = edgli::Edgli::new(cfg, &args.db_dir_path, hopr_keys, args.blokli_url, |s| {
+        info!(?s, "Initialization stage");
+    })
     .await?;
 
     let mut signals =
