@@ -96,7 +96,7 @@ impl Edgli {
         visitor: Option<V>,
     ) -> anyhow::Result<Self>
     where
-    V: Fn(EdgliInitState) + Send + 'static,
+        V: Fn(EdgliInitState) + Send + 'static,
     {
         if let Some(ref v) = visitor {
             v(EdgliInitState::ValidatingConfig);
