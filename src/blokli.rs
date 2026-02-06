@@ -22,7 +22,7 @@ pub fn new_blokli_client(url: Option<Url>) -> BlokliClient {
     BlokliClient::new(
         url.unwrap_or(DEFAULT_BLOKLI_URL.clone()),
         BlokliClientConfig {
-            timeout: std::time::Duration::from_secs(120),
+            timeout: std::time::Duration::from_secs(3),
             // This is actually maximum delay, it starts at 2s with backoff until 30s
             stream_reconnect_timeout: std::time::Duration::from_secs(30),
         },
