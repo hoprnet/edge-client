@@ -206,7 +206,9 @@ async fn main() -> anyhow::Result<()> {
         &args.db_dir_path,
         hopr_keys,
         args.blokli_url,
-        None::<fn(edgli::EdgliInitState)>,
+        |s| {
+            info!(?s, "Initialization stage");
+        },
     )
     .await?;
 
