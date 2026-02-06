@@ -51,7 +51,7 @@ pub enum EdgliInitState {
     Ready,
 }
 
-pub async fn run_hopr_edge_node_with<F, T>(
+pub async fn run_hopr_edge_node_with<F, T, V>(
     cfg: HoprLibConfig,
     db_data_path: &Path,
     hopr_keys: HoprKeys,
@@ -62,12 +62,11 @@ pub async fn run_hopr_edge_node_with<F, T>(
 where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
+    V: Fn(EdgliInitState),
 {
     let edgli = Edgli::new(cfg, db_data_path, hopr_keys, blokli_url, visitor).await?;
-
     let (proc, abort_handle) = abortable(f(edgli.hopr));
     let _jh = tokio::spawn(proc);
-
     Ok(abort_handle)
 }
 
@@ -103,8 +102,8 @@ impl Edgli {
             v(EdgliInitState::ValidatingConfig);
         }
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
-            let ipv4: std::net::Ipv4Addr =
-                std::net::Ipv4Addr::from_str(address).map_err(|e| EdgliError::ConfigError(e.to_string()))?;
+            let ipv4: std::net::Ipv4Addr = std::net::Ipv4Addr::from_str(address)
+                .map_err(|e| EdgliError::ConfigError(e.to_string()))?;
 
             if ipv4.is_loopback() && !cfg.protocol.transport.prefer_local_addresses {
                 Err(hopr_lib::errors::HoprLibError::GeneralError(
@@ -118,7 +117,9 @@ impl Edgli {
         }
         info!(
             packet_key = hopr_lib::Keypair::public(&hopr_keys.packet_key).to_peerid_str(),
-            blockchain_address = hopr_lib::Keypair::public(&hopr_keys.chain_key).to_address().to_hex(),
+            blockchain_address = hopr_lib::Keypair::public(&hopr_keys.chain_key)
+                .to_address()
+                .to_hex(),
             "Node public identifiers"
         );
 
@@ -174,8 +175,10 @@ impl Edgli {
         if let Some(ref v) = visitor {
             v(EdgliInitState::StartingNode);
         }
-        node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(Default::default()))
-            .await?;
+        node.run(hopr_ct_telemetry::ImmediateNeighborProber::new(
+            Default::default(),
+        ))
+        .await?;
 
         if let Some(ref v) = visitor {
             v(EdgliInitState::Ready);
@@ -197,7 +200,10 @@ impl Edgli {
     /// 1. automatically funding the channels when out of funds
     /// 2. automatically closing the channels in pending to close state
     #[cfg(feature = "blokli")]
-    pub fn run_reactor_from_cfg(&self, cfg: super::strategy::MultiStrategyConfig) -> anyhow::Result<AbortHandle> {
+    pub fn run_reactor_from_cfg(
+        &self,
+        cfg: super::strategy::MultiStrategyConfig,
+    ) -> anyhow::Result<AbortHandle> {
         let multi_strategy = Arc::new(hopr_strategy::strategy::MultiStrategy::new(
             cfg,
             self.blokli_connector.clone(),
