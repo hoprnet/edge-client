@@ -134,6 +134,7 @@ impl Edgli {
                 BlockchainConnectorConfig {
                     tx_confirm_timeout: std::time::Duration::from_secs(90),
                     connection_timeout: std::time::Duration::from_mins(2),
+                    sync_tolerance: 90,
                 },
                 new_blokli_client(blokli_url.map(|url| url.parse()).transpose()?),
                 cfg.safe_module.module_address,
