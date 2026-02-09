@@ -92,6 +92,7 @@ impl Edgli {
         db_data_path: &Path,
         hopr_keys: HoprKeys,
         blokli_url: Option<String>,
+        blokli_connector_config: Option<BlockchainConnectorConfig>,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
         visitor(EdgliInitState::ValidatingConfig);
@@ -128,14 +129,11 @@ impl Edgli {
 
         #[cfg(feature = "blokli")]
         let chain_connector = {
+            let cfg = blokli_connector_config.unwrap_or_default();
             visitor(EdgliInitState::ConnectingBlockchain);
             let mut connector = create_trustful_hopr_blokli_connector(
                 &hopr_keys.chain_key,
-                BlockchainConnectorConfig {
-                    tx_confirm_timeout: std::time::Duration::from_secs(90),
-                    connection_timeout: std::time::Duration::from_mins(2),
-                    sync_tolerance: 90,
-                },
+                cfg,
                 new_blokli_client(blokli_url.map(|url| url.parse()).transpose()?),
                 cfg.safe_module.module_address,
             )

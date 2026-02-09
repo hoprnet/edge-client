@@ -44,19 +44,13 @@ impl SafelessInteractor {
     pub async fn new(
         blokli_provider: Option<Url>,
         chain_key: &ChainKeypair,
+        connector_config: Option<BlockchainConnectorConfig>,
     ) -> anyhow::Result<Self> {
         let blokli_client = new_blokli_client(blokli_provider);
 
-        let connector = create_trustful_safeless_hopr_blokli_connector(
-            chain_key,
-            BlockchainConnectorConfig {
-                tx_confirm_timeout: std::time::Duration::from_secs(90),
-                connection_timeout: std::time::Duration::from_mins(2),
-                ..Default::default()
-            },
-            blokli_client,
-        )
-        .await?;
+        let cfg = connector_config.unwrap_or_default();
+        let connector =
+            create_trustful_safeless_hopr_blokli_connector(chain_key, cfg, blokli_client).await?;
 
         Ok(Self {
             connector: Arc::new(connector),
