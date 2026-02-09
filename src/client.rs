@@ -56,6 +56,7 @@ pub async fn run_hopr_edge_node_with<F, T>(
     db_data_path: &Path,
     hopr_keys: HoprKeys,
     blokli_url: Option<String>,
+    blokli_config: Option<BlockchainConnectorConfig>,
     f: F,
     visitor: impl Fn(EdgliInitState) + Send + 'static,
 ) -> anyhow::Result<AbortHandle>
@@ -63,7 +64,7 @@ where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
-    let edgli = Edgli::new(cfg, db_data_path, hopr_keys, blokli_url, visitor).await?;
+    let edgli = Edgli::new(cfg, db_data_path, hopr_keys, blokli_url, blokli_config, visitor).await?;
     let (proc, abort_handle) = abortable(f(edgli.hopr));
     let _jh = tokio::spawn(proc);
     Ok(abort_handle)
@@ -92,6 +93,7 @@ impl Edgli {
         db_data_path: &Path,
         hopr_keys: HoprKeys,
         blokli_url: Option<String>,
+        blokli_connector_config: Option<BlockchainConnectorConfig>,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
         visitor(EdgliInitState::ValidatingConfig);
@@ -128,14 +130,11 @@ impl Edgli {
 
         #[cfg(feature = "blokli")]
         let chain_connector = {
+            let blokli_config = blokli_connector_config.unwrap_or_default();
             visitor(EdgliInitState::ConnectingBlockchain);
             let mut connector = create_trustful_hopr_blokli_connector(
                 &hopr_keys.chain_key,
-                BlockchainConnectorConfig {
-                    tx_confirm_timeout: std::time::Duration::from_secs(90),
-                    connection_timeout: std::time::Duration::from_mins(2),
-                    sync_tolerance: 90,
-                },
+                blokli_config,
                 new_blokli_client(blokli_url.map(|url| url.parse()).transpose()?),
                 cfg.safe_module.module_address,
             )

@@ -11,5 +11,6 @@ pub use hopr_lib;
 
 #[cfg(feature = "blokli")]
 pub use blokli::*;
+pub use hopr_chain_connector::BlockchainConnectorConfig;
 
 pub use client::*;
