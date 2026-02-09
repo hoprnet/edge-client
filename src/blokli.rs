@@ -52,6 +52,7 @@ impl SafelessInteractor {
             BlockchainConnectorConfig {
                 tx_confirm_timeout: std::time::Duration::from_secs(90),
                 connection_timeout: std::time::Duration::from_mins(2),
+                ..Default::default()
             },
             blokli_client,
         )
