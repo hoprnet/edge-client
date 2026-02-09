@@ -201,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    let edgli = edgli::Edgli::new(cfg, &args.db_dir_path, hopr_keys, args.blokli_url, |s| {
+    let edgli = edgli::Edgli::new(cfg, &args.db_dir_path, hopr_keys, args.blokli_url, None, |s| {
         info!(?s, "Initialization stage");
     })
     .await?;
