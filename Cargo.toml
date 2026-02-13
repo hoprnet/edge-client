@@ -62,7 +62,7 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "5f719c4642f0babafd29044e36b741097fcf82f4", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "tb/202602-autofunding", features = [
   "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
   "serde",
