@@ -15,7 +15,7 @@ pub use hopr_lib::ChainKeypair;
 use hopr_lib::api::chain::ChainWriteSafeOperations;
 
 lazy_static::lazy_static! {
-    pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.hoprnet.link".parse().unwrap();
+    pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.gnosisvpn.io".parse().unwrap();
 }
 
 pub fn new_blokli_client(url: Option<Url>) -> BlokliClient {
