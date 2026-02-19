@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "2.2.0"
+version = "2.3.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -62,19 +62,19 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "6525d753fde70b5026d19d7a647b8143352b26df", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "a63cce17d16498b301bf45ad87a8d6a8286837a8", features = [
   "transport-use-quic", # use quic transport, but do not announce it
   "session-client",
   "serde",
 ] }
-hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "6525d753fde70b5026d19d7a647b8143352b26df", features = [
+hopr-db-node = { git = "https://github.com/hoprnet/hoprnet", rev = "a63cce17d16498b301bf45ad87a8d6a8286837a8", features = [
   "runtime-tokio",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "6525d753fde70b5026d19d7a647b8143352b26df", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "a63cce17d16498b301bf45ad87a8d6a8286837a8", features = [
   "runtime-tokio",
 ] }
-hopr-ct-telemetry = { git = "https://github.com/hoprnet/hoprnet", rev = "6525d753fde70b5026d19d7a647b8143352b26df" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "6525d753fde70b5026d19d7a647b8143352b26df" }
+hopr-ct-telemetry = { git = "https://github.com/hoprnet/hoprnet", rev = "a63cce17d16498b301bf45ad87a8d6a8286837a8" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "a63cce17d16498b301bf45ad87a8d6a8286837a8" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
