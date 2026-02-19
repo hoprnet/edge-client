@@ -64,7 +64,15 @@ where
     F: Fn(Arc<HoprEdgeClient>) -> T,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
-    let edgli = Edgli::new(cfg, db_data_path, hopr_keys, blokli_url, blokli_config, visitor).await?;
+    let edgli = Edgli::new(
+        cfg,
+        db_data_path,
+        hopr_keys,
+        blokli_url,
+        blokli_config,
+        visitor,
+    )
+    .await?;
     let (proc, abort_handle) = abortable(f(edgli.hopr));
     let _jh = tokio::spawn(proc);
     Ok(abort_handle)
