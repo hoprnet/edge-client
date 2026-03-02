@@ -298,7 +298,11 @@
             # MY_CUSTOM_DEVELOPMENT_VAR = "something else";
 
             # Extra inputs can be added here; cargo and rustc are provided by default.
-            packages = [ ];
+            packages = [
+              pkgs.cargo-machete
+              pkgs.cargo-shear
+              pkgs.rust-analyzer
+            ];
 
             VERGEN_GIT_SHA = toString (self.shortRev or self.dirtyShortRev);
           };
