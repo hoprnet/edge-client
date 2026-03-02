@@ -1480,8 +1480,8 @@ dependencies = [
 
 [[package]]
 name = "blokli-client"
-version = "0.20.0"
-source = "git+https://github.com/hoprnet/blokli#0bc945a06d08175bfbc714d2bbeeae1acd200ac0"
+version = "0.21.0"
+source = "git+https://github.com/hoprnet/blokli#b75d3bd0267effce5d82f5e5033c350ee68844a5"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -2447,7 +2447,6 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "serde_json",
  "serde_yaml",
  "signal-hook",
  "strum 0.28.0",
