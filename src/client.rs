@@ -10,6 +10,8 @@ use hopr_lib::{Hopr, HoprKeys, ToHex, api::chain::ChainEvents, config::HoprLibCo
 use strum::{AsRefStr, EnumString};
 use tracing::info;
 
+use url::Url;
+
 use crate::errors::EdgliError;
 use crate::new_blokli_client;
 
@@ -85,6 +87,8 @@ pub struct Edgli {
     /// direct access to the blockchain connector until a more significant refactor.
     #[cfg(feature = "blokli")]
     blokli_connector: Arc<HoprBlockchainSafeConnector<BlokliClient>>,
+    #[cfg(feature = "blokli")]
+    blokli_url: Url,
 }
 
 impl std::ops::Deref for Edgli {
@@ -137,19 +141,20 @@ impl Edgli {
         .await?;
 
         #[cfg(feature = "blokli")]
-        let chain_connector = {
+        let (chain_connector, blokli_url) = {
             let blokli_config = blokli_connector_config.unwrap_or_default();
+            let blokli_url: Url = blokli_url.map(|url| url.parse()).transpose()?.unwrap_or(crate::blokli::DEFAULT_BLOKLI_URL.clone());
             visitor(EdgliInitState::ConnectingBlockchain);
             let mut connector = create_trustful_hopr_blokli_connector(
                 &hopr_keys.chain_key,
                 blokli_config,
-                new_blokli_client(blokli_url.map(|url| url.parse()).transpose()?),
+                new_blokli_client(Some(blokli_url.clone())),
                 cfg.safe_module.module_address,
             )
             .await?;
             connector.connect().await?;
 
-            Arc::new(connector)
+            (Arc::new(connector), blokli_url)
         };
 
         // Create the node instance
@@ -177,11 +182,18 @@ impl Edgli {
             hopr: node,
             #[cfg(feature = "blokli")]
             blokli_connector: chain_connector,
+            #[cfg(feature = "blokli")]
+            blokli_url,
         })
     }
 
     pub fn as_hopr(&self) -> Arc<HoprEdgeClient> {
         self.hopr.clone()
+    }
+
+    #[cfg(feature = "blokli")]
+    pub fn blokli_url(&self) -> &Url {
+        &self.blokli_url
     }
 
     /// Run a node with HOPR edge strategies integrated.
