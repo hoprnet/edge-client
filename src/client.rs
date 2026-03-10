@@ -194,6 +194,7 @@ impl Edgli {
         &self,
         cfg: super::strategy::MultiStrategyConfig,
     ) -> anyhow::Result<AbortHandle> {
+        let execution_interval = cfg.execution_interval;
         let multi_strategy = Arc::new(hopr_strategy::strategy::MultiStrategy::new(
             cfg,
             self.blokli_connector.clone(),
@@ -204,7 +205,7 @@ impl Edgli {
             multi_strategy,
             self.blokli_connector.subscribe()?,
             self.hopr.subscribe_winning_tickets(),
-            std::time::Duration::from_secs(60),
+            execution_interval,
             self.hopr.me_onchain(),
         ))
     }
