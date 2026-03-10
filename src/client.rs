@@ -204,7 +204,7 @@ impl Edgli {
             multi_strategy,
             self.blokli_connector.subscribe()?,
             self.hopr.subscribe_winning_tickets(),
-            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(15),
             self.hopr.me_onchain(),
         ))
     }
