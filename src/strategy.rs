@@ -1,7 +1,7 @@
 pub use hopr_lib::HoprBalance;
 pub use hopr_strategy::{
-    auto_funding::AutoFundingStrategyConfig, channel_finalizer::ClosureFinalizerStrategyConfig,
-    strategy::MultiStrategyConfig, Strategy,
+    Strategy, auto_funding::AutoFundingStrategyConfig,
+    channel_finalizer::ClosureFinalizerStrategyConfig, strategy::MultiStrategyConfig,
 };
 
 /// Returns the configuration of a default edge-client relevant [`Strategy`] configuration
@@ -13,7 +13,7 @@ pub fn default_edge_client_telemetry_reactor_cfg(
     MultiStrategyConfig {
         on_fail_continue: true,
         allow_recursive: false,
-        execution_interval: std::time::Duration::from_secs(15),
+        execution_interval: std::time::Duration::from_secs(60),
         strategies: vec![
             Strategy::AutoFunding(AutoFundingStrategyConfig {
                 min_stake_threshold: min_channel_balance,
