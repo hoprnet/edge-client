@@ -90,18 +90,19 @@ pub enum OtlpTransport {
 
 #[cfg(feature = "telemetry")]
 impl OtlpTransport {
-    fn from_env() -> Self {
-        match std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
-            Ok(raw_url) => Self::from_str(
-                raw_url
-                    .trim()
-                    .split_once("://")
-                    .map(|(scheme, _)| scheme)
-                    .unwrap_or(""),
-            )
-            .unwrap_or(Self::Grpc),
-            Err(_) => Self::Grpc,
-        }
+    fn from_endpoint(endpoint: Option<&str>) -> Self {
+        endpoint
+            .and_then(|raw_url| {
+                Self::from_str(
+                    raw_url
+                        .trim()
+                        .split_once("://")
+                        .map(|(scheme, _)| scheme)
+                        .unwrap_or(""),
+                )
+                .ok()
+            })
+            .unwrap_or(Self::Grpc)
     }
 }
 
@@ -119,10 +120,14 @@ impl OtlpConfig {
     pub fn from_env() -> Self {
         let service_name =
             std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| env!("CARGO_PKG_NAME").into());
-        let transport = OtlpTransport::from_env();
+        let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+            .ok()
+            .map(|endpoint| endpoint.trim().to_string())
+            .filter(|endpoint| !endpoint.is_empty());
+        let transport = OtlpTransport::from_endpoint(otlp_endpoint.as_deref());
         let mut signals = flagset::FlagSet::empty();
         let raw_signals = std::env::var(EDGE_OTEL_SIGNALS_ENV).ok();
-        let enabled = raw_signals.is_some();
+        let enabled = otlp_endpoint.is_some();
 
         if let Some(raw_signals) = raw_signals {
             for signal in raw_signals.split(',') {
@@ -138,12 +143,12 @@ impl OtlpConfig {
                     ),
                 }
             }
-        } else {
-            signals |= OtlpSignal::Traces;
         }
 
         if signals.is_empty() {
             signals |= OtlpSignal::Traces;
+            signals |= OtlpSignal::Logs;
+            signals |= OtlpSignal::Metrics;
         }
 
         Self {

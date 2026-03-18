@@ -23,6 +23,6 @@ not dropped early.
 
 Environment variables:
 
-- `EDGE_OTEL_SIGNALS` (comma-separated: `traces,logs,metrics`; setting this
-  enables OpenTelemetry)
-- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (required to enable OpenTelemetry export)
+- `EDGE_OTEL_SIGNALS` (optional comma-separated subset: `traces,logs,metrics`;
+  defaults to all signals)
