@@ -3,30 +3,34 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-parts = {
-      url = "github:hercules-ci/flake-parts";
-    };
-    crane = {
-      url = "github:ipetkov/crane";
-    };
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-utils.url = "github:numtide/flake-utils";
+
+    # HOPR Nix Library (provides reusable build functions)
+    nix-lib.url = "github:hoprnet/nix-lib/v1.1.0";
+
+    crane.url = "github:ipetkov/crane";
 
     pre-commit.url = "github:cachix/git-hooks.nix";
-    pre-commit.inputs.nixpkgs.follows = "nixpkgs";
 
-    treefmt-nix = {
-      url = "github:numtide/treefmt-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    treefmt-nix.url = "github:numtide/treefmt-nix";
 
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    rust-overlay.url = "github:oxalica/rust-overlay";
 
     advisory-db = {
       url = "github:rustsec/advisory-db";
       flake = false;
     };
+
+    # Input dependency optimization
+    flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
+    nix-lib.inputs.nixpkgs.follows = "nixpkgs";
+    nix-lib.inputs.crane.follows = "crane";
+    nix-lib.inputs.rust-overlay.follows = "rust-overlay";
+    nix-lib.inputs.flake-utils.follows = "flake-utils";
+    pre-commit.inputs.nixpkgs.follows = "nixpkgs";
+    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -34,6 +38,7 @@
       self,
       flake-parts,
       nixpkgs,
+      nix-lib,
       rust-overlay,
       crane,
       advisory-db,
@@ -60,13 +65,33 @@
         }:
         let
           rev = toString (self.shortRev or self.dirtyShortRev);
-          pkgs = (
-            import nixpkgs {
-              localSystem = system;
-              crossSystem = system;
-              overlays = [ (import rust-overlay) ];
-            }
-          );
+          localSystem = system;
+
+          # Import nix-lib for this system
+          nixLib = nix-lib.lib.${system};
+
+          pkgs = import nixpkgs {
+            inherit localSystem;
+            overlays = [ (import rust-overlay) ];
+          };
+
+          # Create all Rust builders for cross-compilation using nix-lib
+          builders = nixLib.mkRustBuilders {
+            inherit localSystem;
+            rustToolchainFile = ./rust-toolchain.toml;
+          };
+
+          # Import all edgli packages (uses nix-lib builders + mkRustPackage).
+          # src, depsSrc, and rev are computed internally in edgli.nix.
+          edgliPackages = import ./nix/edgli.nix {
+            inherit
+              builders
+              nixLib
+              self
+              lib
+              pkgs
+              ;
+          };
 
           systemTargets = {
             "x86_64-linux" = "x86_64-unknown-linux-musl";
@@ -119,59 +144,6 @@
           # It is *highly* recommended to use something like cargo-hakari to avoid
           # cache misses when building individual top-level-crates
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-
-          individualCrateArgs = commonArgs // {
-            inherit cargoArtifacts;
-            inherit (craneLib.crateNameFromCargoToml { inherit src; }) version;
-            # NB: we disable tests since we'll run them all via cargo-nextest
-            doCheck = false;
-          };
-
-          srcFiles = lib.fileset.toSource {
-            root = ./.;
-            fileset = lib.fileset.unions [
-              ./Cargo.toml
-              ./Cargo.lock
-              (craneLib.fileset.commonCargoSources ./src)
-            ];
-          };
-
-          targetCrateArgs = {
-            "x86_64-unknown-linux-musl" = {
-              CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
-              CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static -C link-arg=-fuse-ld=mold";
-            };
-            "aarch64-unknown-linux-musl" = {
-              CARGO_BUILD_TARGET = "aarch64-unknown-linux-musl";
-              CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static -C link-arg=-fuse-ld=mold";
-            };
-            "x86_64-apple-darwin" = {
-              CARGO_PROFILE = "intelmac";
-              CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
-            };
-            "aarch64-apple-darwin" = {
-              CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
-            };
-          };
-
-          # Build the top-level crates of the workspace as individual derivations.
-          # This allows consumers to only depend on (and build) only what they need.
-          # Though it is possible to build the entire workspace as a single derivation,
-          # so this is left up to you on how to organize things
-          #
-          # Note that the cargo workspace must define `workspace.members` using wildcards,
-          # otherwise, omitting a crate (like we do below) will result in errors since
-          # cargo won't be able to find the sources for all members.
-
-          edgli = craneLib.buildPackage (
-            individualCrateArgs
-            // (builtins.getAttr targetForSystem targetCrateArgs)
-            // {
-              pname = "edgli";
-              cargoExtraArgs = "--all";
-              src = srcFiles;
-            }
-          );
 
           pre-commit-check = pre-commit.lib.${system}.run {
             src = ./.;
@@ -235,7 +207,7 @@
 
           checks = {
             # Build the crates as part of `nix flake check` for convenience
-            inherit edgli;
+            inherit (edgliPackages) lib-edgli;
 
             # Run clippy (and deny all warnings) on the workspace source,
             # again, reusing the dependency artifacts from above.
@@ -283,11 +255,15 @@
 
           };
 
-          # Equivalent to  inputs'.nixpkgs.legacyPackages.hello;
           packages = {
-            inherit edgli;
+            inherit (edgliPackages)
+              lib-edgli
+              lib-edgli-x86_64-linux
+              lib-edgli-x86_64-darwin
+              lib-edgli-aarch64-darwin
+              ;
             inherit pre-commit-check;
-            default = edgli;
+            default = edgliPackages.lib-edgli;
           };
 
           devShells.default = craneLib.devShell {
