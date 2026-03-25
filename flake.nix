@@ -28,6 +28,8 @@
     nix-lib.inputs.crane.follows = "crane";
     nix-lib.inputs.rust-overlay.follows = "rust-overlay";
     nix-lib.inputs.flake-utils.follows = "flake-utils";
+    nix-lib.inputs.flake-parts.follows = "flake-parts";
+    nix-lib.inputs.treefmt-nix.follows = "treefmt-nix";
     pre-commit.inputs.nixpkgs.follows = "nixpkgs";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
