@@ -36,6 +36,7 @@ let
 in
 {
   lib-edgli-x86_64-linux = buildPackage builders."x86_64-linux" { };
+  lib-edgli-aarch64-linux = buildPackage builders."aarch64-linux" { };
   lib-edgli-x86_64-darwin = buildPackage builders."x86_64-darwin" { };
   lib-edgli-aarch64-darwin = buildPackage builders."aarch64-darwin" { };
   lib-edgli = buildPackage builders.local { };

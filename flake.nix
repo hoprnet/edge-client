@@ -64,7 +64,6 @@
           ...
         }:
         let
-          rev = toString (self.shortRev or self.dirtyShortRev);
           localSystem = system;
 
           # Import nix-lib for this system
@@ -259,6 +258,7 @@
             inherit (edgliPackages)
               lib-edgli
               lib-edgli-x86_64-linux
+              lib-edgli-aarch64-linux
               lib-edgli-x86_64-darwin
               lib-edgli-aarch64-darwin
               ;
