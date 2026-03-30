@@ -285,6 +285,10 @@
             VERGEN_GIT_SHA = toString (self.shortRev or self.dirtyShortRev);
           };
 
+          devShells.ci = pkgs.mkShell {
+            packages = [ pkgs.zizmor ];
+          };
+
           formatter = config.treefmt.build.wrapper;
         };
       flake = {
