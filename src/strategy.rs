@@ -1,7 +1,7 @@
 pub use hopr_lib::HoprBalance;
 pub use hopr_strategy::{
-    auto_funding::AutoFundingStrategyConfig, channel_finalizer::ClosureFinalizerStrategyConfig,
-    strategy::MultiStrategyConfig, Strategy,
+    Strategy, auto_funding::AutoFundingStrategyConfig,
+    channel_finalizer::ClosureFinalizerStrategyConfig, strategy::MultiStrategyConfig,
 };
 
 /// Returns the configuration of a default edge-client relevant [`Strategy`] configuration
