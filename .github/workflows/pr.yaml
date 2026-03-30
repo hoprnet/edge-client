@@ -85,9 +85,9 @@ jobs:
     uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@04a440583ca3ea5b74a1882943870ad3af5cfee5 # checks-v1
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
-      lint_command: "nix build -L .#clippy"
+      lint_command: "nix build -L .#checks.x86_64-linux.clippy"
       deps: false
-      audit_command: "nix build -L .#audit"
+      audit_command: "nix build -L .#checks.x86_64-linux.audit"
       runner_small: self-hosted-hoprnet-small
       runner_large: self-hosted-hoprnet-bigger
     secrets:
