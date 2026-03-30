@@ -293,10 +293,14 @@
               };
             in
             pkgs.mkShell {
-              packages = [
-                coverageToolchain
-                pkgs.cargo-llvm-cov
-              ];
+              nativeBuildInputs = [ pkgs.pkg-config ];
+              buildInputs =
+                [
+                  coverageToolchain
+                  pkgs.cargo-llvm-cov
+                  pkgs.pkgsStatic.openssl
+                ]
+                ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
             };
 
           devShells.ci = pkgs.mkShell {
@@ -307,7 +311,7 @@
             type = "app";
             program = toString (
               pkgs.writeShellScript "coverage-unit" ''
-                nix develop .#coverage -c cargo llvm-cov --lib --lcov --output-path coverage.lcov
+                nix develop .#coverage -c cargo llvm-cov --workspace --all-features --lib --lcov --output-path coverage.lcov
               ''
             );
           };
