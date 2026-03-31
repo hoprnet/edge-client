@@ -31,10 +31,12 @@ let
       ;
     extraNativeBuildInputs = [
       pkgs.pkg-config
-    ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.mold ];
+    ]
+    ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.mold ];
     extraBuildInputs = [
       pkgs.pkgsStatic.openssl
-    ] ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
+    ]
+    ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
   };
 
   buildPackage = builder: args: builder.callPackage nixLib.mkRustPackage (buildArgs // args);

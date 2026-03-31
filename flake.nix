@@ -285,6 +285,37 @@
             VERGEN_GIT_SHA = toString (self.shortRev or self.dirtyShortRev);
           };
 
+          devShells.coverage =
+            let
+              coverageToolchain = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
+                extensions = [ "llvm-tools-preview" ];
+                targets = [ targetForSystem ];
+              };
+            in
+            pkgs.mkShell {
+              nativeBuildInputs = [ pkgs.pkg-config ];
+              buildInputs =
+                [
+                  coverageToolchain
+                  pkgs.cargo-llvm-cov
+                  pkgs.pkgsStatic.openssl
+                ]
+                ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
+            };
+
+          devShells.ci = pkgs.mkShell {
+            packages = [ pkgs.zizmor ];
+          };
+
+          apps.coverage-unit = {
+            type = "app";
+            program = toString (
+              pkgs.writeShellScript "coverage-unit" ''
+                nix develop .#coverage -c cargo llvm-cov --workspace --lib --lcov --output-path coverage.lcov
+              ''
+            );
+          };
+
           formatter = config.treefmt.build.wrapper;
         };
       flake = {

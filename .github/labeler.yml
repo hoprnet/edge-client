@@ -1,0 +1,12 @@
+toolchain:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "flake.*"
+          - "*.nix"
+          - .github/**
+          - rust-toolchain.toml
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Cargo.lock
+          - "**/Cargo.toml"
