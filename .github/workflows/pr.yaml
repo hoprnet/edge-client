@@ -115,7 +115,7 @@ jobs:
             runner: macos-15-xlarge
             build_command: nix build -L .#lib-edgli-aarch64-darwin
             required_label: binary:aarch64-darwin
-    uses: hoprnet/hopr-workflows/.github/workflows/build-library.yaml@build-library-v1
+    uses: hoprnet/hopr-workflows/.github/workflows/build-library.yaml@5ef5e50e028143b53da6545c1ca92477b70f42fc # build-library-v1
     permissions:
       contents: read
     with:
