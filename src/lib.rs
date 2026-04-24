@@ -6,6 +6,7 @@ pub mod errors;
 pub mod blokli;
 
 pub mod strategy;
+pub mod traits;
 
 pub use hopr_lib;
 
@@ -14,3 +15,4 @@ pub use blokli::*;
 pub use hopr_chain_connector::BlockchainConnectorConfig;
 
 pub use client::*;
+pub use traits::EdgeNodeApi;
