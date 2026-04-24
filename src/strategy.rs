@@ -34,8 +34,6 @@ mod tests {
     use super::*;
 
     fn wxhopr(amount: u128) -> HoprBalance {
-        use hopr_lib::UnitaryFloatOps;
-        // Use Balance::from_str or the available constructor.
         // HoprBalance = Balance<WxHOPR>; construct from a known string representation.
         amount.to_string().parse().unwrap_or_default()
     }

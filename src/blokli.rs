@@ -185,7 +185,6 @@ mod tests {
 
     #[test]
     fn winning_probability_as_f64_in_range() {
-        use hopr_lib::UnitaryFloatOps;
         let prob = WinningProbability::default();
         let f = prob.as_f64();
         assert!((0.0..=1.0).contains(&f));
