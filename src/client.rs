@@ -13,7 +13,7 @@ use hopr_lib::api::types::chain::chain_events::ChainEvent;
 use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::{Hopr, HoprKeys, config::HoprLibConfig};
 use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
-use hopr_ticket_manager::{HoprTicketFactory, HoprTicketManager, MemoryStore};
+use hopr_ticket_manager::{HoprTicketFactory, MemoryStore};
 use hopr_transport_p2p::{HoprLibp2pNetworkBuilder, HoprNetwork, PeerDiscovery};
 use strum::{AsRefStr, Display, EnumString};
 use tracing::info;
@@ -114,9 +114,6 @@ pub struct Edgli {
     hopr: Arc<HoprEdgeClient>,
     /// The node's packet-layer public key, stored at construction for peer-ID access.
     packet_public_key: hopr_lib::OffchainPublicKey,
-    /// Retained for strategy access; exposes the same connector used inside the node.
-    #[cfg(feature = "blokli")]
-    blokli_connector: Arc<HoprBlockchainSafeConnector<BlokliClient>>,
 }
 
 impl std::ops::Deref for Edgli {
@@ -272,8 +269,6 @@ impl Edgli {
         Ok(Self {
             hopr: Arc::new(node),
             packet_public_key,
-            #[cfg(feature = "blokli")]
-            blokli_connector: chain_connector,
         })
     }
 
@@ -309,39 +304,41 @@ impl Edgli {
         &self,
         cfg: super::strategy::MultiStrategyConfig,
     ) -> anyhow::Result<AbortHandle> {
-        use hopr_lib::api::node::HasChainApi;
-        use hopr_strategy::strategy::MultiStrategy;
+        use hopr_strategy::{
+            auto_funding::AutoFundingStrategy,
+            channel_finalizer::ClosureFinalizerStrategy,
+            strategy::{MultiStrategy, Strategy},
+        };
+        use super::strategy::EdgeStrategyKind;
 
-        let execution_interval = cfg.execution_interval;
+        let interval = cfg.execution_interval;
+        let node = self.hopr.clone();
 
-        // Edge nodes only use AutoFunding + ClosureFinalizer — neither touches the
-        // ticket manager.  We create a real (but ephemeral) MemoryStore-backed manager
-        // solely to satisfy the generic bound on MultiStrategy::new.
-        let (ticket_manager, _ticket_factory) =
-            HoprTicketManager::new_with_factory(MemoryStore::default());
-        let ticket_manager = Arc::new(ticket_manager);
+        let strategies = cfg
+            .strategies
+            .into_iter()
+            .map(|kind| -> Box<dyn Strategy + Send> {
+                match kind {
+                    EdgeStrategyKind::AutoFunding(sub_cfg) => {
+                        AutoFundingStrategy::new(sub_cfg, interval).build(Arc::clone(&node))
+                    }
+                    EdgeStrategyKind::ClosureFinalizer(sub_cfg) => {
+                        ClosureFinalizerStrategy::new(sub_cfg, interval).build(Arc::clone(&node))
+                    }
+                }
+            })
+            .collect();
 
-        let multi_strategy = Arc::new(MultiStrategy::new(
-            cfg,
-            self.blokli_connector.clone(),
-            ticket_manager,
-        ));
+        let mut multi_strategy = MultiStrategy::new(strategies);
 
-        // Subscribe to chain events from the connector for the strategy reactor.
-        let chain_events =
-            hopr_lib::api::chain::ChainEvents::subscribe(self.blokli_connector.as_ref())?;
+        let (abortable, abort_handle) = futures::future::abortable(async move {
+            if let Err(e) = multi_strategy.run().await {
+                tracing::error!(%e, "edge strategy reactor failed");
+            }
+        });
 
-        // Edge nodes never relay or receive winning tickets, so the ticket-event
-        // stream is empty.
-        let me = self.hopr.identity().node_address;
-
-        Ok(hopr_strategy::stream_events_to_strategy_with_tick(
-            multi_strategy,
-            chain_events,
-            futures::stream::empty(),
-            execution_interval,
-            me,
-        ))
+        tokio::spawn(abortable);
+        Ok(abort_handle)
     }
 }
 

@@ -63,20 +63,23 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "6a86c89384c581d30a29566f4f36620a6cce0333", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "8b2a61c1362778acaed4f3d4a1c8f22db1a26bc5", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "6a86c89384c581d30a29566f4f36620a6cce0333", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "8b2a61c1362778acaed4f3d4a1c8f22db1a26bc5", features = [
   "runtime-tokio",
 ] }
-hopr-ct-immediate = { git = "https://github.com/hoprnet/hoprnet", rev = "6a86c89384c581d30a29566f4f36620a6cce0333" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "6a86c89384c581d30a29566f4f36620a6cce0333" }
-hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "6a86c89384c581d30a29566f4f36620a6cce0333", features = [
+hopr-ct-immediate = { git = "https://github.com/hoprnet/hoprnet", rev = "8b2a61c1362778acaed4f3d4a1c8f22db1a26bc5" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "8b2a61c1362778acaed4f3d4a1c8f22db1a26bc5" }
+hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "8b2a61c1362778acaed4f3d4a1c8f22db1a26bc5", features = [
   "runtime-tokio",
 ] }
-hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "6a86c89384c581d30a29566f4f36620a6cce0333" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "6a86c89384c581d30a29566f4f36620a6cce0333" }
+hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "8b2a61c1362778acaed4f3d4a1c8f22db1a26bc5" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "8b2a61c1362778acaed4f3d4a1c8f22db1a26bc5", features = [
+  "strategy-auto-funding",
+  "strategy-closure-finalizer",
+] }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]

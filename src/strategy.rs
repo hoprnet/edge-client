@@ -1,8 +1,20 @@
 pub use hopr_lib::HoprBalance;
-pub use hopr_strategy::{
-    Strategy, auto_funding::AutoFundingStrategyConfig,
-    channel_finalizer::ClosureFinalizerStrategyConfig, strategy::MultiStrategyConfig,
-};
+pub use hopr_strategy::auto_funding::AutoFundingStrategyConfig;
+pub use hopr_strategy::channel_finalizer::ClosureFinalizerStrategyConfig;
+
+/// Subset of strategies relevant to an edge node.
+pub enum EdgeStrategyKind {
+    AutoFunding(AutoFundingStrategyConfig),
+    ClosureFinalizer(ClosureFinalizerStrategyConfig),
+}
+
+/// Strategy configuration for an edge node reactor.
+pub struct MultiStrategyConfig {
+    /// Interval between periodic strategy ticks.
+    pub execution_interval: std::time::Duration,
+    /// Ordered list of strategies to run concurrently.
+    pub strategies: Vec<EdgeStrategyKind>,
+}
 
 /// Returns the default [`MultiStrategyConfig`] for an edge client telemetry reactor.
 ///
@@ -14,15 +26,13 @@ pub fn default_edge_client_telemetry_reactor_cfg(
     top_up_amount: HoprBalance,
 ) -> MultiStrategyConfig {
     MultiStrategyConfig {
-        on_fail_continue: true,
-        allow_recursive: false,
         execution_interval: std::time::Duration::from_secs(15),
         strategies: vec![
-            Strategy::AutoFunding(AutoFundingStrategyConfig {
+            EdgeStrategyKind::AutoFunding(AutoFundingStrategyConfig {
                 min_stake_threshold: min_channel_balance,
                 funding_amount: top_up_amount,
             }),
-            Strategy::ClosureFinalizer(ClosureFinalizerStrategyConfig {
+            EdgeStrategyKind::ClosureFinalizer(ClosureFinalizerStrategyConfig {
                 max_closure_overdue: std::time::Duration::from_secs(300),
             }),
         ],
@@ -51,22 +61,10 @@ mod tests {
     }
 
     #[test]
-    fn default_cfg_on_fail_continue_is_true() {
-        let cfg = default_edge_client_telemetry_reactor_cfg(wxhopr(1), wxhopr(10));
-        assert!(cfg.on_fail_continue);
-    }
-
-    #[test]
-    fn default_cfg_not_recursive() {
-        let cfg = default_edge_client_telemetry_reactor_cfg(wxhopr(1), wxhopr(10));
-        assert!(!cfg.allow_recursive);
-    }
-
-    #[test]
     fn default_cfg_first_strategy_is_auto_funding() {
         let cfg = default_edge_client_telemetry_reactor_cfg(wxhopr(1), wxhopr(10));
         assert!(
-            matches!(cfg.strategies[0], Strategy::AutoFunding(_)),
+            matches!(cfg.strategies[0], EdgeStrategyKind::AutoFunding(_)),
             "expected first strategy to be AutoFunding"
         );
     }
@@ -75,7 +73,7 @@ mod tests {
     fn default_cfg_second_strategy_is_closure_finalizer() {
         let cfg = default_edge_client_telemetry_reactor_cfg(wxhopr(1), wxhopr(10));
         assert!(
-            matches!(cfg.strategies[1], Strategy::ClosureFinalizer(_)),
+            matches!(cfg.strategies[1], EdgeStrategyKind::ClosureFinalizer(_)),
             "expected second strategy to be ClosureFinalizer"
         );
     }
@@ -83,7 +81,7 @@ mod tests {
     #[test]
     fn closure_finalizer_overdue_is_300s() {
         let cfg = default_edge_client_telemetry_reactor_cfg(wxhopr(1), wxhopr(10));
-        if let Strategy::ClosureFinalizer(c) = &cfg.strategies[1] {
+        if let EdgeStrategyKind::ClosureFinalizer(c) = &cfg.strategies[1] {
             assert_eq!(c.max_closure_overdue, std::time::Duration::from_secs(300));
         } else {
             panic!("expected ClosureFinalizer");
