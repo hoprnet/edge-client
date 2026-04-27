@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use futures::channel::mpsc::channel;
-use futures::future::AbortHandle;
+use futures::future::{AbortHandle, abortable};
 use futures::{SinkExt, StreamExt};
 use hopr_chain_connector::{
     BlockchainConnectorConfig, HoprBlockchainSafeConnector, blokli_client::BlokliClient,
     create_trustful_hopr_blokli_connector,
 };
 use hopr_ct_immediate::{ImmediateNeighborProber, ProberConfig};
-use hopr_lib::api::chain::{ChainEvents, StateSyncOptions};
+use hopr_lib::api::{Multiaddr, chain::{ChainEvents, StateSyncOptions}};
 use hopr_lib::api::types::chain::chain_events::ChainEvent;
 use hopr_lib::api::types::{
     crypto::prelude::OffchainPublicKey,
@@ -89,7 +89,9 @@ pub enum EdgliInitState {
 /// Spawns an abortable task that drives a user-supplied closure over the running node.
 ///
 /// Returns an [`AbortHandle`] that stops the closure task when aborted.
-/// The node itself remains alive as long as the `Edgli` the closure captured is kept alive.
+/// `Edgli` is kept alive for the entire duration of `f` so that background tasks
+/// (including the chain-announcement forwarder) remain active until `f` completes
+/// or the returned [`AbortHandle`] is used to cancel it.
 pub async fn run_hopr_edge_node_with<F, T>(
     cfg: HoprLibConfig,
     hopr_keys: HoprKeys,
@@ -99,13 +101,33 @@ pub async fn run_hopr_edge_node_with<F, T>(
     visitor: impl Fn(EdgliInitState) + Send + 'static,
 ) -> anyhow::Result<AbortHandle>
 where
-    F: Fn(Arc<HoprEdgeClient>) -> T,
+    F: Fn(Arc<HoprEdgeClient>) -> T + Send + 'static,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
     let edgli = Edgli::new(cfg, hopr_keys, blokli_url, blokli_config, visitor).await?;
-    let (proc, abort_handle) = futures::future::abortable(f(edgli.hopr));
+    let hopr = edgli.as_hopr();
+    // Keep `edgli` alive inside the spawned task so the chain-forwarder abort handle
+    // is only released after `f` completes (or the abort handle fires).
+    let (proc, abort_handle) = abortable(async move {
+        let _edgli = edgli;
+        f(hopr).await;
+    });
     let _jh = tokio::spawn(proc);
     Ok(abort_handle)
+}
+
+/// Aborts the wrapped [`AbortHandle`] when the last owner is dropped.
+///
+/// Stored in an [`Arc`] inside [`Edgli`] so that the chain-announcement forwarder
+/// task is cancelled as soon as every clone of `Edgli` goes away.
+#[cfg(feature = "blokli")]
+struct ChainForwarderHandle(AbortHandle);
+
+#[cfg(feature = "blokli")]
+impl Drop for ChainForwarderHandle {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// The primary edge-client handle.
@@ -119,6 +141,10 @@ pub struct Edgli {
     hopr: Arc<HoprEdgeClient>,
     /// The node's packet-layer public key, stored at construction for peer-ID access.
     packet_public_key: OffchainPublicKey,
+    /// Abort handle for the chain-announcement → peer-discovery forwarder task.
+    /// Cancelled when the last `Edgli` clone is dropped.
+    #[cfg(feature = "blokli")]
+    _chain_forwarder: Arc<ChainForwarderHandle>,
 }
 
 impl std::ops::Deref for Edgli {
@@ -184,14 +210,21 @@ impl Edgli {
             Arc::new(connector)
         };
 
+        // Pre-validate the host multiaddress so errors surface from Edgli::new()
+        // rather than panicking inside the with_network closure (where the builder
+        // API does not allow returning a Result).
+        let host_multiaddr: Multiaddr = (&cfg.host)
+            .try_into()
+            .map_err(|e| EdgliError::ConfigError(format!("invalid host multiaddress: {e}")))?;
+
         // Wire chain → peer-discovery: announce events feed libp2p peer discovery.
         let (peer_discovery_tx, peer_discovery_rx) = channel(2048);
-        {
+        let chain_forwarder = {
             let chain_events = chain_connector
                 .subscribe_with_state_sync([StateSyncOptions::PublicAccounts])
                 .map_err(|e| anyhow::anyhow!("failed to subscribe to chain events: {e}"))?;
             let tx = peer_discovery_tx;
-            tokio::spawn(async move {
+            let (abortable_forwarder, forwarder_abort) = abortable(async move {
                 chain_events
                     .for_each(|event| {
                         let mut tx = tx.clone();
@@ -215,7 +248,9 @@ impl Edgli {
                     })
                     .await;
             });
-        }
+            tokio::spawn(abortable_forwarder);
+            Arc::new(ChainForwarderHandle(forwarder_abort))
+        };
 
         // Build the network graph. Cloned reference shared with cover-traffic prober.
         let path_cfg = cfg.protocol.path_planner;
@@ -247,12 +282,11 @@ impl Edgli {
             .with_chain_api(move |_ctx| chain_connector_for_builder)
             .with_graph(move |_ctx| graph)
             .with_network(move |ctx| {
+                // host_multiaddr was validated and converted before entering the
+                // builder chain; the builder API does not allow returning a Result
+                // from this closure, so any remaining errors must panic.
+                let multiaddresses = vec![host_multiaddr];
                 Box::pin(async move {
-                    let multiaddresses = vec![
-                        (&ctx.cfg.host)
-                            .try_into()
-                            .expect("host config must be a valid multiaddress"),
-                    ];
                     HoprLibp2pNetworkBuilder::new(peer_discovery_rx)
                         .build(
                             &ctx.packet_key,
@@ -274,6 +308,8 @@ impl Edgli {
         Ok(Self {
             hopr: Arc::new(node),
             packet_public_key,
+            #[cfg(feature = "blokli")]
+            _chain_forwarder: chain_forwarder,
         })
     }
 
