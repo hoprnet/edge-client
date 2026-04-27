@@ -79,7 +79,6 @@ mod impl_edgli {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hopr_lib::api::node::HoprState;
     use std::sync::Arc;
 
     /// A minimal stub that satisfies [`EdgeNodeApi`] for unit testing.

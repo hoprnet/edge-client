@@ -41,8 +41,9 @@ pub type HoprEdgeClient = Hopr<
 /// Represents the initialization states of the Edgli client.
 /// Each state corresponds to a step in the `new()` function.
 ///
-/// `as_ref()` returns a snake_case machine-readable identifier;
-/// `to_string()` returns a human-readable description for display.
+/// Both `as_ref()` and `to_string()` return the human-readable description
+/// (strum's `AsRefStr` mirrors `Display`). The snake_case identifier given
+/// by `#[strum(serialize = "...")]` is only used by `FromStr` for parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, AsRefStr, Display)]
 pub enum EdgliInitState {
     /// Validating the host configuration and network address settings
@@ -403,10 +404,11 @@ mod tests {
     #[test]
     fn no_initializing_database_state() {
         // Ensure the removed InitializingDatabase variant does not exist.
-        // This test documents the intentional removal.
-        let s = "InitializingDatabase";
+        // Use the snake_case serialize value ("initializing_database") that the variant
+        // would have been given — this is what strum's FromStr actually matches against,
+        // so the test catches any re-addition of the variant.
         assert!(
-            s.parse::<EdgliInitState>().is_err(),
+            "initializing_database".parse::<EdgliInitState>().is_err(),
             "InitializingDatabase variant must not exist in EdgliInitState"
         );
     }
