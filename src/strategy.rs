@@ -1,4 +1,4 @@
-pub use hopr_lib::HoprBalance;
+pub use hopr_lib::api::types::primitive::prelude::HoprBalance;
 pub use hopr_strategy::auto_funding::AutoFundingStrategyConfig;
 pub use hopr_strategy::channel_finalizer::ClosureFinalizerStrategyConfig;
 

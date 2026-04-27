@@ -6,7 +6,13 @@
 //! substitute a mock or stub implementation in unit tests without requiring a
 //! live HOPR node or blockchain connection.
 
-use hopr_lib::{Address, HoprBalance, HoprState, errors::HoprLibError};
+use hopr_lib::{
+    api::{
+        node::HoprState,
+        types::primitive::prelude::{Address, HoprBalance},
+    },
+    errors::HoprLibError,
+};
 
 /// High-level edge node API for consumers.
 ///
@@ -35,7 +41,10 @@ pub trait EdgeNodeApi: Send + Sync {
 mod impl_edgli {
     use super::*;
     use crate::client::Edgli;
-    use hopr_lib::{HoprNodeOperations, IncentiveChannelOperations, WxHOPR};
+    use hopr_lib::api::{
+        node::{HoprNodeOperations, IncentiveChannelOperations},
+        types::primitive::prelude::WxHOPR,
+    };
 
     #[async_trait::async_trait]
     impl EdgeNodeApi for Edgli {
@@ -70,7 +79,7 @@ mod impl_edgli {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hopr_lib::HoprState;
+    use hopr_lib::api::node::HoprState;
     use std::sync::Arc;
 
     /// A minimal stub that satisfies [`EdgeNodeApi`] for unit testing.

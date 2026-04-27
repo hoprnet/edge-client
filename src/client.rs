@@ -10,6 +10,10 @@ use hopr_chain_connector::{
 use hopr_ct_immediate::{ImmediateNeighborProber, ProberConfig};
 use hopr_lib::api::chain::{ChainEvents, StateSyncOptions};
 use hopr_lib::api::types::chain::chain_events::ChainEvent;
+use hopr_lib::api::types::{
+    crypto::prelude::OffchainPublicKey,
+    primitive::prelude::Address,
+};
 use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::{Hopr, HoprKeys, config::HoprLibConfig};
 use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
@@ -113,7 +117,7 @@ where
 pub struct Edgli {
     hopr: Arc<HoprEdgeClient>,
     /// The node's packet-layer public key, stored at construction for peer-ID access.
-    packet_public_key: hopr_lib::OffchainPublicKey,
+    packet_public_key: OffchainPublicKey,
 }
 
 impl std::ops::Deref for Edgli {
@@ -155,7 +159,7 @@ impl Edgli {
 
         let chain_key: &ChainKeypair = &hopr_keys.chain_key;
         let packet_key: &OffchainKeypair = &hopr_keys.packet_key;
-        let packet_public_key: hopr_lib::OffchainPublicKey = *packet_key.public();
+        let packet_public_key: OffchainPublicKey = *packet_key.public();
 
         visitor(EdgliInitState::IdentifyingNode);
         info!(
@@ -280,7 +284,7 @@ impl Edgli {
     /// The node's on-chain address.
     ///
     /// Convenience wrapper replacing the removed `Hopr::me_onchain()` method.
-    pub fn me_onchain(&self) -> hopr_lib::Address {
+    pub fn me_onchain(&self) -> Address {
         use hopr_lib::api::node::HasChainApi;
         self.hopr.identity().node_address
     }

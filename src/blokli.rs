@@ -6,15 +6,19 @@ use hopr_chain_connector::{
     create_trustful_safeless_hopr_blokli_connector,
 };
 use hopr_lib::{
-    Address, Balance, HoprBalance, WinningProbability, WxHOPR, XDaiBalance,
-    api::chain::{ChainReadSafeOperations, ChainValues, SafeSelector},
+    api::{
+        chain::{ChainReadSafeOperations, ChainValues, ChainWriteSafeOperations, SafeSelector},
+        types::{
+            internal::prelude::WinningProbability,
+            primitive::prelude::{Address, Balance, HoprBalance, WxHOPR, XDaiBalance},
+        },
+    },
+    builder::Keypair,
 };
 use url::Url;
 
 pub use hopr_chain_connector as connector;
-pub use hopr_lib::ChainKeypair;
-use hopr_lib::Keypair;
-use hopr_lib::api::chain::ChainWriteSafeOperations;
+pub use hopr_lib::builder::ChainKeypair;
 
 lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.gnosisvpn.io".parse().unwrap();
