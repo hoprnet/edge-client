@@ -25,11 +25,5 @@ pub use hopr_lib::api::types::{
     primitive::prelude::{Balance, XDai},
 };
 
-/// Prometheus-formatted metrics collected by the hopr-lib components.
-///
-/// Wraps [`hopr_lib::Hopr::collect_hopr_metrics`] to hide the generic
-/// type parameters from callers.
 #[cfg(feature = "telemetry")]
-pub fn collect_hopr_metrics() -> hopr_lib::errors::Result<String> {
-    hopr_lib::Hopr::<(), (), (), ()>::collect_hopr_metrics()
-}
+pub use hopr_lib::collect_hopr_metrics;

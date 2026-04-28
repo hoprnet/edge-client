@@ -294,13 +294,12 @@
             in
             pkgs.mkShell {
               nativeBuildInputs = [ pkgs.pkg-config ];
-              buildInputs =
-                [
-                  coverageToolchain
-                  pkgs.cargo-llvm-cov
-                  pkgs.pkgsStatic.openssl
-                ]
-                ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
+              buildInputs = [
+                coverageToolchain
+                pkgs.cargo-llvm-cov
+                pkgs.pkgsStatic.openssl
+              ]
+              ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
             };
 
           devShells.ci = pkgs.mkShell {

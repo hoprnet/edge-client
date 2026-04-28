@@ -8,11 +8,11 @@ use hopr_chain_connector::{
     create_trustful_hopr_blokli_connector,
 };
 use hopr_ct_immediate::{ImmediateNeighborProber, ProberConfig};
-use hopr_lib::api::{Multiaddr, chain::{ChainEvents, StateSyncOptions}};
 use hopr_lib::api::types::chain::chain_events::ChainEvent;
-use hopr_lib::api::types::{
-    crypto::prelude::OffchainPublicKey,
-    primitive::prelude::Address,
+use hopr_lib::api::types::{crypto::prelude::OffchainPublicKey, primitive::prelude::Address};
+use hopr_lib::api::{
+    Multiaddr,
+    chain::{ChainEvents, StateSyncOptions},
 };
 use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::{Hopr, HoprKeys, config::HoprLibConfig};
@@ -275,7 +275,7 @@ impl Edgli {
         let chain_connector_for_builder = chain_connector.clone();
 
         visitor(EdgliInitState::StartingNode);
-        let node = HoprBuilder::new()
+        let node = HoprBuilder::default()
             .with_identity(chain_key, packet_key)
             .with_config(cfg.clone())
             .with_safe_module(&safe_address, &module_address)
@@ -345,12 +345,12 @@ impl Edgli {
         &self,
         cfg: super::strategy::MultiStrategyConfig,
     ) -> anyhow::Result<AbortHandle> {
+        use super::strategy::EdgeStrategyKind;
         use hopr_strategy::{
             auto_funding::AutoFundingStrategy,
             channel_finalizer::ClosureFinalizerStrategy,
             strategy::{MultiStrategy, Strategy},
         };
-        use super::strategy::EdgeStrategyKind;
 
         let interval = cfg.execution_interval;
         let node = self.hopr.clone();
