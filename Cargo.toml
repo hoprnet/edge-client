@@ -9,13 +9,12 @@ repository = "https://github.com/hoprnet/edge-client"
 license = "GPL-3.0-only"
 
 [features]
-default = ["telemetry-hopr", "runtime-tokio", "blokli"]
-# Enable hopr-lib telemetry (Prometheus metrics via OpenTelemetry backend)
-telemetry-hopr = ["hopr-lib/telemetry"]
+default = ["runtime-tokio", "blokli"]
 runtime-tokio = ["dep:tokio", "hopr-lib/runtime-tokio"]
 session-server = ["hopr-lib/session-server"]
-# OpenTelemetry OTLP exporter for tracing spans
+# Enable hopr-lib telemetry (Prometheus metrics) and OpenTelemetry OTLP exporter
 telemetry = [
+  "hopr-lib/telemetry",
   "dep:opentelemetry",
   "dep:opentelemetry-otlp",
   "dep:opentelemetry_sdk",
@@ -50,7 +49,11 @@ tokio = { version = "1.52.1", features = [
   "tracing",
 ], optional = true }
 tracing = { version = "0.1.43", features = ["release_max_level_debug"] }
-tracing-subscriber = { version = "0.3.22", features = ["fmt", "json", "env-filter"] }
+tracing-subscriber = { version = "0.3.22", features = [
+  "fmt",
+  "json",
+  "env-filter",
+] }
 opentelemetry = { version = "0.31.0", optional = true }
 opentelemetry-otlp = { version = "0.31.0", default-features = false, features = [
   "trace",
@@ -86,9 +89,6 @@ hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "5ed1213a475
 mimalloc = { version = "0.1.48", default-features = false, features = [
   "secure",
 ] }
-
-[dev-dependencies]
-tokio = { version = "1.52.1", features = ["rt-multi-thread", "macros"] }
 
 [build-dependencies]
 anyhow = "1.0.100"

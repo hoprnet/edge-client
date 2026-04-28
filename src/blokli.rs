@@ -46,6 +46,26 @@ pub struct TicketStats {
     pub winning_probability: WinningProbability,
 }
 
+/// Trait facade for blockchain operations that do not require an active Safe.
+///
+/// Consumers should program against this trait rather than using
+/// [`SafelessInteractor`] directly, which makes unit testing possible without
+/// a live blockchain connection.
+#[async_trait::async_trait]
+pub trait SafeOperations: Send + Sync {
+    /// Look up an existing Safe/module deployment for this key-pair.
+    async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>>;
+
+    /// Deploy a new Safe and module, funding it with `token_amount` WxHOPR.
+    async fn deploy_safe(&self, token_amount: HoprBalance) -> anyhow::Result<SafeModuleDeploymentResult>;
+
+    /// Fetch current on-chain ticket pricing parameters.
+    async fn ticket_stats(&self) -> anyhow::Result<TicketStats>;
+
+    /// Fetch the WxHOPR and xDAI balances for this key-pair.
+    async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)>;
+}
+
 /// Blockchain interactor that operates without a HOPR Safe module.
 ///
 /// Used for on-boarding flows that need to query balances or deploy a Safe
@@ -139,6 +159,25 @@ impl SafelessInteractor {
             .await
             .map_err(anyhow::Error::from)?;
         Ok((hopr, xdai))
+    }
+}
+
+#[async_trait::async_trait]
+impl SafeOperations for SafelessInteractor {
+    async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>> {
+        SafelessInteractor::retrieve_safe(self).await
+    }
+
+    async fn deploy_safe(&self, token_amount: HoprBalance) -> anyhow::Result<SafeModuleDeploymentResult> {
+        SafelessInteractor::deploy_safe(self, token_amount).await
+    }
+
+    async fn ticket_stats(&self) -> anyhow::Result<TicketStats> {
+        SafelessInteractor::ticket_stats(self).await
+    }
+
+    async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
+        SafelessInteractor::balances(self).await
     }
 }
 

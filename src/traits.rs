@@ -10,12 +10,23 @@ use hopr_lib::{
     api::{
         node::HoprState,
         types::{
-            internal::{channels::ChannelEntry, prelude::WinningProbability},
+            internal::channels::ChannelEntry,
             primitive::prelude::{Address, Balance, HoprBalance, XDai},
         },
     },
     errors::HoprLibError,
 };
+
+/// All balance information for the node wallet and its linked Safe.
+#[derive(Clone, Debug)]
+pub struct NodeBalances {
+    /// WxHOPR token balance held directly by the node wallet.
+    pub node_wxhopr: HoprBalance,
+    /// WxHOPR token balance held inside the node's Safe.
+    pub safe_wxhopr: HoprBalance,
+    /// xDAI (native gas token) balance held directly by the node wallet.
+    pub node_xdai: Balance<XDai>,
+}
 
 /// High-level edge node API for consumers.
 ///
@@ -29,9 +40,6 @@ pub trait EdgeNodeApi: Send + Sync {
     /// The node's on-chain Ethereum address.
     fn me_onchain(&self) -> Address;
 
-    /// The node's off-chain peer ID (libp2p string representation).
-    fn me_peer_id(&self) -> String;
-
     /// The Safe contract address associated with this node.
     fn safe_address(&self) -> Address;
 
@@ -42,14 +50,8 @@ pub trait EdgeNodeApi: Send + Sync {
 
     // --- Balances ---
 
-    /// WxHOPR token balance held directly by the node wallet.
-    async fn get_balance(&self) -> std::result::Result<HoprBalance, HoprLibError>;
-
-    /// WxHOPR token balance held inside the node's Safe.
-    async fn get_safe_balance(&self) -> std::result::Result<HoprBalance, HoprLibError>;
-
-    /// xDAI (native gas token) balance held directly by the node wallet.
-    async fn get_xdai_balance(&self) -> std::result::Result<Balance<XDai>, HoprLibError>;
+    /// All balance information for the node wallet and its linked Safe.
+    async fn balances(&self) -> std::result::Result<NodeBalances, HoprLibError>;
 
     // --- Channels ---
 
@@ -67,16 +69,6 @@ pub trait EdgeNodeApi: Send + Sync {
         target: Address,
         amount: HoprBalance,
     ) -> std::result::Result<(), HoprLibError>;
-
-    // --- Ticket / incentive ---
-
-    /// Current minimum ticket price set by the network.
-    async fn get_ticket_price(&self) -> std::result::Result<HoprBalance, HoprLibError>;
-
-    /// Current minimum incoming ticket winning probability set by the network.
-    async fn get_ticket_win_probability(
-        &self,
-    ) -> std::result::Result<WinningProbability, HoprLibError>;
 
     // --- Peer discovery ---
 
@@ -103,10 +95,6 @@ mod impl_edgli {
             Edgli::me_onchain(self)
         }
 
-        fn me_peer_id(&self) -> String {
-            Edgli::me_peer_id(self)
-        }
-
         fn safe_address(&self) -> Address {
             let hopr = self.as_hopr();
             HasChainApi::identity(hopr.as_ref()).safe_address
@@ -116,25 +104,18 @@ mod impl_edgli {
             HoprNodeOperations::status(self.as_hopr().as_ref())
         }
 
-        async fn get_balance(&self) -> std::result::Result<HoprBalance, HoprLibError> {
+        async fn balances(&self) -> std::result::Result<NodeBalances, HoprLibError> {
             let hopr = self.as_hopr();
-            IncentiveChannelOperations::get_balance::<WxHOPR>(hopr.as_ref())
+            let node_wxhopr = IncentiveChannelOperations::get_balance::<WxHOPR>(hopr.as_ref())
                 .await
-                .map_err(|e| HoprLibError::GeneralError(e.to_string()))
-        }
-
-        async fn get_safe_balance(&self) -> std::result::Result<HoprBalance, HoprLibError> {
-            let hopr = self.as_hopr();
-            IncentiveChannelOperations::get_safe_balance::<WxHOPR>(hopr.as_ref())
+                .map_err(|e| HoprLibError::GeneralError(e.to_string()))?;
+            let safe_wxhopr = IncentiveChannelOperations::get_safe_balance::<WxHOPR>(hopr.as_ref())
                 .await
-                .map_err(|e| HoprLibError::GeneralError(e.to_string()))
-        }
-
-        async fn get_xdai_balance(&self) -> std::result::Result<Balance<XDai>, HoprLibError> {
-            let hopr = self.as_hopr();
-            IncentiveChannelOperations::get_balance::<XDai>(hopr.as_ref())
+                .map_err(|e| HoprLibError::GeneralError(e.to_string()))?;
+            let node_xdai = IncentiveChannelOperations::get_balance::<XDai>(hopr.as_ref())
                 .await
-                .map_err(|e| HoprLibError::GeneralError(e.to_string()))
+                .map_err(|e| HoprLibError::GeneralError(e.to_string()))?;
+            Ok(NodeBalances { node_wxhopr, safe_wxhopr, node_xdai })
         }
 
         async fn my_outgoing_channels(
@@ -156,22 +137,6 @@ mod impl_edgli {
             IncentiveChannelOperations::open_channel(hopr.as_ref(), target, amount)
                 .await
                 .map(|_| ())
-                .map_err(|e| HoprLibError::GeneralError(e.to_string()))
-        }
-
-        async fn get_ticket_price(&self) -> std::result::Result<HoprBalance, HoprLibError> {
-            let hopr = self.as_hopr();
-            IncentiveChannelOperations::get_ticket_price(hopr.as_ref())
-                .await
-                .map_err(|e| HoprLibError::GeneralError(e.to_string()))
-        }
-
-        async fn get_ticket_win_probability(
-            &self,
-        ) -> std::result::Result<WinningProbability, HoprLibError> {
-            let hopr = self.as_hopr();
-            IncentiveChannelOperations::get_minimum_incoming_ticket_win_probability(hopr.as_ref())
-                .await
                 .map_err(|e| HoprLibError::GeneralError(e.to_string()))
         }
 
@@ -208,13 +173,11 @@ mod tests {
     struct StubEdgeNode {
         address: Address,
         safe: Address,
-        peer_id: String,
         state: HoprState,
-        balance: HoprBalance,
-        xdai: Balance<XDai>,
+        node_wxhopr: HoprBalance,
+        safe_wxhopr: HoprBalance,
+        node_xdai: Balance<XDai>,
         channels: Vec<ChannelEntry>,
-        ticket_price: HoprBalance,
-        win_prob: WinningProbability,
         peers: Vec<Address>,
     }
 
@@ -223,13 +186,11 @@ mod tests {
             Self {
                 address: Address::default(),
                 safe: Address::default(),
-                peer_id: "16Uiu2HAmStub000".into(),
                 state: HoprState::Running,
-                balance: HoprBalance::zero(),
-                xdai: Balance::zero(),
+                node_wxhopr: HoprBalance::zero(),
+                safe_wxhopr: HoprBalance::zero(),
+                node_xdai: Balance::zero(),
                 channels: vec![],
-                ticket_price: HoprBalance::zero(),
-                win_prob: WinningProbability::ALWAYS,
                 peers: vec![],
             }
         }
@@ -241,10 +202,6 @@ mod tests {
             self.address
         }
 
-        fn me_peer_id(&self) -> String {
-            self.peer_id.clone()
-        }
-
         fn safe_address(&self) -> Address {
             self.safe
         }
@@ -253,16 +210,12 @@ mod tests {
             self.state
         }
 
-        async fn get_balance(&self) -> std::result::Result<HoprBalance, HoprLibError> {
-            Ok(self.balance)
-        }
-
-        async fn get_safe_balance(&self) -> std::result::Result<HoprBalance, HoprLibError> {
-            Ok(self.balance)
-        }
-
-        async fn get_xdai_balance(&self) -> std::result::Result<Balance<XDai>, HoprLibError> {
-            Ok(self.xdai)
+        async fn balances(&self) -> std::result::Result<NodeBalances, HoprLibError> {
+            Ok(NodeBalances {
+                node_wxhopr: self.node_wxhopr,
+                safe_wxhopr: self.safe_wxhopr,
+                node_xdai: self.node_xdai,
+            })
         }
 
         async fn my_outgoing_channels(
@@ -279,16 +232,6 @@ mod tests {
             Ok(())
         }
 
-        async fn get_ticket_price(&self) -> std::result::Result<HoprBalance, HoprLibError> {
-            Ok(self.ticket_price)
-        }
-
-        async fn get_ticket_win_probability(
-            &self,
-        ) -> std::result::Result<WinningProbability, HoprLibError> {
-            Ok(self.win_prob)
-        }
-
         async fn connected_peer_addresses(
             &self,
         ) -> std::result::Result<Vec<Address>, HoprLibError> {
@@ -300,12 +243,6 @@ mod tests {
     fn stub_me_onchain_returns_configured_address() {
         let node = StubEdgeNode::default();
         assert_eq!(node.me_onchain(), Address::default());
-    }
-
-    #[test]
-    fn stub_me_peer_id_returns_configured_peer_id() {
-        let node = StubEdgeNode::default();
-        assert_eq!(node.me_peer_id(), "16Uiu2HAmStub000");
     }
 
     #[test]
@@ -321,21 +258,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stub_get_balance_returns_zero() {
+    async fn stub_balances_returns_zero() {
         let node = StubEdgeNode::default();
-        assert_eq!(node.get_balance().await.unwrap(), HoprBalance::zero());
-    }
-
-    #[tokio::test]
-    async fn stub_get_safe_balance_returns_zero() {
-        let node = StubEdgeNode::default();
-        assert_eq!(node.get_safe_balance().await.unwrap(), HoprBalance::zero());
-    }
-
-    #[tokio::test]
-    async fn stub_get_xdai_balance_returns_zero() {
-        let node = StubEdgeNode::default();
-        assert_eq!(node.get_xdai_balance().await.unwrap(), Balance::zero());
+        let b = node.balances().await.unwrap();
+        assert_eq!(b.node_wxhopr, HoprBalance::zero());
+        assert_eq!(b.safe_wxhopr, HoprBalance::zero());
+        assert_eq!(b.node_xdai, Balance::zero());
     }
 
     #[tokio::test]
@@ -352,21 +280,6 @@ mod tests {
                 .await
                 .is_ok()
         );
-    }
-
-    #[tokio::test]
-    async fn stub_get_ticket_price_returns_zero() {
-        let node = StubEdgeNode::default();
-        assert_eq!(node.get_ticket_price().await.unwrap(), HoprBalance::zero());
-    }
-
-    #[tokio::test]
-    async fn stub_get_ticket_win_probability_returns_always() {
-        let node = StubEdgeNode::default();
-        let prob = node.get_ticket_win_probability().await.unwrap();
-        // WinningProbability only implements PartialEq<f64> and PartialEq<EncodedWinProb>,
-        // not PartialEq<WinningProbability>. Compare via f64 conversion instead.
-        assert_eq!(prob, 1.0_f64);
     }
 
     #[tokio::test]
