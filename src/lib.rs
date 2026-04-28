@@ -14,6 +14,7 @@ pub use hopr_lib;
 pub use blokli::*;
 pub use hopr_chain_connector::BlockchainConnectorConfig;
 
+#[cfg(feature = "runtime-tokio")]
 pub use client::*;
 pub use traits::{EdgeNodeApi, NodeBalances};
 
