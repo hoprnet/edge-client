@@ -96,7 +96,6 @@ jobs:
     secrets:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
       codecov_token: ${{ secrets.CODECOV_TOKEN }}
-
   build-library:
     name: Library ${{ matrix.architecture }}
     strategy:
