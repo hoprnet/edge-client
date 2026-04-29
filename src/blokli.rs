@@ -112,6 +112,12 @@ impl SafelessInteractor {
         })
     }
 
+    #[tracing::instrument(skip(self), ret)]
+    pub async fn transfer_wxhopr_to_safe(&self, safe_address: Address, amount: HoprBalance) -> anyhow::Result<()> {
+        self.connector.withdraw(amount, &safe_address).await?.await?;
+        Ok(())
+    }
+
     pub async fn ticket_stats(&self) -> anyhow::Result<TicketStats> {
         Ok(TicketStats {
             ticket_price: hopr_lib::api::chain::ChainValues::minimum_ticket_price(&self.connector)
