@@ -21,7 +21,11 @@ pub use hopr_chain_connector;
 ///
 /// An edge node (entry/exit node) has no ticket management (`TMgr = ()`),
 /// since it originates packets but does not relay or redeem tickets.
-pub type HoprEdgeClient = hopr_reference::EdgeHopr;
+pub type HoprEdgeClient = hopr_reference::EdgeHopr<
+    Arc<HoprBlockchainSafeConnector<BlokliClient>>,
+    hopr_reference::SharedChannelGraph,
+    hopr_reference::HoprNetwork,
+>;
 
 /// Represents the initialization states of the Edgli client.
 /// Each state corresponds to a step in the `new()` function.
@@ -181,8 +185,7 @@ impl Edgli {
 
         visitor(EdgliInitState::StartingNode);
         let node = build_edge_with_chain(
-            chain_key,
-            packet_key,
+            (chain_key, packet_key),
             cfg,
             None, // use default FullNetworkDiscovery ProberConfig
             chain_connector,
