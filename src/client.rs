@@ -8,7 +8,7 @@ use hopr_chain_connector::{
 use hopr_lib::api::types::{crypto::prelude::OffchainPublicKey, primitive::prelude::Address};
 use hopr_lib::builder::{ChainKeypair, Keypair, OffchainKeypair};
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
-use hopr_reference::build_edge_with_chain;
+use hopr_reference::build_with_chain;
 use strum::{AsRefStr, Display, EnumString};
 use tracing::info;
 
@@ -19,13 +19,11 @@ pub use hopr_chain_connector;
 
 /// The concrete HOPR edge node type used by this client.
 ///
-/// An edge node (entry/exit node) has no ticket management (`TMgr = ()`),
-/// since it originates packets but does not relay or redeem tickets.
-pub type HoprEdgeClient = hopr_reference::EdgeHopr<
-    Arc<HoprBlockchainSafeConnector<BlokliClient>>,
-    hopr_reference::SharedChannelGraph,
-    hopr_reference::HoprNetwork,
->;
+/// Edge nodes use the same [`hopr_reference::FullHopr`] type as full relay nodes —
+/// both go through `build_full` with a [`hopr_reference::SharedTicketManager`]
+/// so outgoing ticket indices and any unexpected incoming tickets are tracked
+/// correctly. The session-server feature is not enabled, so no session server runs.
+pub type HoprEdgeClient = hopr_reference::FullHopr;
 
 /// Represents the initialization states of the Edgli client.
 /// Each state corresponds to a step in the `new()` function.
@@ -184,8 +182,9 @@ impl Edgli {
         info!("Building HOPR edge node via hopr-reference");
 
         visitor(EdgliInitState::StartingNode);
-        let node = build_edge_with_chain(
-            (chain_key, packet_key),
+        let node = build_with_chain(
+            chain_key,
+            packet_key,
             cfg,
             None, // use default FullNetworkDiscovery ProberConfig
             chain_connector,
