@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use futures::future::{AbortHandle, abortable};
-use hopr_chain_connector::{
-    BlockchainConnectorConfig, HoprBlockchainSafeConnector, blokli_client::BlokliClient,
-    create_trustful_hopr_blokli_connector,
-};
+use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
 use hopr_lib::api::types::{crypto::prelude::OffchainPublicKey, primitive::prelude::Address};
 use hopr_lib::builder::{ChainKeypair, Keypair, OffchainKeypair};
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
