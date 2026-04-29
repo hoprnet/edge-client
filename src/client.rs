@@ -323,12 +323,18 @@ mod tests {
     #[test]
     fn no_initializing_database_state() {
         // Ensure the removed InitializingDatabase variant does not exist.
-        // Use the snake_case serialize value ("initializing_database") that the variant
-        // would have been given — this is what strum's FromStr actually matches against,
-        // so the test catches any re-addition of the variant.
-        assert!(
-            "initializing_database".parse::<EdgliInitState>().is_err(),
-            "InitializingDatabase variant must not exist in EdgliInitState"
-        );
+        // Parse the exact snake_case serialize form strum would derive for it.
+        assert!("initializing_database".parse::<EdgliInitState>().is_err());
+        // Exhaustive match — the compiler enforces this if a new variant is added.
+        fn _exhaustive(s: EdgliInitState) {
+            match s {
+                EdgliInitState::ValidatingConfig
+                | EdgliInitState::IdentifyingNode
+                | EdgliInitState::ConnectingBlockchain
+                | EdgliInitState::CreatingNode
+                | EdgliInitState::StartingNode
+                | EdgliInitState::Ready => {}
+            }
+        }
     }
 }
