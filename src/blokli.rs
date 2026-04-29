@@ -12,7 +12,7 @@ use url::Url;
 
 pub use hopr_chain_connector as connector;
 pub use hopr_lib::ChainKeypair;
-use hopr_lib::api::chain::ChainWriteSafeOperations;
+use hopr_lib::api::chain::{ChainWriteAccountOperations, ChainWriteSafeOperations};
 
 lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.gnosisvpn.io".parse().unwrap();
@@ -110,6 +110,19 @@ impl SafelessInteractor {
             safe_address: safe.address,
             module_address: safe.module,
         })
+    }
+
+    #[tracing::instrument(skip(self), ret)]
+    pub async fn withdraw_wxhopr(
+        &self,
+        safe_address: Address,
+        amount: HoprBalance,
+    ) -> anyhow::Result<()> {
+        self.connector
+            .withdraw(amount, &safe_address)
+            .await?
+            .await?;
+        Ok(())
     }
 
     pub async fn ticket_stats(&self) -> anyhow::Result<TicketStats> {
