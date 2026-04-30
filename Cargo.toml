@@ -66,17 +66,20 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "ab2aa0e9241556958e8b8984c55b3705e63742ee", features = [
+# hopr-api 1.8.2 added SafeSelector::NodeAddress but hopr-chain-connector at
+# the pinned rev was written against 1.8.1. Pin to avoid the breaking drift.
+hopr-api = "=1.8.1"
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "a6e4e4ad5ce55fe0b22007e05b6d1a9e561982d7", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "ab2aa0e9241556958e8b8984c55b3705e63742ee", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "a6e4e4ad5ce55fe0b22007e05b6d1a9e561982d7", features = [
   "runtime-tokio",
 ] }
-hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "ab2aa0e9241556958e8b8984c55b3705e63742ee", features = [
+hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "a6e4e4ad5ce55fe0b22007e05b6d1a9e561982d7", features = [
   "runtime-tokio",
 ] }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "ab2aa0e9241556958e8b8984c55b3705e63742ee", features = [
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "a6e4e4ad5ce55fe0b22007e05b6d1a9e561982d7", features = [
   "strategy-auto-funding",
   "strategy-closure-finalizer",
 ] }
