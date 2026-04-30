@@ -7,7 +7,9 @@ use hopr_chain_connector::{
 };
 use hopr_lib::{
     api::{
-        chain::{ChainReadSafeOperations, ChainValues, ChainWriteSafeOperations, SafeSelector},
+        chain::{
+            ChainReadSafeOperations, ChainValues, ChainWriteAccountOperations, ChainWriteSafeOperations, SafeSelector,
+        },
         types::{
             internal::prelude::WinningProbability,
             primitive::prelude::{Address, Balance, HoprBalance, WxHOPR, XDaiBalance},
@@ -137,6 +139,19 @@ impl SafelessInteractor {
             safe_address: safe.address,
             module_address: safe.module,
         })
+    }
+
+    #[tracing::instrument(skip(self), ret)]
+    pub async fn withdraw_wxhopr(
+        &self,
+        safe_address: Address,
+        amount: HoprBalance,
+    ) -> anyhow::Result<()> {
+        self.connector
+            .withdraw(amount, &safe_address)
+            .await?
+            .await?;
+        Ok(())
     }
 
     pub async fn ticket_stats(&self) -> anyhow::Result<TicketStats> {
