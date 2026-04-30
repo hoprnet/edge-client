@@ -69,17 +69,17 @@ url = "2.5.8"
 # hopr-api 1.8.2 added SafeSelector::NodeAddress but hopr-chain-connector at
 # the pinned rev was written against 1.8.1. Pin to avoid the breaking drift.
 hopr-api = "=1.8.1"
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "3bb9bee79c96eb5dc14fd0d827c6803e4761cb68", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "0a55bbddc6e281533b9127885c4901990c51a2e4", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "3bb9bee79c96eb5dc14fd0d827c6803e4761cb68", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "0a55bbddc6e281533b9127885c4901990c51a2e4", features = [
   "runtime-tokio",
 ] }
-hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "3bb9bee79c96eb5dc14fd0d827c6803e4761cb68", features = [
+hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "0a55bbddc6e281533b9127885c4901990c51a2e4", features = [
   "runtime-tokio",
 ] }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "3bb9bee79c96eb5dc14fd0d827c6803e4761cb68", features = [
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "0a55bbddc6e281533b9127885c4901990c51a2e4", features = [
   "strategy-auto-funding",
   "strategy-closure-finalizer",
 ] }
