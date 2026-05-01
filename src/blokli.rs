@@ -50,8 +50,9 @@ impl SafelessInteractor {
         let blokli_client = new_blokli_client(blokli_provider);
 
         let cfg = connector_config.unwrap_or_default();
-        let connector =
+        let mut connector =
             create_trustful_safeless_hopr_blokli_connector(chain_key, cfg, blokli_client).await?;
+        connector.connect().await?;
 
         Ok(Self {
             connector: Arc::new(connector),
