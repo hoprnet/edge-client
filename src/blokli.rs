@@ -1,6 +1,9 @@
 use hopr_chain_connector::{
     BlockchainConnectorConfig, HoprBlockchainBasicConnector,
-    blokli_client::{BlokliClient, BlokliClientConfig},
+    blokli_client::{
+        BlokliClient, BlokliClientConfig, BlokliQueryClient, BlokliSubscriptionClient,
+        BlokliTransactionClient,
+    },
     create_trustful_safeless_hopr_blokli_connector,
 };
 use hopr_lib::{
@@ -36,22 +39,43 @@ pub struct TicketStats {
     pub winning_probability: f64,
 }
 
-pub struct SafelessInteractor {
-    connector: Arc<HoprBlockchainBasicConnector<BlokliClient>>,
+pub struct SafelessInteractor<C = BlokliClient> {
+    connector: Arc<HoprBlockchainBasicConnector<C>>,
     chain_key: ChainKeypair,
 }
 
-impl SafelessInteractor {
+impl SafelessInteractor<BlokliClient> {
     pub async fn new(
         blokli_provider: Option<Url>,
         chain_key: &ChainKeypair,
         connector_config: Option<BlockchainConnectorConfig>,
     ) -> anyhow::Result<Self> {
-        let blokli_client = new_blokli_client(blokli_provider);
+        Self::new_with_client(
+            new_blokli_client(blokli_provider),
+            chain_key,
+            connector_config,
+        )
+        .await
+    }
+}
 
+impl<C> SafelessInteractor<C>
+where
+    C: BlokliSubscriptionClient
+        + BlokliQueryClient
+        + BlokliTransactionClient
+        + Send
+        + Sync
+        + 'static,
+{
+    pub async fn new_with_client(
+        client: C,
+        chain_key: &ChainKeypair,
+        connector_config: Option<BlockchainConnectorConfig>,
+    ) -> anyhow::Result<Self> {
         let cfg = connector_config.unwrap_or_default();
         let mut connector =
-            create_trustful_safeless_hopr_blokli_connector(chain_key, cfg, blokli_client).await?;
+            create_trustful_safeless_hopr_blokli_connector(chain_key, cfg, client).await?;
         connector.connect().await?;
 
         Ok(Self {
@@ -62,7 +86,7 @@ impl SafelessInteractor {
 
     async fn execute<F, T>(&self, f: F) -> anyhow::Result<T>
     where
-        F: Fn(Arc<HoprBlockchainBasicConnector<BlokliClient>>) -> T,
+        F: Fn(Arc<HoprBlockchainBasicConnector<C>>) -> T,
     {
         Ok(f(self.connector.clone()))
     }
@@ -160,4 +184,96 @@ impl SafelessInteractor {
 pub struct SafeModuleDeploymentResult {
     pub safe_address: Address,
     pub module_address: Address,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hopr_chain_connector::testing::BlokliTestStateBuilder;
+
+    fn placeholder_module_addr() -> Address {
+        [0x11u8; 20].into()
+    }
+
+    fn build_test_client(
+        node: Address,
+        node_wxhopr: HoprBalance,
+        recipient: Address,
+    ) -> hopr_chain_connector::testing::BlokliTestClient<
+        hopr_chain_connector::testing::FullStateEmulator,
+    > {
+        BlokliTestStateBuilder::default()
+            .with_balances([(node, node_wxhopr)])
+            .with_balances([(node, XDaiBalance::new_base(10))])
+            .with_balances([(recipient, HoprBalance::zero())])
+            .with_balances([(recipient, XDaiBalance::zero())])
+            .with_hopr_network_chain_info("rotsee")
+            .build_dynamic_client(placeholder_module_addr())
+    }
+
+    #[tokio::test]
+    async fn withdraw_wxhopr_succeeds_with_sufficient_balance() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+        let recipient: Address = [0x22u8; 20].into();
+
+        let client = build_test_client(me, HoprBalance::new_base(1000), recipient);
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        interactor
+            .withdraw_wxhopr(recipient, HoprBalance::new_base(10))
+            .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn withdraw_wxhopr_fails_with_insufficient_balance() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+        let recipient: Address = [0x22u8; 20].into();
+
+        let client = build_test_client(me, HoprBalance::new_base(1), recipient);
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        let err = interactor
+            .withdraw_wxhopr(recipient, HoprBalance::new_base(10))
+            .await
+            .expect_err("expected withdrawal to fail with insufficient balance");
+        let msg = format!("{err:#}");
+        // The chain emulator rejects the tx (insufficient balance), which surfaces as a
+        // revert. Crucially, it must NOT be "connector is not connected": that would mean
+        // we're failing for the wrong reason and would mask a regression of the connect()
+        // call in new_with_client.
+        assert!(
+            msg.contains("Reverted"),
+            "expected a reverted-tx error from the chain emulator, got: {msg}"
+        );
+        assert!(
+            !msg.contains("not connected"),
+            "withdrawal failed because the connector was not connected, not because of \
+             insufficient balance — connect() regression: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn new_with_client_yields_connected_interactor() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+        let recipient: Address = [0x22u8; 20].into();
+
+        let client = build_test_client(me, HoprBalance::new_base(100), recipient);
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        // Regression guard: withdraw is in ChainWriteAccountOperations, which requires the
+        // connector to be connected. If new_with_client ever stops calling connect(), this
+        // call will fail with InvalidState("connector is not connected").
+        interactor
+            .withdraw_wxhopr(recipient, HoprBalance::new_base(1))
+            .await?;
+
+        Ok(())
+    }
 }

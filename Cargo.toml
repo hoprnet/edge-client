@@ -82,6 +82,10 @@ mimalloc = { version = "0.1.48", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "e8e0b63d26e67206e8192384ad8eb7a7de22a1c6", features = [
+  "runtime-tokio",
+  "testing",
+] }
 
 [build-dependencies]
 anyhow = "1.0.100"
