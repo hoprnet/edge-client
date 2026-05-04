@@ -189,7 +189,7 @@ pub struct SafeModuleDeploymentResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hopr_chain_connector::testing::BlokliTestStateBuilder;
+    use hopr_chain_connector::{errors::ConnectorError, testing::BlokliTestStateBuilder};
 
     fn placeholder_module_addr() -> Address {
         [0x11u8; 20].into()
@@ -240,19 +240,15 @@ mod tests {
             .withdraw_wxhopr(recipient, HoprBalance::new_base(10))
             .await
             .expect_err("expected withdrawal to fail with insufficient balance");
-        let msg = format!("{err:#}");
-        // The chain emulator rejects the tx (insufficient balance), which surfaces as a
-        // revert. Crucially, it must NOT be "connector is not connected": that would mean
-        // we're failing for the wrong reason and would mask a regression of the connect()
-        // call in new_with_client.
+        let connector_err = err
+            .downcast_ref::<ConnectorError>()
+            .unwrap_or_else(|| panic!("expected ConnectorError, got: {err:#}"));
+        // `as_transaction_rejection_error` returns `Some` only for tx-rejection variants
+        // (Reverted / ValidationFailed). `InvalidState("not connected")` returns `None`,
+        // so this single match also guards against a connect() regression.
         assert!(
-            msg.contains("Reverted"),
-            "expected a reverted-tx error from the chain emulator, got: {msg}"
-        );
-        assert!(
-            !msg.contains("not connected"),
-            "withdrawal failed because the connector was not connected, not because of \
-             insufficient balance — connect() regression: {msg}"
+            matches!(connector_err.as_transaction_rejection_error(), Some(_)),
+            "expected tx-rejection error from chain emulator, got: {connector_err:?}"
         );
 
         Ok(())
