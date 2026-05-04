@@ -247,7 +247,7 @@ mod tests {
         // (Reverted / ValidationFailed). `InvalidState("not connected")` returns `None`,
         // so this single match also guards against a connect() regression.
         assert!(
-            matches!(connector_err.as_transaction_rejection_error(), Some(_)),
+            connector_err.as_transaction_rejection_error().is_some(),
             "expected tx-rejection error from chain emulator, got: {connector_err:?}"
         );
 
