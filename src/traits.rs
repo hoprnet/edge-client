@@ -115,7 +115,11 @@ mod impl_edgli {
             let node_xdai = IncentiveChannelOperations::get_balance::<XDai>(hopr.as_ref())
                 .await
                 .map_err(|e| HoprLibError::GeneralError(e.to_string()))?;
-            Ok(NodeBalances { node_wxhopr, safe_wxhopr, node_xdai })
+            Ok(NodeBalances {
+                node_wxhopr,
+                safe_wxhopr,
+                node_xdai,
+            })
         }
 
         async fn my_outgoing_channels(
