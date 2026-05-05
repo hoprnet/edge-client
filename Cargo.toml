@@ -69,18 +69,18 @@ url = "2.5.8"
 # hopr-api 1.8.2 added SafeSelector::NodeAddress but hopr-chain-connector at
 # the pinned rev was written against 1.8.1. Pin to avoid the breaking drift.
 hopr-api = "=1.8.1"
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88689dd6a110e514202946867e430f387351da", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "e11816c5dc70599e9287e131a0df7ea361373218", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88689dd6a110e514202946867e430f387351da", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "e11816c5dc70599e9287e131a0df7ea361373218", features = [
   "runtime-tokio",
 ] }
-hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88689dd6a110e514202946867e430f387351da", features = [
+hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "e11816c5dc70599e9287e131a0df7ea361373218", features = [
   "runtime-tokio",
 ] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88689dd6a110e514202946867e430f387351da" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88689dd6a110e514202946867e430f387351da", features = [
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "e11816c5dc70599e9287e131a0df7ea361373218" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "e11816c5dc70599e9287e131a0df7ea361373218", features = [
   "strategy-auto-funding",
   "strategy-closure-finalizer",
 ] }
@@ -89,6 +89,12 @@ hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88689dd6a
 [target.'cfg(target_os = "linux")'.dependencies]
 mimalloc = { version = "0.1.48", default-features = false, features = [
   "secure",
+] }
+
+[dev-dependencies]
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "e11816c5dc70599e9287e131a0df7ea361373218", features = [
+  "runtime-tokio",
+  "testing",
 ] }
 
 [build-dependencies]

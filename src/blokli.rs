@@ -2,13 +2,17 @@ use std::sync::Arc;
 
 use hopr_chain_connector::{
     BlockchainConnectorConfig, HoprBlockchainBasicConnector,
-    blokli_client::{BlokliClient, BlokliClientConfig},
+    blokli_client::{
+        BlokliClient, BlokliClientConfig, BlokliQueryClient, BlokliSubscriptionClient,
+        BlokliTransactionClient,
+    },
     create_trustful_safeless_hopr_blokli_connector,
 };
 use hopr_lib::{
     api::{
         chain::{
-            ChainReadSafeOperations, ChainValues, ChainWriteAccountOperations, ChainWriteSafeOperations, SafeSelector,
+            ChainReadSafeOperations, ChainValues, ChainWriteAccountOperations,
+            ChainWriteSafeOperations, SafeSelector,
         },
         types::{
             internal::prelude::WinningProbability,
@@ -59,7 +63,10 @@ pub trait SafeOperations: Send + Sync {
     async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>>;
 
     /// Deploy a new Safe and module, funding it with `token_amount` WxHOPR.
-    async fn deploy_safe(&self, token_amount: HoprBalance) -> anyhow::Result<SafeModuleDeploymentResult>;
+    async fn deploy_safe(
+        &self,
+        token_amount: HoprBalance,
+    ) -> anyhow::Result<SafeModuleDeploymentResult>;
 
     /// Fetch current on-chain ticket pricing parameters.
     async fn ticket_stats(&self) -> anyhow::Result<TicketStats>;
@@ -72,22 +79,44 @@ pub trait SafeOperations: Send + Sync {
 ///
 /// Used for on-boarding flows that need to query balances or deploy a Safe
 /// before a full [`crate::Edgli`] node is started.
-pub struct SafelessInteractor {
-    connector: Arc<HoprBlockchainBasicConnector<BlokliClient>>,
+pub struct SafelessInteractor<C = BlokliClient> {
+    connector: Arc<HoprBlockchainBasicConnector<C>>,
     chain_key: ChainKeypair,
 }
 
-impl SafelessInteractor {
+impl SafelessInteractor<BlokliClient> {
     pub async fn new(
         blokli_provider: Option<Url>,
         chain_key: &ChainKeypair,
         connector_config: Option<BlockchainConnectorConfig>,
     ) -> anyhow::Result<Self> {
-        let blokli_client = new_blokli_client(blokli_provider);
+        Self::new_with_client(
+            new_blokli_client(blokli_provider),
+            chain_key,
+            connector_config,
+        )
+        .await
+    }
+}
 
+impl<C> SafelessInteractor<C>
+where
+    C: BlokliSubscriptionClient
+        + BlokliQueryClient
+        + BlokliTransactionClient
+        + Send
+        + Sync
+        + 'static,
+{
+    pub async fn new_with_client(
+        client: C,
+        chain_key: &ChainKeypair,
+        connector_config: Option<BlockchainConnectorConfig>,
+    ) -> anyhow::Result<Self> {
         let cfg = connector_config.unwrap_or_default();
-        let connector =
-            create_trustful_safeless_hopr_blokli_connector(chain_key, cfg, blokli_client).await?;
+        let mut connector =
+            create_trustful_safeless_hopr_blokli_connector(chain_key, cfg, client).await?;
+        connector.connect().await?;
 
         Ok(Self {
             connector: Arc::new(connector),
@@ -178,12 +207,15 @@ impl SafelessInteractor {
 }
 
 #[async_trait::async_trait]
-impl SafeOperations for SafelessInteractor {
+impl SafeOperations for SafelessInteractor<BlokliClient> {
     async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>> {
         SafelessInteractor::retrieve_safe(self).await
     }
 
-    async fn deploy_safe(&self, token_amount: HoprBalance) -> anyhow::Result<SafeModuleDeploymentResult> {
+    async fn deploy_safe(
+        &self,
+        token_amount: HoprBalance,
+    ) -> anyhow::Result<SafeModuleDeploymentResult> {
         SafelessInteractor::deploy_safe(self, token_amount).await
     }
 
@@ -205,6 +237,7 @@ pub struct SafeModuleDeploymentResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hopr_chain_connector::{errors::ConnectorError, testing::BlokliTestStateBuilder};
 
     #[test]
     fn default_blokli_url_is_correct() {
@@ -216,10 +249,7 @@ mod tests {
 
     #[test]
     fn new_blokli_client_uses_default_url_when_none() {
-        // Constructing the client must not panic and should use the default URL.
         let client = new_blokli_client(None);
-        // BlokliClient doesn't expose a getter for the URL, but construction
-        // succeeding without a panic is the relevant invariant here.
         let _ = client;
     }
 
@@ -232,7 +262,6 @@ mod tests {
 
     #[test]
     fn ticket_stats_fields_accessible() {
-        // TicketStats is a plain struct; verify it can be constructed and fields read.
         let stats = TicketStats {
             ticket_price: Balance::<WxHOPR>::zero(),
             winning_probability: WinningProbability::default(),
@@ -255,5 +284,81 @@ mod tests {
             module_address: Address::default(),
         };
         let _ = r.clone();
+    }
+
+    fn placeholder_module_addr() -> Address {
+        [0x11u8; 20].into()
+    }
+
+    fn build_test_client(
+        node: Address,
+        node_wxhopr: HoprBalance,
+        recipient: Address,
+    ) -> hopr_chain_connector::testing::BlokliTestClient<
+        hopr_chain_connector::testing::FullStateEmulator,
+    > {
+        BlokliTestStateBuilder::default()
+            .with_balances([(node, node_wxhopr)])
+            .with_balances([(node, XDaiBalance::new_base(10))])
+            .with_balances([(recipient, HoprBalance::zero())])
+            .with_balances([(recipient, XDaiBalance::zero())])
+            .with_hopr_network_chain_info("rotsee")
+            .build_dynamic_client(placeholder_module_addr())
+    }
+
+    #[tokio::test]
+    async fn withdraw_wxhopr_succeeds_with_sufficient_balance() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+        let recipient: Address = [0x22u8; 20].into();
+
+        let client = build_test_client(me, HoprBalance::new_base(1000), recipient);
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        interactor
+            .withdraw_wxhopr(recipient, HoprBalance::new_base(10))
+            .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn withdraw_wxhopr_fails_with_insufficient_balance() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+        let recipient: Address = [0x22u8; 20].into();
+
+        let client = build_test_client(me, HoprBalance::new_base(1), recipient);
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        let err = interactor
+            .withdraw_wxhopr(recipient, HoprBalance::new_base(10))
+            .await
+            .expect_err("expected withdrawal to fail with insufficient balance");
+        let connector_err = err
+            .downcast_ref::<ConnectorError>()
+            .unwrap_or_else(|| panic!("expected ConnectorError, got: {err:#}"));
+        assert!(
+            connector_err.as_transaction_rejection_error().is_some(),
+            "expected tx-rejection error from chain emulator, got: {connector_err:?}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn new_with_client_yields_connected_interactor() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+        let recipient: Address = [0x22u8; 20].into();
+
+        let client = build_test_client(me, HoprBalance::new_base(100), recipient);
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        interactor
+            .withdraw_wxhopr(recipient, HoprBalance::new_base(1))
+            .await?;
+
+        Ok(())
     }
 }

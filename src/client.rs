@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
+use hopr_ct_full_network::ProberConfig as FullNetworkProberConfig;
 use hopr_lib::api::types::{crypto::prelude::OffchainPublicKey, primitive::prelude::Address};
 use hopr_lib::builder::{ChainKeypair, Keypair, OffchainKeypair};
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
-use hopr_ct_full_network::ProberConfig as FullNetworkProberConfig;
-use hopr_reference::build_with_chain;
+use hopr_reference::build_edge_with_chain;
 use strum::{AsRefStr, Display, EnumString};
 use tracing::info;
 
@@ -17,11 +17,9 @@ pub use hopr_chain_connector;
 
 /// The concrete HOPR edge node type used by this client.
 ///
-/// Edge nodes use the same [`hopr_reference::FullHopr`] type as full relay nodes —
-/// both go through `build_full` with a [`hopr_reference::SharedTicketManager`]
-/// so outgoing ticket indices and any unexpected incoming tickets are tracked
-/// correctly. The session-server feature is not enabled, so no session server runs.
-pub type HoprEdgeClient = hopr_reference::FullHopr;
+/// Edge nodes carry no ticket manager (`TMgr = ()`); they originate outgoing
+/// tickets but never relay incoming ones.
+pub type HoprEdgeClient = hopr_reference::EdgeHopr;
 
 /// Represents the initialization states of the Edgli client.
 /// Each state corresponds to a step in the `new()` function.
@@ -180,7 +178,7 @@ impl Edgli {
         info!("Building HOPR edge node via hopr-reference");
 
         visitor(EdgliInitState::StartingNode);
-        let node = build_with_chain(
+        let node = build_edge_with_chain(
             chain_key,
             packet_key,
             cfg,
