@@ -79,6 +79,7 @@ hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88
 hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88689dd6a110e514202946867e430f387351da", features = [
   "runtime-tokio",
 ] }
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88689dd6a110e514202946867e430f387351da" }
 hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "5a88689dd6a110e514202946867e430f387351da", features = [
   "strategy-auto-funding",
   "strategy-closure-finalizer",

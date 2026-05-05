@@ -2457,6 +2457,7 @@ dependencies = [
  "futures",
  "hopr-api",
  "hopr-chain-connector",
+ "hopr-ct-full-network",
  "hopr-lib",
  "hopr-reference",
  "hopr-strategy",

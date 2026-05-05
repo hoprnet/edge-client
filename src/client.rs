@@ -5,6 +5,7 @@ use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokl
 use hopr_lib::api::types::{crypto::prelude::OffchainPublicKey, primitive::prelude::Address};
 use hopr_lib::builder::{ChainKeypair, Keypair, OffchainKeypair};
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
+use hopr_ct_full_network::ProberConfig as FullNetworkProberConfig;
 use hopr_reference::build_with_chain;
 use strum::{AsRefStr, Display, EnumString};
 use tracing::info;
@@ -183,7 +184,15 @@ impl Edgli {
             chain_key,
             packet_key,
             cfg,
-            None, // use default FullNetworkDiscovery ProberConfig
+            // Probe all graph nodes every 3 s regardless of connection state.
+            // At startup no peers are `Connected(true)` yet, so `probe_connected_only: true`
+            // (the library default) would send no probes and stall graph convergence.
+            Some(FullNetworkProberConfig {
+                interval: std::time::Duration::from_secs(3),
+                shuffle_ttl: std::time::Duration::from_secs(3),
+                probe_connected_only: false,
+                ..Default::default()
+            }),
             chain_connector,
         )
         .await?;
