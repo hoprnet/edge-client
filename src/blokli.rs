@@ -73,6 +73,13 @@ pub trait SafeOperations: Send + Sync {
 
     /// Fetch the WxHOPR and xDAI balances for this key-pair.
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)>;
+
+    /// Withdraw `amount` WxHOPR tokens from the node wallet to the given `safe_address`.
+    async fn withdraw_wxhopr(
+        &self,
+        safe_address: Address,
+        amount: HoprBalance,
+    ) -> anyhow::Result<()>;
 }
 
 /// Blockchain interactor that operates without a HOPR Safe module.
@@ -225,6 +232,14 @@ impl SafeOperations for SafelessInteractor<BlokliClient> {
 
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
         SafelessInteractor::balances(self).await
+    }
+
+    async fn withdraw_wxhopr(
+        &self,
+        safe_address: Address,
+        amount: HoprBalance,
+    ) -> anyhow::Result<()> {
+        SafelessInteractor::withdraw_wxhopr(self, safe_address, amount).await
     }
 }
 
