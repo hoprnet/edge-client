@@ -23,14 +23,13 @@ use hopr_lib::{
 };
 use url::Url;
 
-pub use hopr_chain_connector as connector;
 pub use hopr_lib::builder::ChainKeypair;
 
 lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.gnosisvpn.io".parse().unwrap();
 }
 
-pub fn new_blokli_client(url: Option<Url>) -> BlokliClient {
+pub(crate) fn new_blokli_client(url: Option<Url>) -> BlokliClient {
     BlokliClient::new(
         url.unwrap_or(DEFAULT_BLOKLI_URL.clone()),
         BlokliClientConfig {
@@ -40,6 +39,20 @@ pub fn new_blokli_client(url: Option<Url>) -> BlokliClient {
             ..Default::default()
         },
     )
+}
+
+/// Constructs a fully-wired [`IncentiveOperations`] handle backed by a Blokli client.
+///
+/// This is the only public entry point for obtaining an `IncentiveOperations` impl —
+/// the underlying [`BlokliClient`] and connector are constructed internally and
+/// never exposed to callers.
+pub async fn make_incentive_operations(
+    blokli_url: Option<Url>,
+    chain_key: &ChainKeypair,
+    connector_config: Option<BlockchainConnectorConfig>,
+) -> anyhow::Result<Box<dyn IncentiveOperations>> {
+    let interactor = SafelessInteractor::new(blokli_url, chain_key, connector_config).await?;
+    Ok(Box::new(interactor))
 }
 
 /// On-chain ticket pricing parameters.
@@ -52,13 +65,15 @@ pub struct TicketStats {
     pub winning_probability: WinningProbability,
 }
 
-/// Trait facade for blockchain operations that do not require an active Safe.
+/// Trait facade for HOPR incentive-layer blockchain operations that do not
+/// require an active Safe — balance queries, ticket pricing, Safe deployment,
+/// and node-wallet withdrawals used during the on-boarding flow.
 ///
-/// Consumers should program against this trait rather than using
-/// [`SafelessInteractor`] directly, which makes unit testing possible without
-/// a live blockchain connection.
+/// Consumers should program against this trait rather than the concrete
+/// connector type, which makes unit testing possible without a live
+/// blockchain connection.
 #[async_trait::async_trait]
-pub trait SafeOperations: Send + Sync {
+pub trait IncentiveOperations: Send + Sync {
     /// Look up an existing Safe/module deployment for this key-pair.
     async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>>;
 
@@ -85,14 +100,15 @@ pub trait SafeOperations: Send + Sync {
 /// Blockchain interactor that operates without a HOPR Safe module.
 ///
 /// Used for on-boarding flows that need to query balances or deploy a Safe
-/// before a full [`crate::Edgli`] node is started.
-pub struct SafelessInteractor<C = BlokliClient> {
+/// before a full [`crate::Edgli`] node is started. Crate-internal — external
+/// callers obtain an [`IncentiveOperations`] handle via [`make_incentive_operations`].
+pub(crate) struct SafelessInteractor<C = BlokliClient> {
     connector: Arc<HoprBlockchainBasicConnector<C>>,
     chain_key: ChainKeypair,
 }
 
 impl SafelessInteractor<BlokliClient> {
-    pub async fn new(
+    pub(crate) async fn new(
         blokli_provider: Option<Url>,
         chain_key: &ChainKeypair,
         connector_config: Option<BlockchainConnectorConfig>,
@@ -115,7 +131,7 @@ where
         + Sync
         + 'static,
 {
-    pub async fn new_with_client(
+    pub(crate) async fn new_with_client(
         client: C,
         chain_key: &ChainKeypair,
         connector_config: Option<BlockchainConnectorConfig>,
@@ -214,7 +230,15 @@ where
 }
 
 #[async_trait::async_trait]
-impl SafeOperations for SafelessInteractor<BlokliClient> {
+impl<C> IncentiveOperations for SafelessInteractor<C>
+where
+    C: BlokliSubscriptionClient
+        + BlokliQueryClient
+        + BlokliTransactionClient
+        + Send
+        + Sync
+        + 'static,
+{
     async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>> {
         SafelessInteractor::retrieve_safe(self).await
     }

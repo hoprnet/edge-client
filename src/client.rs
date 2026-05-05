@@ -13,8 +13,6 @@ use tracing::info;
 use crate::errors::EdgliError;
 use crate::new_blokli_client;
 
-pub use hopr_chain_connector;
-
 /// The concrete HOPR edge node type used by this client.
 ///
 /// Edge nodes carry no ticket manager (`TMgr = ()`); they originate outgoing
