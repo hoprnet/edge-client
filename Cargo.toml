@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "3.0.0"
+version = "3.1.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -66,21 +66,19 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-api = "=1.8.2"
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "bcf9563d6c344c5e469400cf83a1bb43df1549d3", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "4922c9247d", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "bcf9563d6c344c5e469400cf83a1bb43df1549d3", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "4922c9247d", features = [
   "runtime-tokio",
 ] }
-hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "bcf9563d6c344c5e469400cf83a1bb43df1549d3", features = [
+hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "4922c9247d", features = [
   "runtime-tokio",
 ] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "bcf9563d6c344c5e469400cf83a1bb43df1549d3" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "bcf9563d6c344c5e469400cf83a1bb43df1549d3", features = [
-  "strategy-auto-funding",
-  "strategy-closure-finalizer",
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "4922c9247d" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "4922c9247d", features = [
+  "strategy-channel-lifecycle",
 ] }
 
 # Target-specific dependencies for memory allocators
@@ -90,7 +88,7 @@ mimalloc = { version = "0.1.48", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "bcf9563d6c344c5e469400cf83a1bb43df1549d3", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "4922c9247d", features = [
   "runtime-tokio",
   "testing",
 ] }
