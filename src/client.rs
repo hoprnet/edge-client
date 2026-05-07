@@ -14,9 +14,6 @@ use crate::errors::EdgliError;
 use crate::new_blokli_client;
 
 /// The concrete HOPR edge node type used by this client.
-///
-/// Edge nodes carry no ticket manager (`TMgr = ()`); they originate outgoing
-/// tickets but never relay incoming ones.
 pub type HoprEdgeClient = hopr_reference::EdgeHopr;
 
 /// Represents the initialization states of the Edgli client.
@@ -222,9 +219,8 @@ impl Edgli {
 
     /// Run a node with HOPR edge strategies integrated.
     ///
-    /// Edge strategies comprise:
-    /// 1. Automatically funding channels that fall below a stake threshold
-    /// 2. Automatically closing channels stuck in pending-close state
+    /// The default reactor runs a single [`ChannelLifecycleStrategy`] which
+    /// owns open / fund / close / finalize for outgoing payment channels.
     ///
     /// Returns an [`AbortHandle`] that stops the strategy reactor when aborted.
     #[cfg(feature = "blokli")]
@@ -234,12 +230,10 @@ impl Edgli {
     ) -> anyhow::Result<AbortHandle> {
         use super::strategy::EdgeStrategyKind;
         use hopr_strategy::{
-            auto_funding::AutoFundingStrategy,
-            channel_finalizer::ClosureFinalizerStrategy,
+            channel_lifecycle::ChannelLifecycleStrategy,
             strategy::{MultiStrategy, Strategy},
         };
 
-        let interval = cfg.execution_interval;
         let node = self.hopr.clone();
 
         let strategies = cfg
@@ -247,11 +241,8 @@ impl Edgli {
             .into_iter()
             .map(|kind| -> Box<dyn Strategy + Send> {
                 match kind {
-                    EdgeStrategyKind::AutoFunding(sub_cfg) => {
-                        AutoFundingStrategy::new(sub_cfg, interval).build(Arc::clone(&node))
-                    }
-                    EdgeStrategyKind::ClosureFinalizer(sub_cfg) => {
-                        ClosureFinalizerStrategy::new(sub_cfg, interval).build(Arc::clone(&node))
+                    EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
+                        ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))
                     }
                 }
             })
