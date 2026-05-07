@@ -56,15 +56,6 @@ pub struct CliArgs {
     )]
     pub config: PathBuf,
 
-    /// HOPR db directory path
-    #[arg(
-        long,
-        env = "HOPR_EDGE_DB_DIRECTORY_PATH",
-        help = "The path to the configuration path for the HOPR client",
-        required = true
-    )]
-    pub db_dir_path: PathBuf,
-
     /// Blokli URL
     #[arg(
         long,
@@ -84,10 +75,7 @@ fn init_logger() -> anyhow::Result<()> {
             .add_directive("libp2p_tcp=info".parse()?)
             .add_directive("libp2p_dns=info".parse()?)
             .add_directive("multistream_select=info".parse()?)
-            .add_directive("isahc=error".parse()?)
-            .add_directive("sea_orm=warn".parse()?)
-            .add_directive("sqlx=warn".parse()?)
-            .add_directive("hyper_util=warn".parse()?),
+            .add_directive("isahc=error".parse()?),
     };
 
     #[cfg(feature = "prof")]
@@ -122,32 +110,34 @@ fn init_logger() -> anyhow::Result<()> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "telemetry")] {
 
-            if std::env::var("HOPR_EDGE_USE_OPENTELEMETRY").map(v == "true").unwrap_or(false) {
-            let exporter = opentelemetry_otlp::SpanExporter::builder()
-                .with_tonic()
-                .with_protocol(opentelemetry_otlp::Protocol::Grpc)
-                .with_timeout(std::time::Duration::from_secs(5))
-                .build()?;
+            if std::env::var("HOPR_EDGE_USE_OPENTELEMETRY").map(|v| v == "true").unwrap_or(false) {
+                let exporter = opentelemetry_otlp::SpanExporter::builder()
+                    .with_tonic()
+                    .with_protocol(opentelemetry_otlp::Protocol::Grpc)
+                    .with_timeout(std::time::Duration::from_secs(5))
+                    .build()?;
 
-            let tracer = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-                .with_batch_exporter(exporter)
-                .with_sampler(Sampler::AlwaysOn)
-                .with_id_generator(RandomIdGenerator::default())
-                .with_max_events_per_span(64)
-                .with_max_attributes_per_span(16)
-                .with_resource(
-                    opentelemetry_sdk::Resource::builder()
-                        .with_service_name(
-                            std::env::var("OTEL_SERVICE_NAME").unwrap_or(env!("CARGO_PKG_NAME").into()),
-                        )
-                        .build(),
-                )
-                .build()
-                .tracer(env!("CARGO_PKG_NAME"));
+                let tracer = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                    .with_batch_exporter(exporter)
+                    .with_sampler(Sampler::AlwaysOn)
+                    .with_id_generator(RandomIdGenerator::default())
+                    .with_max_events_per_span(64)
+                    .with_max_attributes_per_span(16)
+                    .with_resource(
+                        opentelemetry_sdk::Resource::builder()
+                            .with_service_name(
+                                std::env::var("OTEL_SERVICE_NAME")
+                                    .unwrap_or(env!("CARGO_PKG_NAME").into()),
+                            )
+                            .build(),
+                    )
+                    .build()
+                    .tracer(env!("CARGO_PKG_NAME"));
 
-                tracing::subscriber::set_global_default(registry.with(racing_opentelemetry::layer().with_tracer(tracer)))?}
-
-            else {
+                tracing::subscriber::set_global_default(
+                    registry.with(tracing_opentelemetry::layer().with_tracer(tracer))
+                )?
+            } else {
                 tracing::subscriber::set_global_default(registry)?
             }
         }
@@ -181,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
     if !args.config.exists() {
         return Err(EdgliError::ConfigError(format!(
             "The configuration file '{}' does not exist",
-            args.identity_file_path.display()
+            args.config.display()
         ))
         .into());
     }
@@ -201,16 +191,9 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    let edgli = edgli::Edgli::new(
-        cfg,
-        &args.db_dir_path,
-        hopr_keys,
-        args.blokli_url,
-        None,
-        |s| {
-            info!(?s, "Initialization stage");
-        },
-    )
+    let edgli = edgli::Edgli::new(cfg, hopr_keys, args.blokli_url, None, |s| {
+        info!(?s, "Initialization stage");
+    })
     .await?;
 
     let mut signals =
@@ -222,13 +205,10 @@ async fn main() -> anyhow::Result<()> {
             }
             Signal::Int => {
                 info!("Received the INT signal... tearing down the node");
-                if let Err(error) = edgli.shutdown() {
-                    tracing::warn!("Error while shutting down HOPR node: {}", error);
-                }
-
+                // Dropping Edgli aborts all background tasks via AbortableList.
+                drop(edgli);
                 info!("All processes stopped... emulating the default handler...");
                 low_level::emulate_default_handler(signal as i32)?;
-                info!("Shutting down!");
                 break;
             }
             _ => low_level::emulate_default_handler(signal as i32)?,
