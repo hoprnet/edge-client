@@ -75,14 +75,14 @@ pub fn compute_funding_config(
     })
 }
 
-/// Returns the default [`MultiStrategyConfig`] for an edge client telemetry reactor.
+/// Returns the default [`MultiStrategyConfig`] for an edge client reactor.
 ///
 /// Fetches the minimum ticket price and winning probability from the chain and
 /// sizes the [`ChannelLifecycleStrategy`] funding to cover
 /// `sizing.desired_message_count` messages per channel.
 /// See [`compute_funding_config`] for the sizing formula.
 #[cfg(feature = "runtime-tokio")]
-pub async fn default_edge_client_telemetry_reactor_cfg(
+pub async fn default_strategy_cfg(
     node: &crate::client::Edgli,
     sizing: IncentiveConfiguration,
 ) -> anyhow::Result<MultiStrategyConfig> {

@@ -2475,6 +2475,7 @@ dependencies = [
  "opentelemetry_sdk",
  "serde_yaml",
  "signal-hook",
+ "smart-default",
  "strum 0.28.0",
  "thiserror 2.0.18",
  "tokio",
