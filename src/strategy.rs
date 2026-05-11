@@ -1,5 +1,10 @@
 use hopr_lib::api::types::primitive::prelude::{HoprBalance, UnitaryFloatOps as _};
-pub use hopr_strategy::channel_lifecycle::{ChannelLifecycleConfig, FundingConfig};
+pub use hopr_strategy::channel_lifecycle::{
+    ChannelLifecycleConfig, FundingConfig, PopulationConfig,
+};
+
+#[cfg(feature = "runtime-tokio")]
+use hopr_lib::api::{chain::ChainValues as _, node::HasChainApi as _};
 
 /// Subset of strategies relevant to an edge node.
 pub enum EdgeStrategyKind {
@@ -12,21 +17,22 @@ pub struct MultiStrategyConfig {
     pub strategies: Vec<EdgeStrategyKind>,
 }
 
-/// Desired channel capacity for computing the initial stake.
-#[derive(Debug, Clone, Copy)]
+/// Desired channel capacity and topology for computing the initial stake.
+#[derive(Debug, Clone, Copy, smart_default::SmartDefault)]
 pub struct ChannelSizing {
     /// Expected number of mixnet messages this channel should forward before exhaustion.
     /// The stake is sized as the expected drain: `desired_message_count × win_prob × ticket_price`.
     /// Default: 1,000,000.
+    #[default = 1_000_000]
     pub desired_message_count: u64,
-}
 
-impl Default for ChannelSizing {
-    fn default() -> Self {
-        Self {
-            desired_message_count: 1_000_000,
-        }
-    }
+    /// Minimum number of open outgoing channels to maintain. Default: 5.
+    #[default = 5]
+    pub min_open_channels: usize,
+
+    /// Target number of open outgoing channels to open towards. Default: 8.
+    #[default = 8]
+    pub target_open_channels: usize,
 }
 
 /// Compute [`FundingConfig`] from chain-derived values and a desired message budget.
@@ -76,12 +82,16 @@ pub async fn default_edge_client_telemetry_reactor_cfg(
     node: &crate::client::Edgli,
     sizing: ChannelSizing,
 ) -> anyhow::Result<MultiStrategyConfig> {
-    use hopr_lib::api::{chain::ChainValues as _, node::HasChainApi as _};
     let chain = node.chain_api();
     let ticket_price = chain.minimum_ticket_price().await?;
     let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
     let cfg = ChannelLifecycleConfig {
         funding: compute_funding_config(ticket_price, win_prob, &sizing)?,
+        population: PopulationConfig {
+            min_open_channels: sizing.min_open_channels,
+            target_open_channels: sizing.target_open_channels,
+            ..Default::default()
+        },
         ..Default::default()
     };
     Ok(MultiStrategyConfig {
@@ -103,6 +113,7 @@ mod tests {
             1.0,
             &ChannelSizing {
                 desired_message_count: 1,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -122,6 +133,7 @@ mod tests {
             1.0,
             &ChannelSizing {
                 desired_message_count: 100,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -170,7 +182,8 @@ mod tests {
                 HoprBalance::new_base(0),
                 1.0,
                 &ChannelSizing {
-                    desired_message_count: 0
+                    desired_message_count: 0,
+                    ..Default::default()
                 }
             )
             .is_err()
@@ -185,6 +198,7 @@ mod tests {
             1.0,
             &ChannelSizing {
                 desired_message_count: 1,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -200,5 +214,13 @@ mod tests {
             cfg.strategies[0],
             EdgeStrategyKind::ChannelLifecycle(_)
         ));
+    }
+
+    #[test]
+    fn channel_sizing_defaults_match_population_config_defaults() {
+        let sizing = ChannelSizing::default();
+        let population = PopulationConfig::default();
+        assert_eq!(sizing.min_open_channels, population.min_open_channels);
+        assert_eq!(sizing.target_open_channels, population.target_open_channels);
     }
 }
