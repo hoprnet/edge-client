@@ -17,9 +17,13 @@ pub struct MultiStrategyConfig {
     pub strategies: Vec<EdgeStrategyKind>,
 }
 
-/// Desired channel capacity and topology for computing the initial stake.
+/// Top-level incentive parameters for the channel lifecycle strategy reactor.
+///
+/// Bundles channel funding sizing with population topology so callers
+/// have a single config knob for the reactor. Designed to accommodate
+/// future incentive extensions beyond the current channel lifecycle strategy.
 #[derive(Debug, Clone, Copy, smart_default::SmartDefault)]
-pub struct ChannelSizing {
+pub struct IncentiveConfiguration {
     /// Expected number of mixnet messages this channel should forward before exhaustion.
     /// The stake is sized as the expected drain: `desired_message_count × win_prob × ticket_price`.
     /// Default: 1,000,000.
@@ -49,7 +53,7 @@ pub struct ChannelSizing {
 pub fn compute_funding_config(
     ticket_price: HoprBalance,
     win_prob: f64,
-    sizing: &ChannelSizing,
+    sizing: &IncentiveConfiguration,
 ) -> anyhow::Result<FundingConfig> {
     anyhow::ensure!(
         win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
@@ -80,7 +84,7 @@ pub fn compute_funding_config(
 #[cfg(feature = "runtime-tokio")]
 pub async fn default_edge_client_telemetry_reactor_cfg(
     node: &crate::client::Edgli,
-    sizing: ChannelSizing,
+    sizing: IncentiveConfiguration,
 ) -> anyhow::Result<MultiStrategyConfig> {
     let chain = node.chain_api();
     let ticket_price = chain.minimum_ticket_price().await?;
@@ -111,7 +115,7 @@ mod tests {
         let cfg = compute_funding_config(
             HoprBalance::new_base(1),
             1.0,
-            &ChannelSizing {
+            &IncentiveConfiguration {
                 desired_message_count: 1,
                 ..Default::default()
             },
@@ -131,7 +135,7 @@ mod tests {
         let cfg = compute_funding_config(
             HoprBalance::new_base(10),
             1.0,
-            &ChannelSizing {
+            &IncentiveConfiguration {
                 desired_message_count: 100,
                 ..Default::default()
             },
@@ -146,22 +150,30 @@ mod tests {
     #[test]
     fn compute_funding_config_rejects_zero_win_prob() {
         assert!(
-            compute_funding_config(HoprBalance::new_base(1), 0.0, &ChannelSizing::default())
-                .is_err()
+            compute_funding_config(
+                HoprBalance::new_base(1),
+                0.0,
+                &IncentiveConfiguration::default()
+            )
+            .is_err()
         );
     }
 
     #[test]
     fn compute_funding_config_rejects_win_prob_above_one() {
         assert!(
-            compute_funding_config(HoprBalance::new_base(1), 1.1, &ChannelSizing::default())
-                .is_err()
+            compute_funding_config(
+                HoprBalance::new_base(1),
+                1.1,
+                &IncentiveConfiguration::default()
+            )
+            .is_err()
         );
         assert!(
             compute_funding_config(
                 HoprBalance::new_base(1),
                 f64::INFINITY,
-                &ChannelSizing::default()
+                &IncentiveConfiguration::default()
             )
             .is_err()
         );
@@ -169,7 +181,7 @@ mod tests {
             compute_funding_config(
                 HoprBalance::new_base(1),
                 f64::NAN,
-                &ChannelSizing::default()
+                &IncentiveConfiguration::default()
             )
             .is_err()
         );
@@ -181,7 +193,7 @@ mod tests {
             compute_funding_config(
                 HoprBalance::new_base(0),
                 1.0,
-                &ChannelSizing {
+                &IncentiveConfiguration {
                     desired_message_count: 0,
                     ..Default::default()
                 }
@@ -196,7 +208,7 @@ mod tests {
         let funding = compute_funding_config(
             HoprBalance::new_base(1),
             1.0,
-            &ChannelSizing {
+            &IncentiveConfiguration {
                 desired_message_count: 1,
                 ..Default::default()
             },
@@ -218,7 +230,7 @@ mod tests {
 
     #[test]
     fn channel_sizing_defaults_match_population_config_defaults() {
-        let sizing = ChannelSizing::default();
+        let sizing = IncentiveConfiguration::default();
         let population = PopulationConfig::default();
         assert_eq!(sizing.min_open_channels, population.min_open_channels);
         assert_eq!(sizing.target_open_channels, population.target_open_channels);
