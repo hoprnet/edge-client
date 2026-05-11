@@ -45,8 +45,15 @@ pub fn compute_funding_config(
     win_prob: f64,
     sizing: &ChannelSizing,
 ) -> anyhow::Result<FundingConfig> {
-    anyhow::ensure!(win_prob > 0.0, "win_prob must be positive; got {win_prob}");
+    anyhow::ensure!(
+        win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
+        "win_prob must be in (0, 1]; got {win_prob}"
+    );
     let initial = (ticket_price * sizing.desired_message_count).mul_f64(win_prob)?;
+    anyhow::ensure!(
+        initial > HoprBalance::new_base(0),
+        "computed initial_balance is zero; increase desired_message_count or ticket_price"
+    );
     let topup = initial.mul_f64(0.75)?;
     let lower = initial.mul_f64(0.25)?;
     Ok(FundingConfig {
@@ -129,6 +136,44 @@ mod tests {
         assert!(
             compute_funding_config(HoprBalance::new_base(1), 0.0, &ChannelSizing::default())
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn compute_funding_config_rejects_win_prob_above_one() {
+        assert!(
+            compute_funding_config(HoprBalance::new_base(1), 1.1, &ChannelSizing::default())
+                .is_err()
+        );
+        assert!(
+            compute_funding_config(
+                HoprBalance::new_base(1),
+                f64::INFINITY,
+                &ChannelSizing::default()
+            )
+            .is_err()
+        );
+        assert!(
+            compute_funding_config(
+                HoprBalance::new_base(1),
+                f64::NAN,
+                &ChannelSizing::default()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn compute_funding_config_rejects_zero_initial_balance() {
+        assert!(
+            compute_funding_config(
+                HoprBalance::new_base(0),
+                1.0,
+                &ChannelSizing {
+                    desired_message_count: 0
+                }
+            )
+            .is_err()
         );
     }
 
