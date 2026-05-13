@@ -59,12 +59,14 @@ impl IncentiveConfiguration {
 
 /// Compute [`FundingConfig`] from chain-derived values and a desired message budget.
 ///
-/// `ticket_price` is the oracle's minimum expected value per relayed hop.
-/// The ticket face value (amount locked per ticket) = `ticket_price / win_prob`.
+/// **Semantics:** `ticket_price` is the *expected* per-hop value (= `face_value × win_prob`),
+/// not the face value. Per-hop expected channel drain is therefore `ticket_price`,
+/// regardless of `win_prob`. The ticket face value (amount locked per ticket)
+/// = `ticket_price / win_prob`.
 ///
 /// Sizes `initial_balance` as the larger of:
-/// - expected drain over `sizing.desired_message_count` messages: `N × ticket_price`
-/// - one ticket's face value (floor so the channel can send at least one packet):
+/// - expected drain over `sizing.desired_message_count` packets: `N × ticket_price`
+/// - one ticket's face value (the channel cannot mint a single ticket otherwise):
 ///   `ticket_price / win_prob`
 ///
 /// Derived fields keep the strategy's semantic invariants
@@ -83,7 +85,9 @@ pub fn compute_funding_config(
     );
     // face_value = price / win_prob: channel needs ≥1 face_value to issue any ticket.
     let face_value = ticket_price.div_f64(win_prob)?;
-    // expected_drain = N × ticket_price: each message costs one ticket_price in expected channel drain.
+    // expected_drain = N × ticket_price (NOT × win_prob — ticket_price is already
+    // the expected per-hop value: each ticket has face = ticket_price/win_prob
+    // and pays out with probability win_prob, so expected per-ticket drain = ticket_price).
     let expected_drain = ticket_price * sizing.desired_message_count;
     let initial = expected_drain.max(face_value);
     anyhow::ensure!(

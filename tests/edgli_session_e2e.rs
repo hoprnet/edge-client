@@ -52,31 +52,27 @@
 //! The test will NOT stop the external cluster when it finishes.
 
 use anyhow::Context as _;
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
-use hopr_chain_connector::BlockchainConnectorConfig;
 use edgli::{
+    Edgli, EdgliInitState,
     hopr_lib::{
         HopRouting, HoprKeys, HoprSessionClientConfig, IdentityRetrievalModes,
-        exports::transport::SessionCapability,
         api::{
             node::HoprSessionClientOperations,
             types::{
-                internal::channels::{ChannelStatus, ChannelEntry},
+                internal::channels::{ChannelEntry, ChannelStatus},
                 primitive::prelude::Address,
             },
         },
         config::{HoprLibConfig, HostConfig, HostType, SafeModule},
+        exports::transport::SessionCapability,
         exports::transport::{HoprSession, SessionTarget},
     },
     strategy::{EdgeStrategyKind, EligibilityConfig, IncentiveConfiguration, default_strategy_cfg},
     traits::EdgeNodeApi,
-    Edgli, EdgliInitState,
 };
+use hopr_chain_connector::BlockchainConnectorConfig;
 use rand::RngCore as _;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
@@ -206,9 +202,16 @@ fn parse_summary(stdout: &str) -> anyhow::Result<ClusterSummary> {
     let blokli_url =
         blokli_url.ok_or_else(|| anyhow::anyhow!("blokli URL not found in cluster summary"))?;
     anyhow::ensure!(!nodes.is_empty(), "no nodes found in cluster summary");
-    anyhow::ensure!(!extras.is_empty(), "no extra identities found in cluster summary");
+    anyhow::ensure!(
+        !extras.is_empty(),
+        "no extra identities found in cluster summary"
+    );
 
-    Ok(ClusterSummary { blokli_url, nodes, extras })
+    Ok(ClusterSummary {
+        blokli_url,
+        nodes,
+        extras,
+    })
 }
 
 fn parse_node_info(fields: &HashMap<String, String>) -> anyhow::Result<NodeInfo> {
@@ -237,7 +240,12 @@ fn parse_extra_info(fields: &HashMap<String, String>) -> anyhow::Result<ExtraInf
         .get("password")
         .cloned()
         .unwrap_or_else(|| "local-cluster".to_string());
-    Ok(ExtraInfo { safe_address, module_address, keystore_path, password })
+    Ok(ExtraInfo {
+        safe_address,
+        module_address,
+        keystore_path,
+        password,
+    })
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -313,8 +321,9 @@ async fn start_cluster() -> anyhow::Result<ClusterHandle> {
         });
     }
 
-    let lc_bin = std::env::var("HOPRD_LOCALCLUSTER_BIN").map_err(|_| anyhow::anyhow!(
-        "HOPRD_LOCALCLUSTER_BIN is not set.\n\
+    let lc_bin = std::env::var("HOPRD_LOCALCLUSTER_BIN").map_err(|_| {
+        anyhow::anyhow!(
+            "HOPRD_LOCALCLUSTER_BIN is not set.\n\
          \n\
          Prerequisites — pick one of two modes:\n\
          \n\
@@ -343,9 +352,10 @@ async fn start_cluster() -> anyhow::Result<ClusterHandle> {
             RUST_LOG=info,edgli=debug \
                 cargo test --test edgli_session_e2e -- --ignored --nocapture\n\
         "
-    ))?;
-    let hoprd_bin = std::env::var("HOPRD_BIN")
-        .map_err(|_| anyhow::anyhow!("HOPRD_BIN is not set"))?;
+        )
+    })?;
+    let hoprd_bin =
+        std::env::var("HOPRD_BIN").map_err(|_| anyhow::anyhow!("HOPRD_BIN is not set"))?;
     let chain_image = std::env::var("HOPRD_CHAIN_IMAGE")
         .map_err(|_| anyhow::anyhow!("HOPRD_CHAIN_IMAGE is not set"))?;
     let container_runtime = std::env::var("HOPRD_CONTAINER_RUNTIME").ok();
@@ -355,15 +365,24 @@ async fn start_cluster() -> anyhow::Result<ClusterHandle> {
 
     let mut cmd = tokio::process::Command::new(&lc_bin);
     cmd.args([
-        "--hoprd-bin", &hoprd_bin,
-        "--size", &CLUSTER_SIZE.to_string(),
-        "--extra-identities", "1",
-        "--data-dir", data_dir.to_str().unwrap(),
-        "--api-host", API_HOST,
-        "--api-port-base", &API_PORT_BASE.to_string(),
-        "--p2p-port-base", &P2P_PORT_BASE.to_string(),
-        "--api-token", API_TOKEN,
-        "--chain-image", &chain_image,
+        "--hoprd-bin",
+        &hoprd_bin,
+        "--size",
+        &CLUSTER_SIZE.to_string(),
+        "--extra-identities",
+        "1",
+        "--data-dir",
+        data_dir.to_str().unwrap(),
+        "--api-host",
+        API_HOST,
+        "--api-port-base",
+        &API_PORT_BASE.to_string(),
+        "--p2p-port-base",
+        &P2P_PORT_BASE.to_string(),
+        "--api-token",
+        API_TOKEN,
+        "--chain-image",
+        &chain_image,
     ]);
     if let Some(runtime) = container_runtime {
         cmd.args(["--container-runtime", &runtime]);
@@ -396,10 +415,10 @@ async fn start_cluster() -> anyhow::Result<ClusterHandle> {
                 buf.push_str(&line);
                 buf.push('\n');
             }
-            if line.contains("localcluster running") {
-                if let Some(tx) = ready_tx.take() {
-                    let _ = tx.send(());
-                }
+            if line.contains("localcluster running")
+                && let Some(tx) = ready_tx.take()
+            {
+                let _ = tx.send(());
             }
         }
     });
@@ -643,9 +662,15 @@ async fn await_edgli_channels_open(edgli: &Edgli, min_open: usize) -> anyhow::Re
     let deadline = tokio::time::Instant::now() + CHANNEL_OPEN_TIMEOUT;
     loop {
         let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
-        let open = channels.iter().filter(|ch| ch.status == ChannelStatus::Open).count();
+        let open = channels
+            .iter()
+            .filter(|ch| ch.status == ChannelStatus::Open)
+            .count();
         if open >= min_open {
-            tracing::info!(open_channels = open, "Edgli outgoing channels confirmed Open");
+            tracing::info!(
+                open_channels = open,
+                "Edgli outgoing channels confirmed Open"
+            );
             return Ok(());
         }
         tracing::debug!("Edgli: {open}/{min_open} outgoing channels Open (waiting for strategy)");
@@ -681,7 +706,6 @@ fn build_edgli_config(extra: &ExtraInfo) -> HoprLibConfig {
             transport: TransportConfig {
                 announce_local_addresses: true,
                 prefer_local_addresses: true,
-                ..Default::default()
             },
             ..Default::default()
         },
@@ -772,7 +796,6 @@ async fn pump_and_verify(session: HoprSession, payload: &[u8], label: &str) -> a
 #[ignore]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn edgli_sends_one_megabyte_through_cluster() -> anyhow::Result<()> {
-
     // ── 1. Start the 3-node HOPR cluster ────────────────────────────────────
     // hoprd-localcluster provisions identities, deploys Safes, starts hoprd
     // processes, waits for peer discovery, opens full-mesh channels, then
@@ -892,8 +915,8 @@ async fn edgli_sends_one_megabyte_through_cluster() -> anyhow::Result<()> {
             loopback_target(),
             HoprSessionClientConfig {
                 forward_path: HopRouting::try_from(0_usize)?,
-                return_path:  HopRouting::try_from(0_usize)?,
-                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl).into(),
+                return_path: HopRouting::try_from(0_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
                 ..Default::default()
             },
         )
@@ -912,8 +935,8 @@ async fn edgli_sends_one_megabyte_through_cluster() -> anyhow::Result<()> {
             loopback_target(),
             HoprSessionClientConfig {
                 forward_path: HopRouting::try_from(1_usize)?,
-                return_path:  HopRouting::try_from(1_usize)?,
-                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl).into(),
+                return_path: HopRouting::try_from(1_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
                 ..Default::default()
             },
         )
@@ -922,7 +945,10 @@ async fn edgli_sends_one_megabyte_through_cluster() -> anyhow::Result<()> {
 
     // ── 11. Final state assertion ─────────────────────────────────────────────
     let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
-    let open_count = channels.iter().filter(|ch| ch.status == ChannelStatus::Open).count();
+    let open_count = channels
+        .iter()
+        .filter(|ch| ch.status == ChannelStatus::Open)
+        .count();
     assert!(
         open_count >= 1,
         "expected ≥1 Open outgoing channel after pumping; got {open_count}"
