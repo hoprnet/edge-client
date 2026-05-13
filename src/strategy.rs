@@ -39,6 +39,19 @@ pub struct IncentiveConfiguration {
     pub target_open_channels: usize,
 }
 
+impl IncentiveConfiguration {
+    /// Validate internal consistency of the configuration.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.target_open_channels >= self.min_open_channels,
+            "target_open_channels ({}) must be >= min_open_channels ({})",
+            self.target_open_channels,
+            self.min_open_channels
+        );
+        Ok(())
+    }
+}
+
 /// Compute [`FundingConfig`] from chain-derived values and a desired message budget.
 ///
 /// `ticket_price` is the oracle's minimum expected value per relayed hop.
@@ -94,6 +107,7 @@ pub async fn default_strategy_cfg(
     node: &crate::client::Edgli,
     sizing: IncentiveConfiguration,
 ) -> anyhow::Result<MultiStrategyConfig> {
+    sizing.validate()?;
     let chain = node.chain_api();
     let ticket_price = chain.minimum_ticket_price().await?;
     let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();

@@ -77,9 +77,7 @@ use edgli::{
     traits::EdgeNodeApi,
     Edgli, EdgliInitState,
 };
-use hoprd_api_client::Client as HoprdClient;
 use rand::RngCore as _;
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
@@ -406,21 +404,39 @@ async fn start_cluster() -> anyhow::Result<ClusterHandle> {
         }
     });
 
-    tokio::time::timeout(CLUSTER_START_TIMEOUT, ready_rx)
-        .await
-        .map_err(|_| anyhow::anyhow!(
-            "timeout ({CLUSTER_START_TIMEOUT:?}) waiting for 'localcluster running' sentinel"
-        ))?
-        .map_err(|_| anyhow::anyhow!(
-            "localcluster stdout closed before printing 'localcluster running'"
-        ))?;
+    let startup_result: anyhow::Result<ClusterSummary> = async {
+        tokio::time::timeout(CLUSTER_START_TIMEOUT, ready_rx)
+            .await
+            .map_err(|_| anyhow::anyhow!(
+                "timeout ({CLUSTER_START_TIMEOUT:?}) waiting for 'localcluster running' sentinel"
+            ))?
+            .map_err(|_| anyhow::anyhow!(
+                "localcluster stdout closed before printing 'localcluster running'"
+            ))?;
 
-    // Brief pause so any trailing summary lines in the same stdout flush are
-    // buffered before we snapshot.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+        // Brief pause so any trailing summary lines in the same stdout flush are
+        // buffered before we snapshot.
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let stdout_text = collected.lock().await.clone();
-    let summary = parse_summary(&stdout_text)?;
+        let stdout_text = collected.lock().await.clone();
+        parse_summary(&stdout_text)
+    }
+    .await;
+
+    let summary = match startup_result {
+        Ok(s) => s,
+        Err(err) => {
+            #[cfg(unix)]
+            if let Some(pid) = child.id() {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid as i32),
+                    nix::sys::signal::Signal::SIGINT,
+                );
+            }
+            let _ = child.start_kill();
+            return Err(err);
+        }
+    };
 
     tracing::info!(
         blokli_url = %summary.blokli_url,
@@ -438,34 +454,35 @@ async fn start_cluster() -> anyhow::Result<ClusterHandle> {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Cluster node state helpers (hoprd-api-client native types)
+// Cluster node state helpers (plain reqwest)
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Build an authenticated `hoprd_api_client::Client` for the given node port.
-fn node_client(port: u16) -> HoprdClient {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {API_TOKEN}")).unwrap(),
-    );
-    let http = reqwest::Client::builder()
+fn node_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
-        .default_headers(headers)
         .build()
-        .unwrap();
-    HoprdClient::new_with_client(
-        &format!("http://{API_HOST}:{port}"),
-        http,
-    )
+        .unwrap()
+}
+
+fn auth_header() -> String {
+    format!("Bearer {API_TOKEN}")
 }
 
 /// Poll /readyz on all cluster nodes until every one returns 200.
 async fn await_nodes_ready() -> anyhow::Result<()> {
+    let client = node_http_client();
     let deadline = tokio::time::Instant::now() + READYZ_TIMEOUT;
     loop {
         let mut all_ready = true;
         for i in 0..CLUSTER_SIZE {
-            if node_client(API_PORT_BASE + i as u16).readyz().await.is_err() {
+            let port = API_PORT_BASE + i as u16;
+            let ok = client
+                .get(format!("http://{API_HOST}:{port}/readyz"))
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+            if !ok {
                 all_ready = false;
                 break;
             }
@@ -487,16 +504,25 @@ async fn await_nodes_ready() -> anyhow::Result<()> {
 /// opening channels, so this check typically completes immediately after
 /// 'localcluster running'.
 async fn await_cluster_peers_discovered() -> anyhow::Result<()> {
+    let client = node_http_client();
     let expected = CLUSTER_SIZE - 1;
     let deadline = tokio::time::Instant::now() + PEER_DISCOVERY_TIMEOUT;
     loop {
         let mut all_discovered = true;
         for i in 0..CLUSTER_SIZE {
-            let announced = node_client(API_PORT_BASE + i as u16)
-                .announced()
-                .await
-                .map(|r| r.into_inner().len())
-                .unwrap_or(0);
+            let port = API_PORT_BASE + i as u16;
+            let announced = async {
+                let body: serde_json::Value = client
+                    .get(format!("http://{API_HOST}:{port}/api/v4/network/announced"))
+                    .header("Authorization", auth_header())
+                    .send()
+                    .await?
+                    .json()
+                    .await?;
+                anyhow::Ok(body.as_array().map(|a| a.len()).unwrap_or(0))
+            }
+            .await
+            .unwrap_or(0);
             if announced < expected {
                 tracing::debug!("node {i}: {announced}/{expected} announced peers");
                 all_discovered = false;
@@ -522,22 +548,36 @@ async fn await_cluster_peers_discovered() -> anyhow::Result<()> {
 /// ready sentinel, so this check typically completes immediately after
 /// 'localcluster running'.
 async fn await_intracluster_channels_open() -> anyhow::Result<()> {
+    let client = node_http_client();
     let expected = CLUSTER_SIZE - 1;
     let deadline = tokio::time::Instant::now() + INTRACLUSTER_CHANNEL_TIMEOUT;
     loop {
         let mut all_open = true;
         for i in 0..CLUSTER_SIZE {
-            let open = node_client(API_PORT_BASE + i as u16)
-                .list_channels(None, Some(false))
-                .await
-                .map(|r| {
-                    r.into_inner()
-                        .outgoing
-                        .iter()
-                        .filter(|ch| ch.status == "Open")
-                        .count()
-                })
-                .unwrap_or(0);
+            let port = API_PORT_BASE + i as u16;
+            let open = async {
+                let body: serde_json::Value = client
+                    .get(format!(
+                        "http://{API_HOST}:{port}/api/v4/channels?includingClosed=false"
+                    ))
+                    .header("Authorization", auth_header())
+                    .send()
+                    .await?
+                    .json()
+                    .await?;
+                anyhow::Ok(
+                    body["outgoing"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter(|ch| ch["status"].as_str() == Some("Open"))
+                                .count()
+                        })
+                        .unwrap_or(0),
+                )
+            }
+            .await
+            .unwrap_or(0);
             if open < expected {
                 tracing::debug!("node {i}: {open}/{expected} outgoing channels Open");
                 all_open = false;
@@ -680,10 +720,15 @@ async fn pump_and_verify(session: HoprSession, payload: &[u8], label: &str) -> a
     });
 
     let mut received = vec![0u8; n];
-    tokio::time::timeout(PUMP_TIMEOUT, r.read_exact(&mut received))
+    if let Err(err) = tokio::time::timeout(PUMP_TIMEOUT, r.read_exact(&mut received))
         .await
-        .map_err(|_| anyhow::anyhow!("{label}: read timeout ({PUMP_TIMEOUT:?}) after {n} B"))?
-        .map_err(|e| anyhow::anyhow!("{label}: read error: {e}"))?;
+        .map_err(|_| anyhow::anyhow!("{label}: read timeout ({PUMP_TIMEOUT:?}) after {n} B"))
+        .and_then(|r| r.map_err(|e| anyhow::anyhow!("{label}: read error: {e}")))
+    {
+        writer.abort();
+        let _ = writer.await;
+        return Err(err);
+    }
 
     tokio::time::timeout(PUMP_TIMEOUT, writer)
         .await

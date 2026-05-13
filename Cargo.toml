@@ -93,8 +93,6 @@ hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "37d2
   "runtime-tokio",
   "testing",
 ] }
-# Integration test dependencies
-hoprd-api-client = { git = "https://github.com/hoprnet/hoprd", rev = "e36eb8164d222a24c16408fc38a39d3478541971" }
 tokio = { version = "1", features = ["full", "process"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 tempfile = "3"
