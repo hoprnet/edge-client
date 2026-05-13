@@ -24,8 +24,14 @@ pub struct MultiStrategyConfig {
 /// future incentive extensions beyond the current channel lifecycle strategy.
 #[derive(Debug, Clone, Copy, smart_default::SmartDefault)]
 pub struct IncentiveConfiguration {
-    /// Expected number of mixnet messages this channel should forward before exhaustion.
-    /// The stake is sized as the expected drain: `desired_message_count × ticket_price`.
+    /// Number of forwarded packets the initial channel stake is sized to cover.
+    ///
+    /// Sets `initial_balance = max(N × ticket_price, ticket_price / win_prob)`:
+    /// the first term is the expected channel drain; the second is a minimum floor
+    /// ensuring at least one ticket face value is available even at low message counts.
+    ///
+    /// The channel strategy tops up when balance falls below 25% of `initial_balance`,
+    /// so the channel can forward more than this many packets over its lifetime.
     /// Default: 1,000,000.
     #[default = 1_000_000]
     pub desired_message_count: u64,
@@ -40,7 +46,6 @@ pub struct IncentiveConfiguration {
 }
 
 impl IncentiveConfiguration {
-    /// Validate internal consistency of the configuration.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.target_open_channels >= self.min_open_channels,

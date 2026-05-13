@@ -457,6 +457,8 @@ async fn start_cluster() -> anyhow::Result<ClusterHandle> {
 // Cluster node state helpers (plain reqwest)
 // ────────────────────────────────────────────────────────────────────────────
 
+const CHANNEL_STATUS_OPEN: &str = "Open";
+
 fn node_http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -468,34 +470,60 @@ fn auth_header() -> String {
     format!("Bearer {API_TOKEN}")
 }
 
+/// Loop until `check_node(node_index, port)` returns `true` for every cluster node,
+/// or bail after `timeout`.
+async fn poll_cluster_until<Fut>(
+    timeout: Duration,
+    sleep: Duration,
+    success_msg: &str,
+    timeout_msg: &str,
+    mut check_node: impl FnMut(usize, u16) -> Fut,
+) -> anyhow::Result<()>
+where
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let all_ok = {
+            let mut ok = true;
+            for i in 0..CLUSTER_SIZE {
+                if !check_node(i, API_PORT_BASE + i as u16).await {
+                    ok = false;
+                    break;
+                }
+            }
+            ok
+        };
+        if all_ok {
+            tracing::info!("{success_msg}");
+            return Ok(());
+        }
+        anyhow::ensure!(tokio::time::Instant::now() < deadline, "{timeout_msg}");
+        tokio::time::sleep(sleep).await;
+    }
+}
+
 /// Poll /readyz on all cluster nodes until every one returns 200.
 async fn await_nodes_ready() -> anyhow::Result<()> {
     let client = node_http_client();
-    let deadline = tokio::time::Instant::now() + READYZ_TIMEOUT;
-    loop {
-        let mut all_ready = true;
-        for i in 0..CLUSTER_SIZE {
-            let port = API_PORT_BASE + i as u16;
-            let ok = client
-                .get(format!("http://{API_HOST}:{port}/readyz"))
-                .send()
-                .await
-                .map(|r| r.status().is_success())
-                .unwrap_or(false);
-            if !ok {
-                all_ready = false;
-                break;
+    poll_cluster_until(
+        READYZ_TIMEOUT,
+        Duration::from_secs(3),
+        &format!("all {} cluster nodes passed /readyz", CLUSTER_SIZE),
+        &format!("timeout ({READYZ_TIMEOUT:?}) waiting for cluster /readyz"),
+        |_i, port| {
+            let client = client.clone();
+            async move {
+                client
+                    .get(format!("http://{API_HOST}:{port}/readyz"))
+                    .send()
+                    .await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false)
             }
-        }
-        if all_ready {
-            tracing::info!("all {} cluster nodes passed /readyz", CLUSTER_SIZE);
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!("timeout ({READYZ_TIMEOUT:?}) waiting for cluster /readyz");
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
-    }
+        },
+    )
+    .await
 }
 
 /// Poll /api/v4/network/announced on each node until every node sees CLUSTER_SIZE-1 peers.
@@ -506,40 +534,34 @@ async fn await_nodes_ready() -> anyhow::Result<()> {
 async fn await_cluster_peers_discovered() -> anyhow::Result<()> {
     let client = node_http_client();
     let expected = CLUSTER_SIZE - 1;
-    let deadline = tokio::time::Instant::now() + PEER_DISCOVERY_TIMEOUT;
-    loop {
-        let mut all_discovered = true;
-        for i in 0..CLUSTER_SIZE {
-            let port = API_PORT_BASE + i as u16;
-            let announced = async {
-                let body: serde_json::Value = client
-                    .get(format!("http://{API_HOST}:{port}/api/v4/network/announced"))
-                    .header("Authorization", auth_header())
-                    .send()
-                    .await?
-                    .json()
-                    .await?;
-                anyhow::Ok(body.as_array().map(|a| a.len()).unwrap_or(0))
+    poll_cluster_until(
+        PEER_DISCOVERY_TIMEOUT,
+        Duration::from_secs(3),
+        "all cluster nodes see full peer announcement set",
+        &format!("timeout ({PEER_DISCOVERY_TIMEOUT:?}) waiting for cluster peer discovery"),
+        |i, port| {
+            let client = client.clone();
+            async move {
+                let announced = async {
+                    let body: serde_json::Value = client
+                        .get(format!("http://{API_HOST}:{port}/api/v4/network/announced"))
+                        .header("Authorization", auth_header())
+                        .send()
+                        .await?
+                        .json()
+                        .await?;
+                    anyhow::Ok(body.as_array().map(|a| a.len()).unwrap_or(0))
+                }
+                .await
+                .unwrap_or(0);
+                if announced < expected {
+                    tracing::debug!("node {i}: {announced}/{expected} announced peers");
+                }
+                announced >= expected
             }
-            .await
-            .unwrap_or(0);
-            if announced < expected {
-                tracing::debug!("node {i}: {announced}/{expected} announced peers");
-                all_discovered = false;
-                break;
-            }
-        }
-        if all_discovered {
-            tracing::info!("all cluster nodes see full peer announcement set");
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!(
-                "timeout ({PEER_DISCOVERY_TIMEOUT:?}) waiting for cluster peer discovery"
-            );
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
-    }
+        },
+    )
+    .await
 }
 
 /// Poll /api/v4/channels on each node until every node has CLUSTER_SIZE-1 Open outgoing channels.
@@ -550,51 +572,47 @@ async fn await_cluster_peers_discovered() -> anyhow::Result<()> {
 async fn await_intracluster_channels_open() -> anyhow::Result<()> {
     let client = node_http_client();
     let expected = CLUSTER_SIZE - 1;
-    let deadline = tokio::time::Instant::now() + INTRACLUSTER_CHANNEL_TIMEOUT;
-    loop {
-        let mut all_open = true;
-        for i in 0..CLUSTER_SIZE {
-            let port = API_PORT_BASE + i as u16;
-            let open = async {
-                let body: serde_json::Value = client
-                    .get(format!(
-                        "http://{API_HOST}:{port}/api/v4/channels?includingClosed=false"
-                    ))
-                    .header("Authorization", auth_header())
-                    .send()
-                    .await?
-                    .json()
-                    .await?;
-                anyhow::Ok(
-                    body["outgoing"]
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter(|ch| ch["status"].as_str() == Some("Open"))
-                                .count()
-                        })
-                        .unwrap_or(0),
-                )
+    poll_cluster_until(
+        INTRACLUSTER_CHANNEL_TIMEOUT,
+        Duration::from_secs(5),
+        "full-mesh intracluster channels confirmed Open",
+        &format!(
+            "timeout ({INTRACLUSTER_CHANNEL_TIMEOUT:?}) waiting for intracluster channels to open"
+        ),
+        |i, port| {
+            let client = client.clone();
+            async move {
+                let open = async {
+                    let body: serde_json::Value = client
+                        .get(format!(
+                            "http://{API_HOST}:{port}/api/v4/channels?includingClosed=false"
+                        ))
+                        .header("Authorization", auth_header())
+                        .send()
+                        .await?
+                        .json()
+                        .await?;
+                    anyhow::Ok(
+                        body["outgoing"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter(|ch| ch["status"].as_str() == Some(CHANNEL_STATUS_OPEN))
+                                    .count()
+                            })
+                            .unwrap_or(0),
+                    )
+                }
+                .await
+                .unwrap_or(0);
+                if open < expected {
+                    tracing::debug!("node {i}: {open}/{expected} outgoing channels Open");
+                }
+                open >= expected
             }
-            .await
-            .unwrap_or(0);
-            if open < expected {
-                tracing::debug!("node {i}: {open}/{expected} outgoing channels Open");
-                all_open = false;
-                break;
-            }
-        }
-        if all_open {
-            tracing::info!("full-mesh intracluster channels confirmed Open");
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!(
-                "timeout ({INTRACLUSTER_CHANNEL_TIMEOUT:?}) waiting for intracluster channels to open"
-            );
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
+        },
+    )
+    .await
 }
 
 // ────────────────────────────────────────────────────────────────────────────
