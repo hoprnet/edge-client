@@ -1,6 +1,6 @@
 use hopr_lib::api::types::primitive::prelude::{HoprBalance, UnitaryFloatOps as _};
 pub use hopr_strategy::channel_lifecycle::{
-    ChannelLifecycleConfig, FundingConfig, PopulationConfig,
+    ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig,
 };
 
 #[cfg(feature = "runtime-tokio")]
@@ -25,7 +25,7 @@ pub struct MultiStrategyConfig {
 #[derive(Debug, Clone, Copy, smart_default::SmartDefault)]
 pub struct IncentiveConfiguration {
     /// Expected number of mixnet messages this channel should forward before exhaustion.
-    /// The stake is sized as the expected drain: `desired_message_count × win_prob × ticket_price`.
+    /// The stake is sized as the expected drain: `desired_message_count × ticket_price`.
     /// Default: 1,000,000.
     #[default = 1_000_000]
     pub desired_message_count: u64,
@@ -41,9 +41,13 @@ pub struct IncentiveConfiguration {
 
 /// Compute [`FundingConfig`] from chain-derived values and a desired message budget.
 ///
-/// Sizes the initial channel stake as the expected drain over
-/// `sizing.desired_message_count` messages:
-/// `desired_message_count × win_prob × ticket_price`.
+/// `ticket_price` is the oracle's minimum expected value per relayed hop.
+/// The ticket face value (amount locked per ticket) = `ticket_price / win_prob`.
+///
+/// Sizes `initial_balance` as the larger of:
+/// - expected drain over `sizing.desired_message_count` messages: `N × ticket_price`
+/// - one ticket's face value (floor so the channel can send at least one packet):
+///   `ticket_price / win_prob`
 ///
 /// Derived fields keep the strategy's semantic invariants
 /// (`lower < initial`, `topup + lower ≈ initial`):
@@ -59,10 +63,14 @@ pub fn compute_funding_config(
         win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
         "win_prob must be in (0, 1]; got {win_prob}"
     );
-    let initial = (ticket_price * sizing.desired_message_count).mul_f64(win_prob)?;
+    // face_value = price / win_prob: channel needs ≥1 face_value to issue any ticket.
+    let face_value = ticket_price.div_f64(win_prob)?;
+    // expected_drain = N × ticket_price: each message costs one ticket_price in expected channel drain.
+    let expected_drain = ticket_price * sizing.desired_message_count;
+    let initial = expected_drain.max(face_value);
     anyhow::ensure!(
         initial > HoprBalance::new_base(0),
-        "computed initial_balance is zero; increase desired_message_count or ticket_price"
+        "computed initial_balance is zero; ticket_price is zero"
     );
     let topup = initial.mul_f64(0.75)?;
     let lower = initial.mul_f64(0.25)?;
