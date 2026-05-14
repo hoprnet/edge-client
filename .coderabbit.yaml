@@ -18,7 +18,7 @@ reviews:
       - "DO NOT MERGE"
     drafts: false
     base_branches:
-      - "master"
+      - "main"
       - "release/.*"
 chat:
   auto_reply: true
