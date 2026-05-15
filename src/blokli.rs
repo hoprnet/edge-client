@@ -36,6 +36,10 @@ pub(crate) fn new_blokli_client(url: Option<Url>) -> BlokliClient {
             timeout: std::time::Duration::from_secs(3),
             // This is actually maximum delay; starts at 2 s with backoff until 30 s.
             stream_reconnect_timeout: std::time::Duration::from_secs(30),
+            // bloklid-anvil :latest does not yet advertise `indexes_safe_events`
+            // in its feature flags even though it indexes them. Skip the check
+            // so local-cluster testing works without pinning an unreleased image.
+            auto_compatibility_check: false,
             ..Default::default()
         },
     )

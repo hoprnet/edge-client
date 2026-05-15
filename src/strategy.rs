@@ -1,4 +1,10 @@
-pub use hopr_strategy::channel_lifecycle::ChannelLifecycleConfig;
+use hopr_lib::api::types::primitive::prelude::{HoprBalance, UnitaryFloatOps as _};
+pub use hopr_strategy::channel_lifecycle::{
+    ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig,
+};
+
+#[cfg(feature = "runtime-tokio")]
+use hopr_lib::api::{chain::ChainValues as _, node::HasChainApi as _};
 
 /// Subset of strategies relevant to an edge node.
 pub enum EdgeStrategyKind {
@@ -11,34 +17,253 @@ pub struct MultiStrategyConfig {
     pub strategies: Vec<EdgeStrategyKind>,
 }
 
-/// Returns the default [`MultiStrategyConfig`] for an edge client telemetry reactor.
+/// Top-level incentive parameters for the channel lifecycle strategy reactor.
 ///
-/// Runs a single [`ChannelLifecycleStrategy`] with its built-in defaults, which
-/// opens, funds, closes, and finalizes outgoing payment channels automatically.
-pub fn default_edge_client_telemetry_reactor_cfg() -> MultiStrategyConfig {
-    MultiStrategyConfig {
-        strategies: vec![EdgeStrategyKind::ChannelLifecycle(
-            ChannelLifecycleConfig::default(),
-        )],
+/// Bundles channel funding sizing with population topology so callers
+/// have a single config knob for the reactor. Designed to accommodate
+/// future incentive extensions beyond the current channel lifecycle strategy.
+#[derive(Debug, Clone, Copy, smart_default::SmartDefault)]
+pub struct IncentiveConfiguration {
+    /// Number of forwarded packets the initial channel stake is sized to cover.
+    ///
+    /// Sets `initial_balance = max(N × ticket_price, ticket_price / win_prob)`:
+    /// the first term is the expected channel drain; the second is a minimum floor
+    /// ensuring at least one ticket face value is available even at low message counts.
+    ///
+    /// The channel strategy tops up when balance falls below 25% of `initial_balance`,
+    /// so the channel can forward more than this many packets over its lifetime.
+    /// Default: 1,000,000.
+    #[default = 1_000_000]
+    pub desired_message_count: u64,
+
+    /// Minimum number of open outgoing channels to maintain. Default: 5.
+    #[default = 5]
+    pub min_open_channels: usize,
+
+    /// Target number of open outgoing channels to open towards. Default: 8.
+    #[default = 8]
+    pub target_open_channels: usize,
+}
+
+impl IncentiveConfiguration {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.target_open_channels >= self.min_open_channels,
+            "target_open_channels ({}) must be >= min_open_channels ({})",
+            self.target_open_channels,
+            self.min_open_channels
+        );
+        Ok(())
     }
+}
+
+/// Compute [`FundingConfig`] from chain-derived values and a desired message budget.
+///
+/// **Semantics:** `ticket_price` is the *expected* per-hop value (= `face_value × win_prob`),
+/// not the face value. Per-hop expected channel drain is therefore `ticket_price`,
+/// regardless of `win_prob`. The ticket face value (amount locked per ticket)
+/// = `ticket_price / win_prob`.
+///
+/// Sizes `initial_balance` as the larger of:
+/// - expected drain over `sizing.desired_message_count` packets: `N × ticket_price`
+/// - one ticket's face value (the channel cannot mint a single ticket otherwise):
+///   `ticket_price / win_prob`
+///
+/// Derived fields keep the strategy's semantic invariants
+/// (`lower < initial`, `topup + lower ≈ initial`):
+/// - `topup_balance`            = 75% of `initial_balance`
+/// - `lower_balance_threshold`  = 25% of `initial_balance`
+/// - `min_safe_balance_required` = `initial_balance`
+pub fn compute_funding_config(
+    ticket_price: HoprBalance,
+    win_prob: f64,
+    sizing: &IncentiveConfiguration,
+) -> anyhow::Result<FundingConfig> {
+    anyhow::ensure!(
+        win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
+        "win_prob must be in (0, 1]; got {win_prob}"
+    );
+    // face_value = price / win_prob: channel needs ≥1 face_value to issue any ticket.
+    let face_value = ticket_price.div_f64(win_prob)?;
+    // expected_drain = N × ticket_price (NOT × win_prob — ticket_price is already
+    // the expected per-hop value: each ticket has face = ticket_price/win_prob
+    // and pays out with probability win_prob, so expected per-ticket drain = ticket_price).
+    let expected_drain = ticket_price * sizing.desired_message_count;
+    let initial = expected_drain.max(face_value);
+    anyhow::ensure!(
+        initial > HoprBalance::new_base(0),
+        "computed initial_balance is zero; ticket_price is zero"
+    );
+    let topup = initial.mul_f64(0.75)?;
+    let lower = initial.mul_f64(0.25)?;
+    Ok(FundingConfig {
+        initial_balance: initial,
+        topup_balance: topup,
+        lower_balance_threshold: lower,
+        min_safe_balance_required: initial,
+        stop_when_unfunded: true,
+    })
+}
+
+/// Returns the default [`MultiStrategyConfig`] for an edge client reactor.
+///
+/// Fetches the minimum ticket price and winning probability from the chain and
+/// sizes the [`ChannelLifecycleStrategy`] funding to cover
+/// `sizing.desired_message_count` messages per channel.
+/// See [`compute_funding_config`] for the sizing formula.
+#[cfg(feature = "runtime-tokio")]
+pub async fn default_strategy_cfg(
+    node: &crate::client::Edgli,
+    sizing: IncentiveConfiguration,
+) -> anyhow::Result<MultiStrategyConfig> {
+    sizing.validate()?;
+    let chain = node.chain_api();
+    let ticket_price = chain.minimum_ticket_price().await?;
+    let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
+    let cfg = ChannelLifecycleConfig {
+        funding: compute_funding_config(ticket_price, win_prob, &sizing)?,
+        population: PopulationConfig {
+            min_open_channels: sizing.min_open_channels,
+            target_open_channels: sizing.target_open_channels,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Ok(MultiStrategyConfig {
+        strategies: vec![EdgeStrategyKind::ChannelLifecycle(cfg)],
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use hopr_lib::api::types::primitive::prelude::HoprBalance;
+
     use super::*;
 
     #[test]
-    fn default_cfg_has_one_strategy() {
-        let cfg = default_edge_client_telemetry_reactor_cfg();
-        assert_eq!(cfg.strategies.len(), 1);
+    fn compute_funding_config_win_prob_one() {
+        // With win_prob=1.0, every ticket pays out → initial = ticket_price × msg_count
+        let cfg = compute_funding_config(
+            HoprBalance::new_base(1),
+            1.0,
+            &IncentiveConfiguration {
+                desired_message_count: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(cfg.initial_balance, HoprBalance::new_base(1));
+        assert_eq!(cfg.min_safe_balance_required, HoprBalance::new_base(1));
+        assert!(cfg.lower_balance_threshold < cfg.initial_balance);
+        assert!(cfg.topup_balance > cfg.lower_balance_threshold);
+        assert!(cfg.topup_balance < cfg.initial_balance);
+        assert!(cfg.stop_when_unfunded);
     }
 
     #[test]
-    fn default_cfg_strategy_is_channel_lifecycle() {
-        let cfg = default_edge_client_telemetry_reactor_cfg();
+    fn compute_funding_config_proportional_fields() {
+        // Verify lower < initial, min_safe == initial, topup ∈ (lower, initial)
+        let cfg = compute_funding_config(
+            HoprBalance::new_base(10),
+            1.0,
+            &IncentiveConfiguration {
+                desired_message_count: 100,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(cfg.min_safe_balance_required, cfg.initial_balance);
+        assert!(cfg.lower_balance_threshold < cfg.initial_balance);
+        assert!(cfg.topup_balance < cfg.initial_balance);
+        assert!(cfg.topup_balance > cfg.lower_balance_threshold);
+    }
+
+    #[test]
+    fn compute_funding_config_rejects_zero_win_prob() {
         assert!(
-            matches!(cfg.strategies[0], EdgeStrategyKind::ChannelLifecycle(_)),
-            "expected strategy to be ChannelLifecycle"
+            compute_funding_config(
+                HoprBalance::new_base(1),
+                0.0,
+                &IncentiveConfiguration::default()
+            )
+            .is_err()
         );
+    }
+
+    #[test]
+    fn compute_funding_config_rejects_win_prob_above_one() {
+        assert!(
+            compute_funding_config(
+                HoprBalance::new_base(1),
+                1.1,
+                &IncentiveConfiguration::default()
+            )
+            .is_err()
+        );
+        assert!(
+            compute_funding_config(
+                HoprBalance::new_base(1),
+                f64::INFINITY,
+                &IncentiveConfiguration::default()
+            )
+            .is_err()
+        );
+        assert!(
+            compute_funding_config(
+                HoprBalance::new_base(1),
+                f64::NAN,
+                &IncentiveConfiguration::default()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn compute_funding_config_rejects_zero_initial_balance() {
+        assert!(
+            compute_funding_config(
+                HoprBalance::new_base(0),
+                1.0,
+                &IncentiveConfiguration {
+                    desired_message_count: 0,
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn compute_funding_config_default_sizing_has_one_strategy_shape() {
+        // Smoke-test: can build a MultiStrategyConfig from compute_funding_config output
+        let funding = compute_funding_config(
+            HoprBalance::new_base(1),
+            1.0,
+            &IncentiveConfiguration {
+                desired_message_count: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let lifecycle_cfg = ChannelLifecycleConfig {
+            funding,
+            ..Default::default()
+        };
+        let cfg = MultiStrategyConfig {
+            strategies: vec![EdgeStrategyKind::ChannelLifecycle(lifecycle_cfg)],
+        };
+        assert_eq!(cfg.strategies.len(), 1);
+        assert!(matches!(
+            cfg.strategies[0],
+            EdgeStrategyKind::ChannelLifecycle(_)
+        ));
+    }
+
+    #[test]
+    fn channel_sizing_defaults_match_population_config_defaults() {
+        let sizing = IncentiveConfiguration::default();
+        let population = PopulationConfig::default();
+        assert_eq!(sizing.min_open_channels, population.min_open_channels);
+        assert_eq!(sizing.target_open_channels, population.target_open_channels);
     }
 }
