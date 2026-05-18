@@ -638,17 +638,11 @@ where
 {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let all_ok = {
-            let mut ok = true;
-            for i in 0..CLUSTER_SIZE {
-                if !check_node(i, API_PORT_BASE + i as u16).await {
-                    ok = false;
-                    break;
-                }
-            }
-            ok
-        };
-        if all_ok {
+        let results = futures::future::join_all(
+            (0..CLUSTER_SIZE).map(|i| check_node(i, API_PORT_BASE + i as u16)),
+        )
+        .await;
+        if results.into_iter().all(|ok| ok) {
             tracing::info!("{success_msg}");
             return Ok(());
         }
@@ -765,49 +759,67 @@ pub async fn await_intracluster_channels_open() -> anyhow::Result<()> {
 // Edge client state helpers (use EdgeNodeApi)
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Wait until Edgli has at least `min_peers` connected P2P peers.
-pub async fn await_edgli_peers_connected(edgli: &Edgli, min_peers: usize) -> anyhow::Result<()> {
-    let deadline = tokio::time::Instant::now() + EDGLI_PEER_DISCOVERY_TIMEOUT;
+async fn poll_edgli_until<F, Fut>(
+    timeout: Duration,
+    sleep: Duration,
+    timeout_msg: impl Fn() -> String,
+    mut check: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let peers = edgli.connected_peer_addresses().await?;
-        if peers.len() >= min_peers {
-            tracing::info!(peer_count = peers.len(), "Edgli P2P connectivity confirmed");
+        if check().await? {
             return Ok(());
         }
-        tracing::debug!("Edgli: {}/{min_peers} peers connected", peers.len());
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!(
-                "timeout ({EDGLI_PEER_DISCOVERY_TIMEOUT:?}) waiting for Edgli to connect to {min_peers} peer(s)"
-            );
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        anyhow::ensure!(tokio::time::Instant::now() < deadline, "{}", timeout_msg());
+        tokio::time::sleep(sleep).await;
     }
+}
+
+/// Wait until Edgli has at least `min_peers` connected P2P peers.
+pub async fn await_edgli_peers_connected(edgli: &Edgli, min_peers: usize) -> anyhow::Result<()> {
+    poll_edgli_until(
+        EDGLI_PEER_DISCOVERY_TIMEOUT,
+        Duration::from_secs(3),
+        || format!("timeout ({EDGLI_PEER_DISCOVERY_TIMEOUT:?}) waiting for Edgli to connect to {min_peers} peer(s)"),
+        || async {
+            let peers = edgli.connected_peer_addresses().await?;
+            if peers.len() >= min_peers {
+                tracing::info!(peer_count = peers.len(), "Edgli P2P connectivity confirmed");
+                return Ok(true);
+            }
+            tracing::debug!("Edgli: {}/{min_peers} peers connected", peers.len());
+            Ok(false)
+        },
+    )
+    .await
 }
 
 /// Wait until Edgli's strategy reactor has opened at least `min_open` outgoing channels.
 pub async fn await_edgli_channels_open(
     edgli: &Edgli,
     min_open: usize,
-    tuning: &EdgliTuning,
+    timeout: Duration,
 ) -> anyhow::Result<()> {
-    let timeout = tuning.channel_open_timeout;
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
-        let open = channels
-            .iter()
-            .filter(|ch| ch.status == ChannelStatus::Open)
-            .count();
-        if open >= min_open {
-            tracing::info!(open_channels = open, "Edgli outgoing channels confirmed Open");
-            return Ok(());
-        }
-        tracing::debug!("Edgli: {open}/{min_open} outgoing channels Open (waiting for strategy)");
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!("timeout ({timeout:?}) waiting for Edgli strategy to open {min_open} channel(s)");
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
+    poll_edgli_until(
+        timeout,
+        Duration::from_secs(5),
+        || format!("timeout ({timeout:?}) waiting for Edgli strategy to open {min_open} channel(s)"),
+        || async {
+            let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
+            let open = channels.iter().filter(|ch| ch.status == ChannelStatus::Open).count();
+            if open >= min_open {
+                tracing::info!(open_channels = open, "Edgli outgoing channels confirmed Open");
+                return Ok(true);
+            }
+            tracing::debug!("Edgli: {open}/{min_open} outgoing channels Open (waiting for strategy)");
+            Ok(false)
+        },
+    )
+    .await
 }
 
 /// Select session destinations that work for both 0-hop and 1-hop.
@@ -819,16 +831,15 @@ pub async fn await_edgli_channels_open(
 /// (the 0-hop target acts as the relay, with its intranetwork channels
 /// carrying the forward path).
 async fn select_session_targets(edgli: &Edgli) -> anyhow::Result<(Address, Address)> {
-    let channels: Vec<ChannelEntry> = edgli
-        .my_outgoing_channels()
-        .await?
+    let (raw_channels, peers) =
+        tokio::try_join!(edgli.my_outgoing_channels(), edgli.connected_peer_addresses())?;
+    let channels: Vec<ChannelEntry> = raw_channels
         .into_iter()
         .filter(|c| c.status == ChannelStatus::Open)
         .collect();
     anyhow::ensure!(!channels.is_empty(), "no open outgoing channels");
     let zero_hop = channels[0].destination;
 
-    let peers = edgli.connected_peer_addresses().await?;
     let one_hop = peers
         .into_iter()
         .find(|a| *a != zero_hop)
@@ -1038,7 +1049,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
 
     // ── 6. Wait for Edgli outgoing channels to open ──────────────────────────
     tracing::info!("waiting for strategy to open ≥1 outgoing channel");
-    await_edgli_channels_open(&edgli, 1, &tuning).await?;
+    await_edgli_channels_open(&edgli, 1, tuning.channel_open_timeout).await?;
 
     // ── 7. Select session targets ─────────────────────────────────────────────
     let (dest_0h, dest_1h) = if let Some(exit) = tuning.exit_node {
