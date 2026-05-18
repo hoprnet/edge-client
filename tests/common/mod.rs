@@ -124,7 +124,10 @@ impl EdgliTuning {
             prefer_local_addresses: false,
             announce_local: false,
             strategy_tick: Duration::from_secs(30),
-            min_peer_quality: 0.5,
+            // Rotsee peers have ~150-200 ms RTT; latency_score caps at 0.3 for
+            // that range, so even a perfect probe rate yields at most 0.30.
+            // Setting 0.1 accepts any peer that has had at least one successful probe.
+            min_peer_quality: 0.1,
             require_observed: true,
             // 30 s tick + Gnosis Chain confirmation + on-chain sync latency.
             // Allow several ticks before giving up.
