@@ -123,10 +123,10 @@ impl EdgliTuning {
             connector_cfg: BlockchainConnectorConfig::default(),
             prefer_local_addresses: false,
             announce_local: false,
-            strategy_tick: Duration::from_secs(60),
+            strategy_tick: Duration::from_secs(30),
             min_peer_quality: 0.5,
             require_observed: true,
-            // 60 s tick + Gnosis Chain confirmation + on-chain sync latency.
+            // 30 s tick + Gnosis Chain confirmation + on-chain sync latency.
             // Allow several ticks before giving up.
             channel_open_timeout: Duration::from_secs(300),
         }
