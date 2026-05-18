@@ -95,6 +95,9 @@ pub struct EdgliTuning {
     pub min_peer_quality: f64,
     /// Whether to require the peer has been observed since Edgli started.
     pub require_observed: bool,
+    /// How long to wait for the strategy to open at least one outgoing channel.
+    /// Rotsee needs more headroom: 60 s tick + Gnosis Chain confirmation latency.
+    pub channel_open_timeout: Duration,
 }
 
 impl EdgliTuning {
@@ -111,6 +114,7 @@ impl EdgliTuning {
             strategy_tick: Duration::from_secs(10),
             min_peer_quality: 0.0,
             require_observed: false,
+            channel_open_timeout: Duration::from_secs(120),
         }
     }
 
@@ -122,6 +126,9 @@ impl EdgliTuning {
             strategy_tick: Duration::from_secs(60),
             min_peer_quality: 0.5,
             require_observed: true,
+            // 60 s tick + Gnosis Chain confirmation + on-chain sync latency.
+            // Allow several ticks before giving up.
+            channel_open_timeout: Duration::from_secs(300),
         }
     }
 }
@@ -761,8 +768,13 @@ pub async fn await_edgli_peers_connected(edgli: &Edgli, min_peers: usize) -> any
 }
 
 /// Wait until Edgli's strategy reactor has opened at least `min_open` outgoing channels.
-pub async fn await_edgli_channels_open(edgli: &Edgli, min_open: usize) -> anyhow::Result<()> {
-    let deadline = tokio::time::Instant::now() + CHANNEL_OPEN_TIMEOUT;
+pub async fn await_edgli_channels_open(
+    edgli: &Edgli,
+    min_open: usize,
+    tuning: &EdgliTuning,
+) -> anyhow::Result<()> {
+    let timeout = tuning.channel_open_timeout;
+    let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
         let open = channels
@@ -775,9 +787,7 @@ pub async fn await_edgli_channels_open(edgli: &Edgli, min_open: usize) -> anyhow
         }
         tracing::debug!("Edgli: {open}/{min_open} outgoing channels Open (waiting for strategy)");
         if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!(
-                "timeout ({CHANNEL_OPEN_TIMEOUT:?}) waiting for Edgli strategy to open {min_open} channel(s)"
-            );
+            anyhow::bail!("timeout ({timeout:?}) waiting for Edgli strategy to open {min_open} channel(s)");
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
@@ -1011,7 +1021,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
 
     // ── 6. Wait for Edgli outgoing channels to open ──────────────────────────
     tracing::info!("waiting for strategy to open ≥1 outgoing channel");
-    await_edgli_channels_open(&edgli, 1).await?;
+    await_edgli_channels_open(&edgli, 1, &tuning).await?;
 
     // ── 7. Select session targets ─────────────────────────────────────────────
     let (dest_0h, dest_1h) = select_session_targets(&edgli).await?;
