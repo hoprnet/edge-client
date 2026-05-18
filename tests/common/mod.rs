@@ -98,6 +98,11 @@ pub struct EdgliTuning {
     /// How long to wait for the strategy to open at least one outgoing channel.
     /// Rotsee needs more headroom: 60 s tick + Gnosis Chain confirmation latency.
     pub channel_open_timeout: Duration,
+    /// Fixed exit-node address for session targets.  When set, both the 0-hop
+    /// and 1-hop sessions are directed to this node instead of a dynamically
+    /// discovered channel peer.  Required for Rotsee, where relay nodes do not
+    /// run the exit-node service.
+    pub exit_node: Option<Address>,
 }
 
 impl EdgliTuning {
@@ -115,6 +120,7 @@ impl EdgliTuning {
             min_peer_quality: 0.0,
             require_observed: false,
             channel_open_timeout: Duration::from_secs(120),
+            exit_node: None,
         }
     }
 
@@ -132,6 +138,7 @@ impl EdgliTuning {
             // 30 s tick + Gnosis Chain confirmation + on-chain sync latency.
             // Allow several ticks before giving up.
             channel_open_timeout: Duration::from_secs(300),
+            exit_node: None, // filled in by provision_rotsee from EDGLI_ROTSEE_EXIT_NODE
         }
     }
 }
@@ -355,8 +362,8 @@ pub async fn provision(
             Ok((summary, NetworkGuard::Local(Box::new(handle)), EdgliTuning::local()))
         }
         Network::Rotsee => {
-            let (summary, guard) = provision_rotsee()?;
-            Ok((summary, guard, EdgliTuning::rotsee()))
+            let (summary, guard, exit_node) = provision_rotsee()?;
+            Ok((summary, guard, EdgliTuning { exit_node, ..EdgliTuning::rotsee() }))
         }
     }
 }
@@ -540,7 +547,7 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
 /// - `EDGLI_ROTSEE_IDENTITY_PASSWORD` — keystore password
 /// - `EDGLI_ROTSEE_SAFE_ADDRESS`      — Safe contract address (0x…)
 /// - `EDGLI_ROTSEE_MODULE_ADDRESS`    — HOPR module contract address (0x…)
-fn provision_rotsee() -> anyhow::Result<(ClusterSummary, NetworkGuard)> {
+fn provision_rotsee() -> anyhow::Result<(ClusterSummary, NetworkGuard, Option<Address>)> {
     fn required(var: &str) -> anyhow::Result<String> {
         std::env::var(var).map_err(|_| {
             anyhow::anyhow!(
@@ -582,15 +589,22 @@ fn provision_rotsee() -> anyhow::Result<(ClusterSummary, NetworkGuard)> {
         }],
     };
 
+    let exit_node = std::env::var("EDGLI_ROTSEE_EXIT_NODE")
+        .ok()
+        .map(|s| s.parse::<Address>())
+        .transpose()
+        .context("EDGLI_ROTSEE_EXIT_NODE: invalid address")?;
+
     tracing::info!(
         blokli_url = %summary.blokli_url,
         safe    = %summary.extras[0].safe_address,
         module  = %summary.extras[0].module_address,
         keystore = %summary.extras[0].keystore_path.display(),
+        ?exit_node,
         "Rotsee provisioning from env vars"
     );
 
-    Ok((summary, NetworkGuard::Rotsee))
+    Ok((summary, NetworkGuard::Rotsee, exit_node))
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1027,7 +1041,12 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     await_edgli_channels_open(&edgli, 1, &tuning).await?;
 
     // ── 7. Select session targets ─────────────────────────────────────────────
-    let (dest_0h, dest_1h) = select_session_targets(&edgli).await?;
+    let (dest_0h, dest_1h) = if let Some(exit) = tuning.exit_node {
+        tracing::info!(%exit, "using configured exit node for both 0-hop and 1-hop sessions");
+        (exit, exit)
+    } else {
+        select_session_targets(&edgli).await?
+    };
 
     // ── 8. Prepare 1 MiB random payload ─────────────────────────────────────
     // Random bytes produce unique HOPR packet ciphertexts on every test run,
