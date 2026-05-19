@@ -23,7 +23,7 @@
 //! | `EDGLI_ROTSEE_MODULE_ADDRESS` | yes      | HOPR module contract address (0x…)    |
 //!
 //! ```text
-//! export EDGLI_ROTSEE_BLOKLI_URL=https://blokli.jura.gnosisvpn.io
+//! export EDGLI_ROTSEE_BLOKLI_URL=https://blokli.rotsee.gnosisvpn.io
 //! export EDGLI_ROTSEE_IDENTITY_FILE=/path/to/identity.json
 //! export EDGLI_ROTSEE_IDENTITY_PASSWORD=my-password
 //! export EDGLI_ROTSEE_SAFE_ADDRESS=0x...
