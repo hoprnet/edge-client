@@ -108,3 +108,12 @@ test-log = { version = "0.2", features = ["trace"] }
 
 [build-dependencies]
 anyhow = "1.0.100"
+
+# Used by `cargo flamegraph` runs (see runbook in .claude/plans/).
+# Keeps [profile.release] lean — LTO and stripping are NOT disabled there.
+[profile.flamegraph]
+inherits = "release"
+debug = true
+strip = false
+lto = false
+codegen-units = 16
