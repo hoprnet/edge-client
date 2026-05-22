@@ -2,17 +2,7 @@
 
 Profiles the `edgli_session_rotsee` integration test against the Rotsee testnet.
 
----
-
-## macOS
-
-### Prerequisites
-
-```sh
-nix develop
-```
-
-### Identity setup
+## Identity setup
 
 Export the required env vars (see `tests/edgli_session_rotsee.rs` for the full list):
 
@@ -24,6 +14,16 @@ export EDGLI_ROTSEE_SAFE_ADDRESS='0x...'      # from gnosisvpn-hopr.safe
 export EDGLI_ROTSEE_MODULE_ADDRESS='0x...'    # from gnosisvpn-hopr.safe
 export EDGLI_ROTSEE_EXIT_NODE='0x...'         # Rotsee exit-service node (relay nodes do not run exit)
 export RUST_LOG='info,edgli=debug'
+```
+
+---
+
+## macOS
+
+### Prerequisites
+
+```sh
+nix develop
 ```
 
 ### Running
@@ -62,20 +62,6 @@ Relax kernel sampling permissions (resets on reboot), then enter the devshell:
 ```sh
 sudo sysctl -w kernel.perf_event_paranoid=1
 nix develop
-```
-
-### Identity setup
-
-Export the required env vars (see `tests/edgli_session_rotsee.rs` for the full list):
-
-```sh
-export EDGLI_ROTSEE_BLOKLI_URL='https://blokli.rotsee.gnosisvpn.io'
-export EDGLI_ROTSEE_IDENTITY_FILE="$HOME/.fun/gnosis/rotsee/gnosisvpn-hopr.id"
-export EDGLI_ROTSEE_IDENTITY_PASSWORD="$(cat "$HOME/.fun/gnosis/rotsee/gnosisvpn-hopr.pass")"
-export EDGLI_ROTSEE_SAFE_ADDRESS='0x...'      # from gnosisvpn-hopr.safe
-export EDGLI_ROTSEE_MODULE_ADDRESS='0x...'    # from gnosisvpn-hopr.safe
-export EDGLI_ROTSEE_EXIT_NODE='0x...'         # Rotsee exit-service node (relay nodes do not run exit)
-export RUST_LOG='info,edgli=debug'
 ```
 
 ### Running
