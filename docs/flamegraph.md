@@ -7,13 +7,19 @@ Profiles the `edgli_session_rotsee` integration test against the Rotsee testnet.
 Export the required env vars (see `tests/edgli_session_rotsee.rs` for the full list):
 
 ```sh
+# Required
 export EDGLI_ROTSEE_BLOKLI_URL='https://blokli.rotsee.gnosisvpn.io'
 export EDGLI_ROTSEE_IDENTITY_FILE="$HOME/.fun/gnosis/rotsee/gnosisvpn-hopr.id"
 export EDGLI_ROTSEE_IDENTITY_PASSWORD="$(cat "$HOME/.fun/gnosis/rotsee/gnosisvpn-hopr.pass")"
 export EDGLI_ROTSEE_SAFE_ADDRESS='0x...'      # from gnosisvpn-hopr.safe
 export EDGLI_ROTSEE_MODULE_ADDRESS='0x...'    # from gnosisvpn-hopr.safe
-export EDGLI_ROTSEE_EXIT_NODE='0x...'         # Rotsee exit-service node (relay nodes do not run exit)
 export RUST_LOG='info,edgli=debug'
+```
+
+```sh
+# Optional — pins a specific Rotsee exit-service node (relay nodes do not run exit).
+# If unset, the test picks one from on-chain discovery.
+export EDGLI_ROTSEE_EXIT_NODE='0x...'
 ```
 
 ---
