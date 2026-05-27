@@ -62,7 +62,6 @@ const INTRACLUSTER_CHANNEL_TIMEOUT: Duration = Duration::from_secs(120);
 const EDGLI_PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
 const EXIT_PEER_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
-pub const PUMP_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ────────────────────────────────────────────────────────────────────────────
 // Network selector
@@ -100,11 +99,19 @@ pub struct EdgliTuning {
     /// How long to wait for the strategy to open at least one outgoing channel.
     /// Rotsee needs more headroom: 60 s tick + Gnosis Chain confirmation latency.
     pub channel_open_timeout: Duration,
-    /// Fixed exit-node address for session targets.  When set, both the 0-hop
-    /// and 1-hop sessions are directed to this node instead of a dynamically
-    /// discovered channel peer.  Required for Rotsee, where relay nodes do not
-    /// run the exit-node service.
+    /// Fixed exit-node address for session targets.  When set, both the
+    /// first and second sessions are directed to this node instead of a
+    /// dynamically discovered channel peer.  Required for Rotsee, where relay
+    /// nodes do not run the exit-node service.
     pub exit_node: Option<Address>,
+    /// Timeout for each `pump_and_verify` call (first and second session).
+    /// Rotsee needs more headroom: real-network latency + possible rate-limiter
+    /// ramp-up on the exit node's loopback path.
+    pub pump_timeout: Duration,
+    /// Hop count for the first session (forward and return path).
+    /// Use 0 for a local cluster (direct delivery); use 1 for real networks
+    /// like Rotsee where 0-hop direct HOPR packet delivery is unreliable.
+    pub session_a_hops: usize,
 }
 
 impl EdgliTuning {
@@ -123,6 +130,8 @@ impl EdgliTuning {
             require_observed: false,
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
+            pump_timeout: Duration::from_secs(120),
+            session_a_hops: 0,
         }
     }
 
@@ -141,6 +150,12 @@ impl EdgliTuning {
             // Allow several ticks before giving up.
             channel_open_timeout: Duration::from_secs(300),
             exit_node: None, // filled in by provision_rotsee from EDGLI_ROTSEE_EXIT_NODE
+            // Real-network loopback: allow for rate-limiter ramp-up and latency
+            // variation on the echo path.
+            pump_timeout: Duration::from_secs(300),
+            // 0-hop direct HOPR packet delivery is unreliable on real networks
+            // (NAT/routing issues); use 1-hop for the first session on Rotsee.
+            session_a_hops: 1,
         }
     }
 }
@@ -984,6 +999,7 @@ pub async fn pump_and_verify(
     session: HoprSession,
     payload: &[u8],
     label: &str,
+    timeout: Duration,
 ) -> anyhow::Result<()> {
     let (mut r, mut w) = tokio::io::split(session);
     let payload_bytes = payload.to_vec();
@@ -1005,9 +1021,9 @@ pub async fn pump_and_verify(
     });
 
     let mut received = vec![0u8; n];
-    if let Err(err) = tokio::time::timeout(PUMP_TIMEOUT, r.read_exact(&mut received))
+    if let Err(err) = tokio::time::timeout(timeout, r.read_exact(&mut received))
         .await
-        .map_err(|_| anyhow::anyhow!("{label}: read timeout ({PUMP_TIMEOUT:?}) after {n} B"))
+        .map_err(|_| anyhow::anyhow!("{label}: read timeout ({timeout:?}) after {n} B"))
         .and_then(|r| r.map_err(|e| anyhow::anyhow!("{label}: read error: {e}")))
     {
         writer.abort();
@@ -1015,9 +1031,9 @@ pub async fn pump_and_verify(
         return Err(err);
     }
 
-    tokio::time::timeout(PUMP_TIMEOUT, writer)
+    tokio::time::timeout(timeout, writer)
         .await
-        .map_err(|_| anyhow::anyhow!("{label}: writer timeout ({PUMP_TIMEOUT:?})"))?
+        .map_err(|_| anyhow::anyhow!("{label}: writer timeout ({timeout:?})"))?
         .map_err(|e| anyhow::anyhow!("{label}: writer panicked: {e}"))?
         .map_err(|e| anyhow::anyhow!("{label}: write error: {e}"))?;
 
@@ -1146,41 +1162,47 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     let mut payload = vec![0u8; PAYLOAD_SIZE];
     rand::thread_rng().fill_bytes(&mut payload);
 
-    // ── 10. 0-hop session — direct path, no relay ────────────────────────────
+    // ── 10. First session ────────────────────────────────────────────────────
     // NoRateControl disables the exit node's egress rate limiter (default: 10
     // pkt/s initial rate).  Without it, returning 1 MiB (~1030 packets) at
-    // 10 pkt/s takes ~103 s, nearly exhausting the 120 s PUMP_TIMEOUT before
-    // the rate-adaptive controller has time to ramp up.
-    tracing::info!("opening 0-hop session (loopback)");
-    let (session_0h, _) = edgli
+    // 10 pkt/s takes ~103 s, nearly exhausting the pump timeout before the
+    // rate-adaptive controller has time to ramp up.
+    // On real networks (Rotsee), session_a_hops=1 to avoid 0-hop direct HOPR
+    // packet delivery issues (unreliable through NAT on real networks).
+    let hops_a = tuning.session_a_hops;
+    let label_a = format!("{hops_a}-hop");
+    tracing::info!(hops = hops_a, "opening first session (loopback)");
+    let (session_a, _) = edgli
         .connect_to(
             dest_0h,
             loopback_target(),
             HoprSessionClientConfig {
-                forward_path: HopRouting::try_from(0_usize)?,
-                return_path: HopRouting::try_from(0_usize)?,
+                forward_path: HopRouting::try_from(hops_a)?,
+                return_path: HopRouting::try_from(hops_a)?,
                 capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
                 ..Default::default()
             },
         )
         .await?;
-    pump_and_verify(session_0h, &payload, "0-hop").await?;
+    pump_and_verify(session_a, &payload, &label_a, tuning.pump_timeout).await?;
 
-    // ── 11. 1-hop session — full relay path ──────────────────────────────────
-    tracing::info!("opening 1-hop session (loopback)");
-    let (session_1h, _) = edgli
+    // ── 11. Second session — one more relay hop ───────────────────────────────
+    let hops_b = hops_a + 1;
+    let label_b = format!("{hops_b}-hop");
+    tracing::info!(hops = hops_b, "opening second session (loopback)");
+    let (session_b, _) = edgli
         .connect_to(
             dest_1h,
             loopback_target(),
             HoprSessionClientConfig {
-                forward_path: HopRouting::try_from(1_usize)?,
-                return_path: HopRouting::try_from(1_usize)?,
+                forward_path: HopRouting::try_from(hops_b)?,
+                return_path: HopRouting::try_from(hops_b)?,
                 capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
                 ..Default::default()
             },
         )
         .await?;
-    pump_and_verify(session_1h, &payload, "1-hop").await?;
+    pump_and_verify(session_b, &payload, &label_b, tuning.pump_timeout).await?;
 
     // ── 12. Final state assertion ─────────────────────────────────────────────
     let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
