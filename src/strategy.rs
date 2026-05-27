@@ -121,7 +121,7 @@ pub struct BalanceRecommendation {
 /// Key for the map returned by
 /// [`crate::client::Edgli::describe_current_capacity_allocations`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CapacityKey {
+pub enum CapacityAllocator {
     /// An open outgoing payment channel to the given peer.
     Peer(Address),
     /// The unallocated wxHOPR balance held in the user's Safe contract.
