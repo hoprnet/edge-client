@@ -79,7 +79,7 @@ jobs:
       deps: false
       audit_command: "nix build -L .#checks.x86_64-linux.audit"
       runner_small: depot-ubuntu-24.04
-      runner_large: depot-ubuntu-24.04-16
+      runner_large: depot-ubuntu-24.04-8
     secrets:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
   tests:
@@ -91,7 +91,7 @@ jobs:
       unit_test_command: "nix develop -c cargo nextest run --no-tests=pass"
       unit_coverage: true
       unit_coverage_command: "nix run .#coverage-unit"
-      runner: depot-ubuntu-24.04-16
+      runner: depot-ubuntu-24.04-8
       test_timeout: 30
     secrets:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -103,11 +103,11 @@ jobs:
       matrix:
         include:
           - architecture: x86_64-linux
-            runner: depot-ubuntu-24.04-16
+            runner: depot-ubuntu-24.04-8
             build_command: nix build -L .#lib-edgli-x86_64-linux
             required_label: ""
           - architecture: aarch64-linux
-            runner: depot-ubuntu-24.04-16
+            runner: depot-ubuntu-24.04-8
             build_command: nix build -L .#lib-edgli-aarch64-linux
             required_label: "binary:aarch64-linux"
           - architecture: aarch64-darwin
