@@ -1,7 +1,4 @@
-use hopr_lib::api::types::{
-    internal::channels::ChannelEntry,
-    primitive::prelude::{Address, HoprBalance, UnitaryFloatOps as _, XDaiBalance},
-};
+use hopr_lib::api::types::primitive::prelude::{HoprBalance, UnitaryFloatOps as _, XDaiBalance};
 pub use hopr_strategy::channel_lifecycle::{
     ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig,
 };
@@ -117,30 +114,19 @@ pub struct BalanceRecommendation {
     pub xdai: XDaiBalance,
 }
 
-/// Data-throughput capacity of a single open outgoing payment channel.
+/// Data-throughput capacity for a stake of wxHOPR at the current ticket price.
+///
+/// Used both for open outgoing channels (keyed by peer address) and for the
+/// unallocated Safe balance (keyed by `"safe"`) in the map returned by
+/// [`crate::client::Edgli::list_channel_capacities`].
 #[derive(Clone, Copy, Debug)]
-pub struct ChannelCapacity {
-    /// On-chain address of the channel destination.
-    pub peer: Address,
-    /// Current wxHOPR stake locked in the channel.
+pub struct Capacity {
+    /// wxHOPR stake — locked balance for channels, unallocated balance for the Safe.
     pub stake: HoprBalance,
-    /// Floor number of session frames the balance can fund at the current ticket price.
+    /// Floor number of session frames this stake can fund at the current ticket price.
     pub expected_messages: u64,
     /// Raw byte capacity: `expected_messages × SESSION_MTU`.
     pub byte_capacity: u64,
-}
-
-/// Full data-throughput capacity of this node.
-#[derive(Clone, Debug)]
-pub struct ChannelCapacityReport {
-    /// Per-channel capacities for all open outgoing channels.
-    pub channels: Vec<ChannelCapacity>,
-    /// Floor number of additional session frames the unallocated Safe balance
-    /// could fund at the current ticket price (i.e. how many more messages the
-    /// strategy could route if it opened new channels with the Safe funds).
-    pub safe_expected_messages: u64,
-    /// Raw byte capacity of the Safe funds: `safe_expected_messages × SESSION_MTU`.
-    pub safe_byte_capacity: u64,
 }
 
 /// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels.
@@ -164,22 +150,18 @@ pub(crate) fn compute_balance_recommendation(
     })
 }
 
-/// Compute the data-throughput capacity of a single channel at the given ticket price.
-pub(crate) fn compute_channel_capacity(
-    channel: &ChannelEntry,
-    ticket_price: HoprBalance,
-) -> ChannelCapacity {
+/// Compute the data-throughput capacity for a given wxHOPR stake at the current ticket price.
+pub(crate) fn compute_capacity(stake: HoprBalance, ticket_price: HoprBalance) -> Capacity {
     let expected_messages = if ticket_price == HoprBalance::zero() {
         0u64
     } else {
         // Clamp to u64::MAX before converting so astronomically large quotients
         // saturate rather than truncate via low_u64().
-        let quotient = channel.balance.amount() / ticket_price.amount();
+        let quotient = stake.amount() / ticket_price.amount();
         quotient.min(u64::MAX.into()).low_u64()
     };
-    ChannelCapacity {
-        peer: channel.destination,
-        stake: channel.balance,
+    Capacity {
+        stake,
         expected_messages,
         byte_capacity: expected_messages.saturating_mul(hopr_lib::SESSION_MTU as u64),
     }
@@ -404,54 +386,23 @@ mod tests {
     }
 
     #[test]
-    fn compute_channel_capacity_basic_arithmetic() {
-        use hopr_lib::api::types::internal::channels::{ChannelEntry, ChannelStatus};
-        use hopr_lib::api::types::primitive::prelude::Address;
-
-        let peer: Address = Address::from([0x01u8; 20]);
-        let ch = ChannelEntry::builder()
-            .source(Address::default())
-            .destination(peer)
-            .balance(HoprBalance::new_base(1000))
-            .status(ChannelStatus::Open)
-            .build()
-            .unwrap();
-        let cap = compute_channel_capacity(&ch, HoprBalance::new_base(10));
+    fn compute_capacity_basic_arithmetic() {
+        let cap = compute_capacity(HoprBalance::new_base(1000), HoprBalance::new_base(10));
         assert_eq!(cap.expected_messages, 100);
         assert_eq!(cap.byte_capacity, 100 * hopr_lib::SESSION_MTU as u64);
-        assert_eq!(cap.peer, peer);
+        assert_eq!(cap.stake, HoprBalance::new_base(1000));
     }
 
     #[test]
-    fn compute_channel_capacity_balance_below_ticket_price() {
-        use hopr_lib::api::types::internal::channels::{ChannelEntry, ChannelStatus};
-        use hopr_lib::api::types::primitive::prelude::Address;
-
-        let ch = ChannelEntry::builder()
-            .source(Address::from([0x01u8; 20]))
-            .destination(Address::from([0x02u8; 20]))
-            .balance(HoprBalance::new_base(5))
-            .status(ChannelStatus::Open)
-            .build()
-            .unwrap();
-        let cap = compute_channel_capacity(&ch, HoprBalance::new_base(10));
+    fn compute_capacity_balance_below_ticket_price() {
+        let cap = compute_capacity(HoprBalance::new_base(5), HoprBalance::new_base(10));
         assert_eq!(cap.expected_messages, 0);
         assert_eq!(cap.byte_capacity, 0);
     }
 
     #[test]
-    fn compute_channel_capacity_zero_ticket_price() {
-        use hopr_lib::api::types::internal::channels::{ChannelEntry, ChannelStatus};
-        use hopr_lib::api::types::primitive::prelude::Address;
-
-        let ch = ChannelEntry::builder()
-            .source(Address::from([0x01u8; 20]))
-            .destination(Address::from([0x02u8; 20]))
-            .balance(HoprBalance::new_base(100))
-            .status(ChannelStatus::Open)
-            .build()
-            .unwrap();
-        let cap = compute_channel_capacity(&ch, HoprBalance::zero());
+    fn compute_capacity_zero_ticket_price() {
+        let cap = compute_capacity(HoprBalance::new_base(100), HoprBalance::zero());
         assert_eq!(cap.expected_messages, 0);
         assert_eq!(cap.byte_capacity, 0);
     }

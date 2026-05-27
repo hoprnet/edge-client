@@ -260,22 +260,22 @@ impl Edgli {
         super::strategy::compute_balance_recommendation(ticket_price, win_prob, cfg, missing)
     }
 
-    /// Lists all open outgoing channels with their data-throughput capacity,
-    /// plus the message capacity derivable from the unallocated Safe balance.
+    /// Returns a map of data-throughput capacities keyed by peer address (for
+    /// open outgoing channels) and `"safe"` (for the unallocated Safe balance).
     ///
-    /// `expected_messages` / `byte_capacity` on each channel: floor of
-    /// `channel.balance / ticket_price × SESSION_MTU`.
-    /// `safe_expected_messages` / `safe_byte_capacity`: same formula applied
-    /// to the wxHOPR sitting in the Safe but not yet locked into any channel —
-    /// representing the additional messages the strategy could route if it
-    /// opened new channels with those funds.
+    /// Each [`super::strategy::Capacity`] entry holds the wxHOPR stake, the
+    /// floor number of session frames it can fund at the current ticket price,
+    /// and the corresponding raw byte capacity (`expected_messages × SESSION_MTU`).
     pub async fn list_channel_capacities(
         &self,
-    ) -> anyhow::Result<super::strategy::ChannelCapacityReport> {
+    ) -> anyhow::Result<std::collections::HashMap<String, super::strategy::Capacity>> {
         use hopr_lib::api::{
             chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
             node::{HasChainApi, IncentiveChannelOperations},
-            types::internal::channels::ChannelStatus,
+            types::{
+                internal::channels::ChannelStatus,
+                primitive::prelude::HoprBalance,
+            },
         };
 
         let chain = self.chain_api();
@@ -297,29 +297,26 @@ impl Edgli {
                 .balance(safe.address)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
-            None => hopr_lib::api::types::primitive::prelude::HoprBalance::zero(),
+            None => HoprBalance::zero(),
         };
 
-        // Same floor-division formula used by compute_channel_capacity.
-        let safe_expected_messages = if ticket_price
-            == hopr_lib::api::types::primitive::prelude::HoprBalance::zero()
-        {
-            0u64
-        } else {
-            let q = safe_balance.amount() / ticket_price.amount();
-            q.min(u64::MAX.into()).low_u64()
-        };
+        let mut map: std::collections::HashMap<String, super::strategy::Capacity> = channels
+            .into_iter()
+            .filter(|c| c.status == ChannelStatus::Open)
+            .map(|c| {
+                (
+                    c.destination.to_string(),
+                    super::strategy::compute_capacity(c.balance, ticket_price),
+                )
+            })
+            .collect();
 
-        Ok(super::strategy::ChannelCapacityReport {
-            channels: channels
-                .into_iter()
-                .filter(|c| c.status == ChannelStatus::Open)
-                .map(|c| super::strategy::compute_channel_capacity(&c, ticket_price))
-                .collect(),
-            safe_expected_messages,
-            safe_byte_capacity: safe_expected_messages
-                .saturating_mul(hopr_lib::SESSION_MTU as u64),
-        })
+        map.insert(
+            "safe".to_string(),
+            super::strategy::compute_capacity(safe_balance, ticket_price),
+        );
+
+        Ok(map)
     }
 
     /// Run a node with HOPR edge strategies integrated.
