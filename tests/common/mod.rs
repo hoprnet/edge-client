@@ -860,10 +860,7 @@ pub async fn await_edgli_channels_open(
 /// for on-chain registered nodes), then polls `all_network_peers(0.0)` which returns
 /// connected peers that have any probe observation — i.e. probed at least once regardless
 /// of quality score.
-async fn await_edgli_exit_peer_ready(
-    edgli: &Edgli,
-    target: Address,
-) -> anyhow::Result<()> {
+async fn await_edgli_exit_peer_ready(edgli: &Edgli, target: Address) -> anyhow::Result<()> {
     // Forward lookup: chain address → offchain key. This uses the on-chain registry
     // and succeeds as soon as the chain connector has indexed the peer's account
     // (always true for announced Rotsee nodes by the time channels are open).
@@ -871,7 +868,9 @@ async fn await_edgli_exit_peer_ready(
         .chain_api()
         .chain_key_to_packet_key(&target)
         .map_err(|e| anyhow::anyhow!("{e}"))?
-        .ok_or_else(|| anyhow::anyhow!("exit peer {target} has no offchain key — not registered on chain"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("exit peer {target} has no offchain key — not registered on chain")
+        })?;
 
     poll_edgli_until(
         EXIT_PEER_PROBE_TIMEOUT,

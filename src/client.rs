@@ -272,10 +272,7 @@ impl Edgli {
         use hopr_lib::api::{
             chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
             node::{HasChainApi, IncentiveChannelOperations},
-            types::{
-                internal::channels::ChannelStatus,
-                primitive::prelude::HoprBalance,
-            },
+            types::{internal::channels::ChannelStatus, primitive::prelude::HoprBalance},
         };
 
         let chain = self.chain_api();
