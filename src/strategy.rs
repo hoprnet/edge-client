@@ -130,6 +130,17 @@ pub struct ChannelCapacity {
     pub byte_capacity: u64,
 }
 
+/// Full data-throughput capacity of this node.
+#[derive(Clone, Debug)]
+pub struct ChannelCapacityReport {
+    /// Per-channel capacities for all open outgoing channels.
+    pub channels: Vec<ChannelCapacity>,
+    /// Unallocated wxHOPR in the user's Safe contract — not yet locked in any
+    /// channel, available for the strategy to open new channels or top up
+    /// existing ones.
+    pub safe_balance: HoprBalance,
+}
+
 /// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels.
 pub(crate) fn compute_balance_recommendation(
     ticket_price: HoprBalance,

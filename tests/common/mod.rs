@@ -104,14 +104,10 @@ pub struct EdgliTuning {
     /// dynamically discovered channel peer.  Required for Rotsee, where relay
     /// nodes do not run the exit-node service.
     pub exit_node: Option<Address>,
-    /// Timeout for each `pump_and_verify` call (first and second session).
+    /// Timeout for each `pump_and_verify` call (0-hop and 1-hop separately).
     /// Rotsee needs more headroom: real-network latency + possible rate-limiter
     /// ramp-up on the exit node's loopback path.
     pub pump_timeout: Duration,
-    /// Hop count for the first session (forward and return path).
-    /// Use 0 for a local cluster (direct delivery); use 1 for real networks
-    /// like Rotsee where 0-hop direct HOPR packet delivery is unreliable.
-    pub session_a_hops: usize,
 }
 
 impl EdgliTuning {
@@ -131,7 +127,6 @@ impl EdgliTuning {
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
             pump_timeout: Duration::from_secs(120),
-            session_a_hops: 0,
         }
     }
 
@@ -153,9 +148,6 @@ impl EdgliTuning {
             // Real-network loopback: allow for rate-limiter ramp-up and latency
             // variation on the echo path.
             pump_timeout: Duration::from_secs(300),
-            // 0-hop direct HOPR packet delivery is unreliable on real networks
-            // (NAT/routing issues); use 1-hop for the first session on Rotsee.
-            session_a_hops: 1,
         }
     }
 }
@@ -1162,47 +1154,41 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     let mut payload = vec![0u8; PAYLOAD_SIZE];
     rand::thread_rng().fill_bytes(&mut payload);
 
-    // ── 10. First session ────────────────────────────────────────────────────
+    // ── 10. 0-hop session — direct path, no relay ────────────────────────────
     // NoRateControl disables the exit node's egress rate limiter (default: 10
     // pkt/s initial rate).  Without it, returning 1 MiB (~1030 packets) at
     // 10 pkt/s takes ~103 s, nearly exhausting the pump timeout before the
     // rate-adaptive controller has time to ramp up.
-    // On real networks (Rotsee), session_a_hops=1 to avoid 0-hop direct HOPR
-    // packet delivery issues (unreliable through NAT on real networks).
-    let hops_a = tuning.session_a_hops;
-    let label_a = format!("{hops_a}-hop");
-    tracing::info!(hops = hops_a, "opening first session (loopback)");
-    let (session_a, _) = edgli
+    tracing::info!("opening 0-hop session (loopback)");
+    let (session_0h, _) = edgli
         .connect_to(
             dest_0h,
             loopback_target(),
             HoprSessionClientConfig {
-                forward_path: HopRouting::try_from(hops_a)?,
-                return_path: HopRouting::try_from(hops_a)?,
+                forward_path: HopRouting::try_from(0_usize)?,
+                return_path: HopRouting::try_from(0_usize)?,
                 capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
                 ..Default::default()
             },
         )
         .await?;
-    pump_and_verify(session_a, &payload, &label_a, tuning.pump_timeout).await?;
+    pump_and_verify(session_0h, &payload, "0-hop", tuning.pump_timeout).await?;
 
-    // ── 11. Second session — one more relay hop ───────────────────────────────
-    let hops_b = hops_a + 1;
-    let label_b = format!("{hops_b}-hop");
-    tracing::info!(hops = hops_b, "opening second session (loopback)");
-    let (session_b, _) = edgli
+    // ── 11. 1-hop session — full relay path ──────────────────────────────────
+    tracing::info!("opening 1-hop session (loopback)");
+    let (session_1h, _) = edgli
         .connect_to(
             dest_1h,
             loopback_target(),
             HoprSessionClientConfig {
-                forward_path: HopRouting::try_from(hops_b)?,
-                return_path: HopRouting::try_from(hops_b)?,
+                forward_path: HopRouting::try_from(1_usize)?,
+                return_path: HopRouting::try_from(1_usize)?,
                 capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
                 ..Default::default()
             },
         )
         .await?;
-    pump_and_verify(session_b, &payload, &label_b, tuning.pump_timeout).await?;
+    pump_and_verify(session_1h, &payload, "1-hop", tuning.pump_timeout).await?;
 
     // ── 12. Final state assertion ─────────────────────────────────────────────
     let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;

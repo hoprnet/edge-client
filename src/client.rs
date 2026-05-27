@@ -260,16 +260,19 @@ impl Edgli {
         super::strategy::compute_balance_recommendation(ticket_price, win_prob, cfg, missing)
     }
 
-    /// Lists all open outgoing channels with their data-throughput capacity.
+    /// Lists all open outgoing channels with their data-throughput capacity,
+    /// plus the unallocated wxHOPR balance in the user's Safe contract.
     ///
     /// `expected_messages` is the floor number of session frames the channel
     /// balance can fund at the current on-chain ticket price.
     /// `byte_capacity` = `expected_messages × SESSION_MTU`.
+    /// `safe_balance` is the wxHOPR held in the Safe but not yet locked in
+    /// any channel — the strategy can spend it on new channel opens or top-ups.
     pub async fn list_channel_capacities(
         &self,
-    ) -> anyhow::Result<Vec<super::strategy::ChannelCapacity>> {
+    ) -> anyhow::Result<super::strategy::ChannelCapacityReport> {
         use hopr_lib::api::{
-            chain::ChainValues as _,
+            chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
             node::{HasChainApi, IncentiveChannelOperations},
             types::internal::channels::ChannelStatus,
         };
@@ -277,16 +280,33 @@ impl Edgli {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
 
-        let source = HasChainApi::identity(&*self.hopr).node_address;
-        let channels = IncentiveChannelOperations::channels_from(&*self.hopr, source)
+        let node_address = HasChainApi::identity(&*self.hopr).node_address;
+        let channels = IncentiveChannelOperations::channels_from(&*self.hopr, node_address)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        Ok(channels
-            .into_iter()
-            .filter(|c| c.status == ChannelStatus::Open)
-            .map(|c| super::strategy::compute_channel_capacity(&c, ticket_price))
-            .collect())
+        let safe_balance = match ChainReadSafeOperations::safe_info(
+            &chain,
+            SafeSelector::NodeAddress(node_address),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        {
+            Some(safe) => chain
+                .balance(safe.address)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+            None => hopr_lib::api::types::primitive::prelude::HoprBalance::zero(),
+        };
+
+        Ok(super::strategy::ChannelCapacityReport {
+            channels: channels
+                .into_iter()
+                .filter(|c| c.status == ChannelStatus::Open)
+                .map(|c| super::strategy::compute_channel_capacity(&c, ticket_price))
+                .collect(),
+            safe_balance,
+        })
     }
 
     /// Run a node with HOPR edge strategies integrated.
