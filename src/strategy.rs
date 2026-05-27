@@ -159,7 +159,10 @@ pub(crate) fn compute_channel_capacity(
     let expected_messages = if ticket_price == HoprBalance::zero() {
         0u64
     } else {
-        (channel.balance.amount() / ticket_price.amount()).low_u64()
+        // Clamp to u64::MAX before converting so astronomically large quotients
+        // saturate rather than truncate via low_u64().
+        let quotient = channel.balance.amount() / ticket_price.amount();
+        quotient.min(u64::MAX.into()).low_u64()
     };
     ChannelCapacity {
         peer: channel.destination,
