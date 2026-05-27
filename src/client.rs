@@ -217,6 +217,78 @@ impl Edgli {
         self.packet_public_key.to_peerid_str()
     }
 
+    /// Returns the ideal recommended wxHOPR and xDAI for this node to reach
+    /// `cfg.target_open_channels` open channels to *currently connected* peers.
+    ///
+    /// Unlike [`minimum_balance_recommendation`](crate::strategy::minimum_balance_recommendation),
+    /// this method discounts channels already open to connected peers, so the
+    /// recommendation reflects only the additional stake the strategy needs.
+    /// Channels open to disconnected peers are not counted — the strategy will
+    /// close and replace them.
+    pub async fn ideal_balance_recommendation(
+        &self,
+        cfg: &super::strategy::IncentiveConfiguration,
+    ) -> anyhow::Result<super::strategy::BalanceRecommendation> {
+        use hopr_lib::api::{
+            chain::ChainValues as _,
+            node::{HasChainApi, IncentiveChannelOperations},
+            types::internal::channels::ChannelStatus,
+        };
+        use std::collections::HashSet;
+
+        let chain = self.chain_api();
+        let ticket_price = chain.minimum_ticket_price().await?;
+        let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
+
+        let source = HasChainApi::identity(&*self.hopr).node_address;
+        let all_channels = IncentiveChannelOperations::channels_from(&*self.hopr, source)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let connected: HashSet<_> = crate::traits::EdgeNodeApi::connected_peer_addresses(self)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .into_iter()
+            .collect();
+
+        let open_to_connected = all_channels
+            .iter()
+            .filter(|c| c.status == ChannelStatus::Open && connected.contains(&c.destination))
+            .count();
+
+        let missing = cfg.target_open_channels.saturating_sub(open_to_connected);
+        super::strategy::compute_balance_recommendation(ticket_price, win_prob, cfg, missing)
+    }
+
+    /// Lists all open outgoing channels with their data-throughput capacity.
+    ///
+    /// `expected_messages` is the floor number of session frames the channel
+    /// balance can fund at the current on-chain ticket price.
+    /// `byte_capacity` = `expected_messages × SESSION_MTU`.
+    pub async fn list_channel_capacities(
+        &self,
+    ) -> anyhow::Result<Vec<super::strategy::ChannelCapacity>> {
+        use hopr_lib::api::{
+            chain::ChainValues as _,
+            node::{HasChainApi, IncentiveChannelOperations},
+            types::internal::channels::ChannelStatus,
+        };
+
+        let chain = self.chain_api();
+        let ticket_price = chain.minimum_ticket_price().await?;
+
+        let source = HasChainApi::identity(&*self.hopr).node_address;
+        let channels = IncentiveChannelOperations::channels_from(&*self.hopr, source)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        Ok(channels
+            .into_iter()
+            .filter(|c| c.status == ChannelStatus::Open)
+            .map(|c| super::strategy::compute_channel_capacity(&c, ticket_price))
+            .collect())
+    }
+
     /// Run a node with HOPR edge strategies integrated.
     ///
     /// The default reactor runs a single [`ChannelLifecycleStrategy`] which

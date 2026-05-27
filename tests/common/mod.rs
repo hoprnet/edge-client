@@ -359,11 +359,22 @@ pub async fn provision(
         Network::Local => {
             let handle = provision_local().await?;
             let summary = handle.summary.clone();
-            Ok((summary, NetworkGuard::Local(Box::new(handle)), EdgliTuning::local()))
+            Ok((
+                summary,
+                NetworkGuard::Local(Box::new(handle)),
+                EdgliTuning::local(),
+            ))
         }
         Network::Rotsee => {
             let (summary, guard, exit_node) = provision_rotsee()?;
-            Ok((summary, guard, EdgliTuning { exit_node, ..EdgliTuning::rotsee() }))
+            Ok((
+                summary,
+                guard,
+                EdgliTuning {
+                    exit_node,
+                    ..EdgliTuning::rotsee()
+                },
+            ))
         }
     }
 }
@@ -807,15 +818,27 @@ pub async fn await_edgli_channels_open(
     poll_edgli_until(
         timeout,
         Duration::from_secs(5),
-        || format!("timeout ({timeout:?}) waiting for Edgli strategy to open {min_open} channel(s)"),
+        || {
+            format!(
+                "timeout ({timeout:?}) waiting for Edgli strategy to open {min_open} channel(s)"
+            )
+        },
         || async {
             let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
-            let open = channels.iter().filter(|ch| ch.status == ChannelStatus::Open).count();
+            let open = channels
+                .iter()
+                .filter(|ch| ch.status == ChannelStatus::Open)
+                .count();
             if open >= min_open {
-                tracing::info!(open_channels = open, "Edgli outgoing channels confirmed Open");
+                tracing::info!(
+                    open_channels = open,
+                    "Edgli outgoing channels confirmed Open"
+                );
                 return Ok(true);
             }
-            tracing::debug!("Edgli: {open}/{min_open} outgoing channels Open (waiting for strategy)");
+            tracing::debug!(
+                "Edgli: {open}/{min_open} outgoing channels Open (waiting for strategy)"
+            );
             Ok(false)
         },
     )
@@ -831,8 +854,10 @@ pub async fn await_edgli_channels_open(
 /// (the 0-hop target acts as the relay, with its intranetwork channels
 /// carrying the forward path).
 async fn select_session_targets(edgli: &Edgli) -> anyhow::Result<(Address, Address)> {
-    let (raw_channels, peers) =
-        tokio::try_join!(edgli.my_outgoing_channels(), edgli.connected_peer_addresses())?;
+    let (raw_channels, peers) = tokio::try_join!(
+        edgli.my_outgoing_channels(),
+        edgli.connected_peer_addresses()
+    )?;
     let channels: Vec<ChannelEntry> = raw_channels
         .into_iter()
         .filter(|c| c.status == ChannelStatus::Open)

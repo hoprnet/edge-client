@@ -1,4 +1,7 @@
-use hopr_lib::api::types::primitive::prelude::{HoprBalance, UnitaryFloatOps as _};
+use hopr_lib::api::types::{
+    internal::channels::ChannelEntry,
+    primitive::prelude::{Address, HoprBalance, UnitaryFloatOps as _, XDaiBalance},
+};
 pub use hopr_strategy::channel_lifecycle::{
     ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig,
 };
@@ -103,6 +106,82 @@ pub fn compute_funding_config(
         min_safe_balance_required: initial,
         stop_when_unfunded: true,
     })
+}
+
+/// Minimum recommended wxHOPR and xDAI balance to open the target number of channels.
+#[derive(Clone, Copy, Debug)]
+pub struct BalanceRecommendation {
+    /// Minimum wxHOPR needed to stake the missing channels.
+    pub wxhopr: HoprBalance,
+    /// Minimum xDAI for gas (fixed at [`hopr_lib::SUGGESTED_NATIVE_BALANCE`]).
+    pub xdai: XDaiBalance,
+}
+
+/// Data-throughput capacity of a single open outgoing payment channel.
+#[derive(Clone, Copy, Debug)]
+pub struct ChannelCapacity {
+    /// On-chain address of the channel destination.
+    pub peer: Address,
+    /// Current wxHOPR stake locked in the channel.
+    pub stake: HoprBalance,
+    /// Floor number of session frames the balance can fund at the current ticket price.
+    pub expected_messages: u64,
+    /// Raw byte capacity: `expected_messages × SESSION_MTU`.
+    pub byte_capacity: u64,
+}
+
+/// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels.
+pub(crate) fn compute_balance_recommendation(
+    ticket_price: HoprBalance,
+    win_prob: f64,
+    cfg: &IncentiveConfiguration,
+    missing_channels: usize,
+) -> anyhow::Result<BalanceRecommendation> {
+    if missing_channels == 0 {
+        return Ok(BalanceRecommendation {
+            wxhopr: HoprBalance::zero(),
+            xdai: *hopr_lib::SUGGESTED_NATIVE_BALANCE,
+        });
+    }
+    let stake_per_channel = compute_funding_config(ticket_price, win_prob, cfg)?.initial_balance;
+    let wxhopr = stake_per_channel * (missing_channels as u64);
+    Ok(BalanceRecommendation {
+        wxhopr,
+        xdai: *hopr_lib::SUGGESTED_NATIVE_BALANCE,
+    })
+}
+
+/// Compute the data-throughput capacity of a single channel at the given ticket price.
+pub(crate) fn compute_channel_capacity(
+    channel: &ChannelEntry,
+    ticket_price: HoprBalance,
+) -> ChannelCapacity {
+    let expected_messages = if ticket_price == HoprBalance::zero() {
+        0u64
+    } else {
+        (channel.balance.amount() / ticket_price.amount()).low_u64()
+    };
+    ChannelCapacity {
+        peer: channel.destination,
+        stake: channel.balance,
+        expected_messages,
+        byte_capacity: expected_messages.saturating_mul(hopr_lib::SESSION_MTU as u64),
+    }
+}
+
+/// Returns the minimum recommended wxHOPR and xDAI for this node to open
+/// `cfg.target_open_channels` channels from scratch.
+///
+/// Queries ticket pricing from the safeless chain interactor so this can be
+/// called before the full node is started (e.g. during onboarding).
+#[cfg(feature = "blokli")]
+pub async fn minimum_balance_recommendation(
+    incentive_ops: &dyn crate::blokli::IncentiveOperations,
+    cfg: &IncentiveConfiguration,
+) -> anyhow::Result<BalanceRecommendation> {
+    let stats = incentive_ops.ticket_stats().await?;
+    let win_prob = stats.winning_probability.as_f64();
+    compute_balance_recommendation(stats.ticket_price, win_prob, cfg, cfg.target_open_channels)
 }
 
 /// Returns the default [`MultiStrategyConfig`] for an edge client reactor.
@@ -265,5 +344,99 @@ mod tests {
         let population = PopulationConfig::default();
         assert_eq!(sizing.min_open_channels, population.min_open_channels);
         assert_eq!(sizing.target_open_channels, population.target_open_channels);
+    }
+
+    #[test]
+    fn compute_balance_recommendation_zero_missing_returns_zero_wxhopr() {
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            &IncentiveConfiguration::default(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(rec.wxhopr, HoprBalance::zero());
+        assert_eq!(rec.xdai, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
+    }
+
+    #[test]
+    fn compute_balance_recommendation_scales_by_missing_channels() {
+        // win_prob=1.0, ticket_price=10, msg=1: stake = max(10, 10) = 10; 8 channels = 80
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            &IncentiveConfiguration {
+                desired_message_count: 1,
+                ..Default::default()
+            },
+            8,
+        )
+        .unwrap();
+        assert_eq!(rec.wxhopr, HoprBalance::new_base(10) * 8u64);
+        assert_eq!(rec.xdai, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
+    }
+
+    #[test]
+    fn compute_balance_recommendation_zero_target_yields_zero() {
+        let cfg = IncentiveConfiguration {
+            target_open_channels: 0,
+            min_open_channels: 0,
+            ..Default::default()
+        };
+        let rec = compute_balance_recommendation(HoprBalance::new_base(10), 1.0, &cfg, 0).unwrap();
+        assert_eq!(rec.wxhopr, HoprBalance::zero());
+    }
+
+    #[test]
+    fn compute_channel_capacity_basic_arithmetic() {
+        use hopr_lib::api::types::internal::channels::{ChannelEntry, ChannelStatus};
+        use hopr_lib::api::types::primitive::prelude::Address;
+
+        let peer: Address = Address::from([0x01u8; 20]);
+        let ch = ChannelEntry::builder()
+            .source(Address::default())
+            .destination(peer)
+            .balance(HoprBalance::new_base(1000))
+            .status(ChannelStatus::Open)
+            .build()
+            .unwrap();
+        let cap = compute_channel_capacity(&ch, HoprBalance::new_base(10));
+        assert_eq!(cap.expected_messages, 100);
+        assert_eq!(cap.byte_capacity, 100 * hopr_lib::SESSION_MTU as u64);
+        assert_eq!(cap.peer, peer);
+    }
+
+    #[test]
+    fn compute_channel_capacity_balance_below_ticket_price() {
+        use hopr_lib::api::types::internal::channels::{ChannelEntry, ChannelStatus};
+        use hopr_lib::api::types::primitive::prelude::Address;
+
+        let ch = ChannelEntry::builder()
+            .source(Address::from([0x01u8; 20]))
+            .destination(Address::from([0x02u8; 20]))
+            .balance(HoprBalance::new_base(5))
+            .status(ChannelStatus::Open)
+            .build()
+            .unwrap();
+        let cap = compute_channel_capacity(&ch, HoprBalance::new_base(10));
+        assert_eq!(cap.expected_messages, 0);
+        assert_eq!(cap.byte_capacity, 0);
+    }
+
+    #[test]
+    fn compute_channel_capacity_zero_ticket_price() {
+        use hopr_lib::api::types::internal::channels::{ChannelEntry, ChannelStatus};
+        use hopr_lib::api::types::primitive::prelude::Address;
+
+        let ch = ChannelEntry::builder()
+            .source(Address::from([0x01u8; 20]))
+            .destination(Address::from([0x02u8; 20]))
+            .balance(HoprBalance::new_base(100))
+            .status(ChannelStatus::Open)
+            .build()
+            .unwrap();
+        let cap = compute_channel_capacity(&ch, HoprBalance::zero());
+        assert_eq!(cap.expected_messages, 0);
+        assert_eq!(cap.byte_capacity, 0);
     }
 }
