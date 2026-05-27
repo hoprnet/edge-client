@@ -17,7 +17,7 @@ jobs:
   validate-pr-title:
     name: Validate title
     if: github.event_name == 'pull_request'
-    runs-on: self-hosted-hoprnet-small
+    runs-on: depot-ubuntu-24.04
     permissions:
       pull-requests: read
     steps:
@@ -42,7 +42,7 @@ jobs:
   label:
     name: Add labels
     if: github.event_name == 'pull_request'
-    runs-on: self-hosted-hoprnet-small
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
       issues: write
@@ -78,8 +78,8 @@ jobs:
       lint_command: "nix build -L .#checks.x86_64-linux.clippy"
       deps: false
       audit_command: "nix build -L .#checks.x86_64-linux.audit"
-      runner_small: self-hosted-hoprnet-small
-      runner_large: self-hosted-hoprnet-bigger
+      runner_small: depot-ubuntu-24.04
+      runner_large: depot-ubuntu-24.04-8
     secrets:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
   tests:
@@ -91,7 +91,7 @@ jobs:
       unit_test_command: "nix develop -c cargo nextest run --no-tests=pass"
       unit_coverage: true
       unit_coverage_command: "nix run .#coverage-unit"
-      runner: self-hosted-hoprnet-bigger
+      runner: depot-ubuntu-24.04-8
       test_timeout: 30
     secrets:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -103,11 +103,11 @@ jobs:
       matrix:
         include:
           - architecture: x86_64-linux
-            runner: self-hosted-hoprnet-bigger
+            runner: depot-ubuntu-24.04-8
             build_command: nix build -L .#lib-edgli-x86_64-linux
             required_label: ""
           - architecture: aarch64-linux
-            runner: self-hosted-hoprnet-bigger
+            runner: depot-ubuntu-24.04-8
             build_command: nix build -L .#lib-edgli-aarch64-linux
             required_label: "binary:aarch64-linux"
           - architecture: aarch64-darwin
