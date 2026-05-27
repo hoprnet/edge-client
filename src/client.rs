@@ -261,13 +261,14 @@ impl Edgli {
     }
 
     /// Lists all open outgoing channels with their data-throughput capacity,
-    /// plus the unallocated wxHOPR balance in the user's Safe contract.
+    /// plus the message capacity derivable from the unallocated Safe balance.
     ///
-    /// `expected_messages` is the floor number of session frames the channel
-    /// balance can fund at the current on-chain ticket price.
-    /// `byte_capacity` = `expected_messages × SESSION_MTU`.
-    /// `safe_balance` is the wxHOPR held in the Safe but not yet locked in
-    /// any channel — the strategy can spend it on new channel opens or top-ups.
+    /// `expected_messages` / `byte_capacity` on each channel: floor of
+    /// `channel.balance / ticket_price × SESSION_MTU`.
+    /// `safe_expected_messages` / `safe_byte_capacity`: same formula applied
+    /// to the wxHOPR sitting in the Safe but not yet locked into any channel —
+    /// representing the additional messages the strategy could route if it
+    /// opened new channels with those funds.
     pub async fn list_channel_capacities(
         &self,
     ) -> anyhow::Result<super::strategy::ChannelCapacityReport> {
@@ -299,13 +300,25 @@ impl Edgli {
             None => hopr_lib::api::types::primitive::prelude::HoprBalance::zero(),
         };
 
+        // Same floor-division formula used by compute_channel_capacity.
+        let safe_expected_messages = if ticket_price
+            == hopr_lib::api::types::primitive::prelude::HoprBalance::zero()
+        {
+            0u64
+        } else {
+            let q = safe_balance.amount() / ticket_price.amount();
+            q.min(u64::MAX.into()).low_u64()
+        };
+
         Ok(super::strategy::ChannelCapacityReport {
             channels: channels
                 .into_iter()
                 .filter(|c| c.status == ChannelStatus::Open)
                 .map(|c| super::strategy::compute_channel_capacity(&c, ticket_price))
                 .collect(),
-            safe_balance,
+            safe_expected_messages,
+            safe_byte_capacity: safe_expected_messages
+                .saturating_mul(hopr_lib::SESSION_MTU as u64),
         })
     }
 

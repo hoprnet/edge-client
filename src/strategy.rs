@@ -135,10 +135,12 @@ pub struct ChannelCapacity {
 pub struct ChannelCapacityReport {
     /// Per-channel capacities for all open outgoing channels.
     pub channels: Vec<ChannelCapacity>,
-    /// Unallocated wxHOPR in the user's Safe contract — not yet locked in any
-    /// channel, available for the strategy to open new channels or top up
-    /// existing ones.
-    pub safe_balance: HoprBalance,
+    /// Floor number of additional session frames the unallocated Safe balance
+    /// could fund at the current ticket price (i.e. how many more messages the
+    /// strategy could route if it opened new channels with the Safe funds).
+    pub safe_expected_messages: u64,
+    /// Raw byte capacity of the Safe funds: `safe_expected_messages × SESSION_MTU`.
+    pub safe_byte_capacity: u64,
 }
 
 /// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels.
