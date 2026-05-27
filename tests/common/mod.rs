@@ -14,7 +14,8 @@ use edgli::{
     hopr_lib::{
         HopRouting, HoprKeys, HoprSessionClientConfig, IdentityRetrievalModes,
         api::{
-            node::HoprSessionClientOperations,
+            chain::ChainKeyOperations as _,
+            node::{HasChainApi as _, HasTransportApi as _, HoprSessionClientOperations},
             types::{
                 internal::channels::{ChannelEntry, ChannelStatus},
                 primitive::prelude::Address,
@@ -60,6 +61,7 @@ const PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const INTRACLUSTER_CHANNEL_TIMEOUT: Duration = Duration::from_secs(120);
 const EDGLI_PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
+const EXIT_PEER_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 pub const PUMP_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -845,6 +847,41 @@ pub async fn await_edgli_channels_open(
     .await
 }
 
+/// Wait until `target` is physically connected and has a probe quality score >= `min_quality`.
+///
+/// Uses `all_network_peers(min_quality)` which returns only connected peers that have
+/// been probed at least once and whose quality score meets the threshold.
+async fn await_edgli_exit_peer_ready(
+    edgli: &Edgli,
+    target: Address,
+    min_quality: f64,
+) -> anyhow::Result<()> {
+    poll_edgli_until(
+        EXIT_PEER_PROBE_TIMEOUT,
+        Duration::from_secs(5),
+        || format!("timeout ({EXIT_PEER_PROBE_TIMEOUT:?}) waiting for exit peer {target} to be connected and probed (quality >= {min_quality})"),
+        || async {
+            let peers = edgli
+                .transport()
+                .all_network_peers(min_quality)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            for (key, _) in &peers {
+                if let Ok(Some(addr)) = edgli.chain_api().packet_key_to_chain_key(key) {
+                    if addr == target {
+                        tracing::info!(%target, "exit peer connected and probed");
+                        return Ok(true);
+                    }
+                }
+            }
+            tracing::debug!(%target, qualified_peers = peers.len(), "exit peer not yet connected/probed");
+            Ok(false)
+        },
+    )
+    .await
+}
+
 /// Select session destinations that work for both 0-hop and 1-hop.
 ///
 /// 0-hop target: the first open outgoing channel counterparty (Edgli has a
@@ -1076,7 +1113,17 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     tracing::info!("waiting for strategy to open ≥1 outgoing channel");
     await_edgli_channels_open(&edgli, 1, tuning.channel_open_timeout).await?;
 
-    // ── 7. Select session targets ─────────────────────────────────────────────
+    // ── 7. Wait for exit peer to be connected and probed (when pinned) ───────
+    // `all_network_peers` returns only connected peers with an observed quality
+    // score above the threshold — i.e. at least one successful probe response.
+    // Without this gate the session open can race against the probe subsystem
+    // and fail with "no route to host" on Rotsee.
+    if let Some(exit) = tuning.exit_node {
+        tracing::info!(%exit, "waiting for exit peer to be physically connected and probed");
+        await_edgli_exit_peer_ready(&edgli, exit, tuning.min_peer_quality).await?;
+    }
+
+    // ── 8. Select session targets ─────────────────────────────────────────────
     let (dest_0h, dest_1h) = if let Some(exit) = tuning.exit_node {
         tracing::info!(%exit, "using configured exit node for both 0-hop and 1-hop sessions");
         (exit, exit)
@@ -1084,7 +1131,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         select_session_targets(&edgli).await?
     };
 
-    // ── 8. Prepare 1 MiB random payload ─────────────────────────────────────
+    // ── 9. Prepare 1 MiB random payload ─────────────────────────────────────
     // Random bytes produce unique HOPR packet ciphertexts on every test run,
     // preventing false replay-detection hits in cluster nodes' in-memory
     // packet-tag caches (which persist across Edgli reconnections to the same
@@ -1092,7 +1139,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     let mut payload = vec![0u8; PAYLOAD_SIZE];
     rand::thread_rng().fill_bytes(&mut payload);
 
-    // ── 9. 0-hop session — direct path, no relay ─────────────────────────────
+    // ── 10. 0-hop session — direct path, no relay ────────────────────────────
     // NoRateControl disables the exit node's egress rate limiter (default: 10
     // pkt/s initial rate).  Without it, returning 1 MiB (~1030 packets) at
     // 10 pkt/s takes ~103 s, nearly exhausting the 120 s PUMP_TIMEOUT before
@@ -1112,7 +1159,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         .await?;
     pump_and_verify(session_0h, &payload, "0-hop").await?;
 
-    // ── 10. 1-hop session — full relay path ──────────────────────────────────
+    // ── 11. 1-hop session — full relay path ──────────────────────────────────
     tracing::info!("opening 1-hop session (loopback)");
     let (session_1h, _) = edgli
         .connect_to(
@@ -1128,7 +1175,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         .await?;
     pump_and_verify(session_1h, &payload, "1-hop").await?;
 
-    // ── 11. Final state assertion ─────────────────────────────────────────────
+    // ── 12. Final state assertion ─────────────────────────────────────────────
     let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
     let open_count = channels
         .iter()
