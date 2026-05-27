@@ -847,33 +847,40 @@ pub async fn await_edgli_channels_open(
     .await
 }
 
-/// Wait until `target` is physically connected and has a probe quality score >= `min_quality`.
+/// Wait until `target` is physically connected and has received at least one probe response.
 ///
-/// Uses `all_network_peers(min_quality)` which returns only connected peers that have
-/// been probed at least once and whose quality score meets the threshold.
+/// Resolves the chain address to an offchain key upfront (forward lookup, always available
+/// for on-chain registered nodes), then polls `all_network_peers(0.0)` which returns
+/// connected peers that have any probe observation — i.e. probed at least once regardless
+/// of quality score.
 async fn await_edgli_exit_peer_ready(
     edgli: &Edgli,
     target: Address,
-    min_quality: f64,
 ) -> anyhow::Result<()> {
+    // Forward lookup: chain address → offchain key. This uses the on-chain registry
+    // and succeeds as soon as the chain connector has indexed the peer's account
+    // (always true for announced Rotsee nodes by the time channels are open).
+    let offchain_key = edgli
+        .chain_api()
+        .chain_key_to_packet_key(&target)
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .ok_or_else(|| anyhow::anyhow!("exit peer {target} has no offchain key — not registered on chain"))?;
+
     poll_edgli_until(
         EXIT_PEER_PROBE_TIMEOUT,
         Duration::from_secs(5),
-        || format!("timeout ({EXIT_PEER_PROBE_TIMEOUT:?}) waiting for exit peer {target} to be connected and probed (quality >= {min_quality})"),
+        || format!("timeout ({EXIT_PEER_PROBE_TIMEOUT:?}) waiting for exit peer {target} to be connected and probed"),
         || async {
+            // quality floor 0.0 = connected AND has any probe observation
             let peers = edgli
                 .transport()
-                .all_network_peers(min_quality)
+                .all_network_peers(0.0)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-            for (key, _) in &peers {
-                if let Ok(Some(addr)) = edgli.chain_api().packet_key_to_chain_key(key) {
-                    if addr == target {
-                        tracing::info!(%target, "exit peer connected and probed");
-                        return Ok(true);
-                    }
-                }
+            if peers.iter().any(|(k, _)| k == &offchain_key) {
+                tracing::info!(%target, "exit peer connected and probed");
+                return Ok(true);
             }
             tracing::debug!(%target, qualified_peers = peers.len(), "exit peer not yet connected/probed");
             Ok(false)
@@ -1120,7 +1127,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     // and fail with "no route to host" on Rotsee.
     if let Some(exit) = tuning.exit_node {
         tracing::info!(%exit, "waiting for exit peer to be physically connected and probed");
-        await_edgli_exit_peer_ready(&edgli, exit, tuning.min_peer_quality).await?;
+        await_edgli_exit_peer_ready(&edgli, exit).await?;
     }
 
     // ── 8. Select session targets ─────────────────────────────────────────────
