@@ -1,4 +1,6 @@
-use hopr_lib::api::types::primitive::prelude::{HoprBalance, UnitaryFloatOps as _, XDaiBalance};
+use hopr_lib::api::types::primitive::prelude::{
+    Address, HoprBalance, UnitaryFloatOps as _, XDaiBalance,
+};
 pub use hopr_strategy::channel_lifecycle::{
     ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig,
 };
@@ -116,9 +118,17 @@ pub struct BalanceRecommendation {
 
 /// Data-throughput capacity for a stake of wxHOPR at the current ticket price.
 ///
-/// Used both for open outgoing channels (keyed by peer address) and for the
-/// unallocated Safe balance (keyed by `"safe"`) in the map returned by
-/// [`crate::client::Edgli::list_channel_capacities`].
+/// Key for the map returned by
+/// [`crate::client::Edgli::describe_current_capacity_allocations`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CapacityKey {
+    /// An open outgoing payment channel to the given peer.
+    Peer(Address),
+    /// The unallocated wxHOPR balance held in the user's Safe contract.
+    Safe,
+}
+
+/// Data-throughput capacity for a wxHOPR stake at the current ticket price.
 #[derive(Clone, Copy, Debug)]
 pub struct Capacity {
     /// wxHOPR stake — locked balance for channels, unallocated balance for the Safe.

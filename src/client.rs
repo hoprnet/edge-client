@@ -260,15 +260,18 @@ impl Edgli {
         super::strategy::compute_balance_recommendation(ticket_price, win_prob, cfg, missing)
     }
 
-    /// Returns a map of data-throughput capacities keyed by peer address (for
-    /// open outgoing channels) and `"safe"` (for the unallocated Safe balance).
+    /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityKey`].
     ///
-    /// Each [`super::strategy::Capacity`] entry holds the wxHOPR stake, the
-    /// floor number of session frames it can fund at the current ticket price,
-    /// and the corresponding raw byte capacity (`expected_messages × SESSION_MTU`).
+    /// Open outgoing channels are keyed by `CapacityKey::Peer(address)`; the
+    /// unallocated Safe balance is keyed by `CapacityKey::Safe`.  Each
+    /// [`super::strategy::Capacity`] holds the wxHOPR stake, the floor number
+    /// of session frames it can fund at the current ticket price, and the
+    /// corresponding raw byte capacity (`expected_messages × SESSION_MTU`).
     pub async fn describe_current_capacity_allocations(
         &self,
-    ) -> anyhow::Result<std::collections::HashMap<String, super::strategy::Capacity>> {
+    ) -> anyhow::Result<
+        std::collections::HashMap<super::strategy::CapacityKey, super::strategy::Capacity>,
+    > {
         use hopr_lib::api::{
             chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
             node::{HasChainApi, IncentiveChannelOperations},
@@ -297,19 +300,22 @@ impl Edgli {
             None => HoprBalance::zero(),
         };
 
-        let mut map: std::collections::HashMap<String, super::strategy::Capacity> = channels
+        let mut map: std::collections::HashMap<
+            super::strategy::CapacityKey,
+            super::strategy::Capacity,
+        > = channels
             .into_iter()
             .filter(|c| c.status == ChannelStatus::Open)
             .map(|c| {
                 (
-                    c.destination.to_string(),
+                    super::strategy::CapacityKey::Peer(c.destination),
                     super::strategy::compute_capacity(c.balance, ticket_price),
                 )
             })
             .collect();
 
         map.insert(
-            "safe".to_string(),
+            super::strategy::CapacityKey::Safe,
             super::strategy::compute_capacity(safe_balance, ticket_price),
         );
 
