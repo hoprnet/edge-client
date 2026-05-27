@@ -266,7 +266,7 @@ impl Edgli {
     /// Each [`super::strategy::Capacity`] entry holds the wxHOPR stake, the
     /// floor number of session frames it can fund at the current ticket price,
     /// and the corresponding raw byte capacity (`expected_messages × SESSION_MTU`).
-    pub async fn list_channel_capacities(
+    pub async fn describe_current_capacity_allocations(
         &self,
     ) -> anyhow::Result<std::collections::HashMap<String, super::strategy::Capacity>> {
         use hopr_lib::api::{
