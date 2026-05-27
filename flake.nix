@@ -280,7 +280,9 @@
               pkgs.cargo-machete
               pkgs.cargo-shear
               pkgs.rust-analyzer
-            ];
+              pkgs.cargo-flamegraph
+            ] ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.samply ]
+              ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.linuxPackages.perf ];
 
             VERGEN_GIT_SHA = toString (self.shortRev or self.dirtyShortRev);
           };

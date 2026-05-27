@@ -23,7 +23,7 @@ jobs:
       matrix:
         include:
           - architecture: x86_64-linux
-            runner: self-hosted-hoprnet-bigger
+            runner: depot-ubuntu-24.04-8
             build_command: nix build -L .#lib-edgli-x86_64-linux
     uses: hoprnet/hopr-workflows/.github/workflows/build-library.yaml@5ef5e50e028143b53da6545c1ca92477b70f42fc # build-library-v1
     permissions:
@@ -39,7 +39,7 @@ jobs:
     name: Close release
     needs:
       - build-library
-    runs-on: self-hosted-hoprnet-small
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: write
     steps:
