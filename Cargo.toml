@@ -66,18 +66,18 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "9147cb9b613d801afdf8e9cd19b184cf509c2692", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "0aa05f5ad6e5d8ef641aa4a170bc7785f3b3575e", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "9147cb9b613d801afdf8e9cd19b184cf509c2692", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "0aa05f5ad6e5d8ef641aa4a170bc7785f3b3575e", features = [
   "runtime-tokio",
 ] }
-hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "9147cb9b613d801afdf8e9cd19b184cf509c2692", features = [
+hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "0aa05f5ad6e5d8ef641aa4a170bc7785f3b3575e", features = [
   "runtime-tokio",
 ] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "9147cb9b613d801afdf8e9cd19b184cf509c2692" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "9147cb9b613d801afdf8e9cd19b184cf509c2692", features = [
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "0aa05f5ad6e5d8ef641aa4a170bc7785f3b3575e" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "0aa05f5ad6e5d8ef641aa4a170bc7785f3b3575e", features = [
   "strategy-channel-lifecycle",
 ] }
 
@@ -88,7 +88,7 @@ mimalloc = { version = "0.1.48", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "9147cb9b613d801afdf8e9cd19b184cf509c2692", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "0aa05f5ad6e5d8ef641aa4a170bc7785f3b3575e", features = [
   "runtime-tokio",
   "testing",
 ] }
