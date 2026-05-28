@@ -23,7 +23,7 @@ use edgli::{
         },
         config::{HoprLibConfig, HostConfig, HostType, SafeModule},
         exports::transport::SessionCapability,
-        exports::transport::{HoprSession, SessionTarget},
+        exports::transport::{HoprSession, SessionTarget, SurbBalancerConfig},
     },
     strategy::{EdgeStrategyKind, EligibilityConfig, IncentiveConfiguration, default_strategy_cfg},
     traits::EdgeNodeApi,
@@ -1167,6 +1167,16 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
                 forward_path: HopRouting::try_from(0_usize)?,
                 return_path: HopRouting::try_from(0_usize)?,
                 capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                // Keep the SURB pre-fill burst below the per-peer send-channel capacity
+                // (1000 slots). The default target of 7000 SURBs saturates the channel,
+                // causing session data to time out and be dropped silently with no
+                // reconnect (hoprnet eb21c1354c removed cache invalidation on timeout).
+                // 600 SURBs fit in one burst; the balancer replenishes as they are consumed.
+                surb_management: Some(SurbBalancerConfig {
+                    target_surb_buffer_size: 600,
+                    max_surbs_per_sec: 300,
+                    ..SurbBalancerConfig::default()
+                }),
                 ..Default::default()
             },
         )
@@ -1183,6 +1193,11 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
                 forward_path: HopRouting::try_from(1_usize)?,
                 return_path: HopRouting::try_from(1_usize)?,
                 capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                surb_management: Some(SurbBalancerConfig {
+                    target_surb_buffer_size: 600,
+                    max_surbs_per_sec: 300,
+                    ..SurbBalancerConfig::default()
+                }),
                 ..Default::default()
             },
         )
