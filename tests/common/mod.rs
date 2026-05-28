@@ -108,6 +108,15 @@ pub struct EdgliTuning {
     /// Rotsee needs more headroom: real-network latency + possible rate-limiter
     /// ramp-up on the exit node's loopback path.
     pub pump_timeout: Duration,
+    /// Minimum ack rate required for relay edges to be eligible for path
+    /// selection. On a local cluster neighbour probes succeed, so the default
+    /// 0.1 is fine. On Rotsee the edge client runs behind NAT: neighbor probes
+    /// use a 0-hop return path, which requires relays to dial the client
+    /// directly — impossible behind NAT. All relay probes therefore timeout
+    /// and ack_rate stays 0, blocking 1-hop path selection entirely. Setting
+    /// 0.0 falls back to pure channel-topology routing (channels exist in the
+    /// graph from SSE events) without requiring any probe success.
+    pub min_ack_rate: f64,
 }
 
 impl EdgliTuning {
@@ -127,6 +136,7 @@ impl EdgliTuning {
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
             pump_timeout: Duration::from_secs(120),
+            min_ack_rate: 0.1, // local cluster probes succeed — use default quality gate
         }
     }
 
@@ -148,6 +158,13 @@ impl EdgliTuning {
             // Real-network loopback: allow for rate-limiter ramp-up and latency
             // variation on the echo path.
             pump_timeout: Duration::from_secs(300),
+            // Rotsee: client runs behind NAT. Neighbour probes use a 0-hop
+            // return path (relay dials client directly), which fails behind NAT.
+            // All relay probe acks timeout → ack_rate stays 0 → min_ack_rate=0.1
+            // blocks all 1-hop path selection. Setting 0.0 allows the path
+            // selector to route through existing payment channels (populated via
+            // SSE events) without requiring any probe history.
+            min_ack_rate: 0.0,
         }
     }
 }
@@ -941,6 +958,7 @@ pub fn loopback_target() -> SessionTarget {
 
 pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibConfig {
     use edgli::hopr_lib::config::{HoprProtocolConfig, TransportConfig};
+    use edgli::hopr_lib::exports::transport::path::PathPlannerConfig;
     HoprLibConfig {
         host: HostConfig {
             address: HostType::IPv4("0.0.0.0".to_string()),
@@ -951,6 +969,10 @@ pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibCon
             transport: TransportConfig {
                 announce_local_addresses: tuning.announce_local,
                 prefer_local_addresses: tuning.prefer_local_addresses,
+            },
+            path_planner: PathPlannerConfig {
+                min_ack_rate: tuning.min_ack_rate,
+                ..Default::default()
             },
             ..Default::default()
         },
