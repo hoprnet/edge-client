@@ -1,9 +1,18 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
 use hopr_ct_full_network::ProberConfig as FullNetworkProberConfig;
-use hopr_lib::api::types::{crypto::prelude::OffchainPublicKey, primitive::prelude::Address};
+use hopr_lib::api::{
+    chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
+    node::{HasChainApi, IncentiveChannelOperations},
+    types::{
+        crypto::prelude::OffchainPublicKey,
+        internal::channels::ChannelStatus,
+        primitive::prelude::{Address, HoprBalance},
+    },
+};
 use hopr_lib::builder::{ChainKeypair, Keypair, OffchainKeypair};
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
 use hopr_reference::build_edge_with_chain;
@@ -215,6 +224,96 @@ impl Edgli {
     /// Derived from the packet key stored at construction time.
     pub fn me_peer_id(&self) -> String {
         self.packet_public_key.to_peerid_str()
+    }
+
+    /// Returns the ideal recommended wxHOPR and xDAI for this node to reach
+    /// `cfg.target_open_channels` open channels to *currently connected* peers.
+    ///
+    /// Unlike [`minimum_balance_recommendation`](crate::strategy::minimum_balance_recommendation),
+    /// this method discounts channels already open to connected peers, so the
+    /// recommendation reflects only the additional stake the strategy needs.
+    /// Channels open to disconnected peers are not counted — the strategy will
+    /// close and replace them.
+    pub async fn ideal_balance_recommendation(
+        &self,
+        cfg: &super::strategy::IncentiveConfiguration,
+    ) -> anyhow::Result<super::strategy::BalanceRecommendation> {
+        let chain = self.chain_api();
+        let ticket_price = chain.minimum_ticket_price().await?;
+        let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
+
+        let source = HasChainApi::identity(&*self.hopr).node_address;
+        let all_channels = IncentiveChannelOperations::channels_from(&*self.hopr, source)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let connected: HashSet<_> = crate::traits::EdgeNodeApi::connected_peer_addresses(self)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .into_iter()
+            .collect();
+
+        let open_to_connected = all_channels
+            .iter()
+            .filter(|c| c.status == ChannelStatus::Open && connected.contains(&c.destination))
+            .count();
+
+        let missing = cfg.target_open_channels.saturating_sub(open_to_connected);
+        super::strategy::compute_balance_recommendation(ticket_price, win_prob, cfg, missing)
+    }
+
+    /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].
+    ///
+    /// Open outgoing channels are keyed by `CapacityAllocator::Peer(address)`; the
+    /// unallocated Safe balance is keyed by `CapacityAllocator::Safe`.  Each
+    /// [`super::strategy::Capacity`] holds the wxHOPR stake, the floor number
+    /// of session frames it can fund at the current ticket price, and the
+    /// corresponding raw byte capacity (`expected_messages × SESSION_MTU`).
+    pub async fn describe_current_capacity_allocations(
+        &self,
+    ) -> anyhow::Result<
+        std::collections::HashMap<super::strategy::CapacityAllocator, super::strategy::Capacity>,
+    > {
+        let chain = self.chain_api();
+        let ticket_price = chain.minimum_ticket_price().await?;
+        let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
+
+        let node_address = HasChainApi::identity(&*self.hopr).node_address;
+        let channels = IncentiveChannelOperations::channels_from(&*self.hopr, node_address)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let safe_balance = match ChainReadSafeOperations::safe_info(
+            &chain,
+            SafeSelector::NodeAddress(node_address),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        {
+            Some(safe) => chain
+                .balance(safe.address)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+            None => HoprBalance::zero(),
+        };
+
+        let mut map = std::collections::HashMap::new();
+        for c in channels
+            .into_iter()
+            .filter(|c| c.status == ChannelStatus::Open)
+        {
+            let capacity = super::strategy::compute_capacity(c.balance, ticket_price, win_prob)?;
+            map.insert(
+                super::strategy::CapacityAllocator::Peer(c.destination),
+                capacity,
+            );
+        }
+        map.insert(
+            super::strategy::CapacityAllocator::Safe,
+            super::strategy::compute_capacity(safe_balance, ticket_price, win_prob)?,
+        );
+
+        Ok(map)
     }
 
     /// Run a node with HOPR edge strategies integrated.

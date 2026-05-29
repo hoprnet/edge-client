@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "3.1.0"
+version = "3.2.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -11,7 +11,6 @@ license = "GPL-3.0-only"
 [features]
 default = ["runtime-tokio", "blokli"]
 runtime-tokio = ["dep:tokio", "hopr-lib/runtime-tokio"]
-session-server = ["hopr-lib/session-server"]
 # Enable hopr-lib telemetry (Prometheus metrics) and OpenTelemetry OTLP exporter
 telemetry = [
   "hopr-lib/telemetry",
@@ -67,18 +66,18 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "eb21c1354c", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "eb21c1354c", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "runtime-tokio",
 ] }
-hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "eb21c1354c", features = [
+hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "runtime-tokio",
 ] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "eb21c1354c" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "eb21c1354c", features = [
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "strategy-channel-lifecycle",
 ] }
 
@@ -89,7 +88,7 @@ mimalloc = { version = "0.1.48", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "eb21c1354c", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "runtime-tokio",
   "testing",
 ] }
@@ -108,11 +107,3 @@ test-log = { version = "0.2", features = ["trace"] }
 
 [build-dependencies]
 anyhow = "1.0.100"
-
-# Keeps [profile.release] lean — LTO and stripping are NOT disabled there.
-[profile.flamegraph]
-inherits = "release"
-debug = true
-strip = false
-lto = false
-codegen-units = 16
