@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "3.1.0"
+version = "3.2.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -66,18 +66,18 @@ opentelemetry_sdk = { version = "0.31.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "e56ce0ee006aafac6eb430dac4ef3098fe9b6912", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "e56ce0ee006aafac6eb430dac4ef3098fe9b6912", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "runtime-tokio",
 ] }
-hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "e56ce0ee006aafac6eb430dac4ef3098fe9b6912", features = [
+hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "runtime-tokio",
 ] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "e56ce0ee006aafac6eb430dac4ef3098fe9b6912" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "e56ce0ee006aafac6eb430dac4ef3098fe9b6912", features = [
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "strategy-channel-lifecycle",
 ] }
 
@@ -88,7 +88,7 @@ mimalloc = { version = "0.1.48", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "e56ce0ee006aafac6eb430dac4ef3098fe9b6912", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "00ce9f124bc25d99cc5681f2f96d4386b9f972c1", features = [
   "runtime-tokio",
   "testing",
 ] }
