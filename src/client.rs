@@ -1,9 +1,18 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
 use hopr_ct_full_network::ProberConfig as FullNetworkProberConfig;
-use hopr_lib::api::types::{crypto::prelude::OffchainPublicKey, primitive::prelude::Address};
+use hopr_lib::api::{
+    chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
+    node::{HasChainApi, IncentiveChannelOperations},
+    types::{
+        crypto::prelude::OffchainPublicKey,
+        internal::channels::ChannelStatus,
+        primitive::prelude::{Address, HoprBalance},
+    },
+};
 use hopr_lib::builder::{ChainKeypair, Keypair, OffchainKeypair};
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
 use hopr_reference::build_edge_with_chain;
@@ -229,13 +238,6 @@ impl Edgli {
         &self,
         cfg: &super::strategy::IncentiveConfiguration,
     ) -> anyhow::Result<super::strategy::BalanceRecommendation> {
-        use hopr_lib::api::{
-            chain::ChainValues as _,
-            node::{HasChainApi, IncentiveChannelOperations},
-            types::internal::channels::ChannelStatus,
-        };
-        use std::collections::HashSet;
-
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
         let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
@@ -272,14 +274,9 @@ impl Edgli {
     ) -> anyhow::Result<
         std::collections::HashMap<super::strategy::CapacityAllocator, super::strategy::Capacity>,
     > {
-        use hopr_lib::api::{
-            chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
-            node::{HasChainApi, IncentiveChannelOperations},
-            types::{internal::channels::ChannelStatus, primitive::prelude::HoprBalance},
-        };
-
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
+        let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
 
         let node_address = HasChainApi::identity(&*self.hopr).node_address;
         let channels = IncentiveChannelOperations::channels_from(&*self.hopr, node_address)
@@ -300,23 +297,20 @@ impl Edgli {
             None => HoprBalance::zero(),
         };
 
-        let mut map: std::collections::HashMap<
-            super::strategy::CapacityAllocator,
-            super::strategy::Capacity,
-        > = channels
+        let mut map = std::collections::HashMap::new();
+        for c in channels
             .into_iter()
             .filter(|c| c.status == ChannelStatus::Open)
-            .map(|c| {
-                (
-                    super::strategy::CapacityAllocator::Peer(c.destination),
-                    super::strategy::compute_capacity(c.balance, ticket_price),
-                )
-            })
-            .collect();
-
+        {
+            let capacity = super::strategy::compute_capacity(c.balance, ticket_price, win_prob)?;
+            map.insert(
+                super::strategy::CapacityAllocator::Peer(c.destination),
+                capacity,
+            );
+        }
         map.insert(
             super::strategy::CapacityAllocator::Safe,
-            super::strategy::compute_capacity(safe_balance, ticket_price),
+            super::strategy::compute_capacity(safe_balance, ticket_price, win_prob)?,
         );
 
         Ok(map)
