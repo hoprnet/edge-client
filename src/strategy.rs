@@ -133,8 +133,17 @@ pub enum CapacityAllocator {
 pub struct Capacity {
     /// wxHOPR stake — locked balance for channels, unallocated balance for the Safe.
     pub stake: HoprBalance,
-    /// Floor number of session frames this stake can fund at the current ticket price.
+    /// Expected long-run session-frame count: `floor(stake / ticket_price)`.
+    ///
+    /// `ticket_price` is the *expected* per-hop drain (= `face_value × win_prob`),
+    /// so this figure is win_prob-independent — it reflects average lifetime throughput.
     pub expected_messages: u64,
+    /// Worst-case floor: `floor(stake / face_value)` = `floor(stake × win_prob / ticket_price)`.
+    ///
+    /// Reflects the maximum number of tickets the channel can hold simultaneously
+    /// before balance drops below one face value and ticket minting halts.
+    /// Lower win_prob → smaller face value → fewer guaranteed concurrent tickets.
+    pub min_guaranteed_messages: u64,
     /// Raw byte capacity: `expected_messages × SESSION_MTU`.
     pub byte_capacity: u64,
 }
@@ -161,7 +170,17 @@ pub(crate) fn compute_balance_recommendation(
 }
 
 /// Compute the data-throughput capacity for a given wxHOPR stake at the current ticket price.
-pub(crate) fn compute_capacity(stake: HoprBalance, ticket_price: HoprBalance) -> Capacity {
+///
+/// `win_prob` must be in `(0, 1]`; the same validation guard as [`compute_funding_config`] applies.
+pub(crate) fn compute_capacity(
+    stake: HoprBalance,
+    ticket_price: HoprBalance,
+    win_prob: f64,
+) -> anyhow::Result<Capacity> {
+    anyhow::ensure!(
+        win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
+        "win_prob must be in (0, 1]; got {win_prob}"
+    );
     let expected_messages = if ticket_price == HoprBalance::zero() {
         0u64
     } else {
@@ -170,11 +189,20 @@ pub(crate) fn compute_capacity(stake: HoprBalance, ticket_price: HoprBalance) ->
         let quotient = stake.amount() / ticket_price.amount();
         quotient.min(u64::MAX.into()).low_u64()
     };
-    Capacity {
+    // face_value = ticket_price / win_prob — minimum balance locked per outstanding ticket.
+    let face_value = ticket_price.div_f64(win_prob)?;
+    let min_guaranteed_messages = if face_value == HoprBalance::zero() {
+        0u64
+    } else {
+        let quotient = stake.amount() / face_value.amount();
+        quotient.min(u64::MAX.into()).low_u64()
+    };
+    Ok(Capacity {
         stake,
         expected_messages,
+        min_guaranteed_messages,
         byte_capacity: expected_messages.saturating_mul(hopr_lib::SESSION_MTU as u64),
-    }
+    })
 }
 
 /// Returns the minimum recommended wxHOPR and xDAI for this node to open
@@ -397,23 +425,68 @@ mod tests {
 
     #[test]
     fn compute_capacity_basic_arithmetic() {
-        let cap = compute_capacity(HoprBalance::new_base(1000), HoprBalance::new_base(10));
+        let cap =
+            compute_capacity(HoprBalance::new_base(1000), HoprBalance::new_base(10), 1.0).unwrap();
         assert_eq!(cap.expected_messages, 100);
+        assert_eq!(cap.min_guaranteed_messages, 100);
         assert_eq!(cap.byte_capacity, 100 * hopr_lib::SESSION_MTU as u64);
         assert_eq!(cap.stake, HoprBalance::new_base(1000));
     }
 
     #[test]
     fn compute_capacity_balance_below_ticket_price() {
-        let cap = compute_capacity(HoprBalance::new_base(5), HoprBalance::new_base(10));
+        let cap =
+            compute_capacity(HoprBalance::new_base(5), HoprBalance::new_base(10), 1.0).unwrap();
         assert_eq!(cap.expected_messages, 0);
+        assert_eq!(cap.min_guaranteed_messages, 0);
         assert_eq!(cap.byte_capacity, 0);
     }
 
     #[test]
     fn compute_capacity_zero_ticket_price() {
-        let cap = compute_capacity(HoprBalance::new_base(100), HoprBalance::zero());
+        let cap = compute_capacity(HoprBalance::new_base(100), HoprBalance::zero(), 1.0).unwrap();
         assert_eq!(cap.expected_messages, 0);
+        assert_eq!(cap.min_guaranteed_messages, 0);
         assert_eq!(cap.byte_capacity, 0);
+    }
+
+    #[test]
+    fn compute_capacity_win_prob_one_matches_expected() {
+        // win_prob=1.0 → face_value = ticket_price → min_guaranteed == expected
+        let cap =
+            compute_capacity(HoprBalance::new_base(300), HoprBalance::new_base(10), 1.0).unwrap();
+        assert_eq!(cap.expected_messages, 30);
+        assert_eq!(cap.min_guaranteed_messages, 30);
+    }
+
+    #[test]
+    fn compute_capacity_win_prob_half_halves_guaranteed() {
+        // stake=100, ticket_price=10, win_prob=0.5
+        // expected  = 100/10 = 10
+        // face_value = 10/0.5 = 20 → min_guaranteed = 100/20 = 5
+        let cap =
+            compute_capacity(HoprBalance::new_base(100), HoprBalance::new_base(10), 0.5).unwrap();
+        assert_eq!(cap.expected_messages, 10);
+        assert_eq!(cap.min_guaranteed_messages, 5);
+    }
+
+    #[test]
+    fn compute_capacity_win_prob_small_floors_guaranteed_to_zero() {
+        // stake=10, ticket_price=10, win_prob=0.5
+        // face_value = 10/0.5 = 20 > stake → min_guaranteed = 0; expected = 1
+        let cap =
+            compute_capacity(HoprBalance::new_base(10), HoprBalance::new_base(10), 0.5).unwrap();
+        assert_eq!(cap.expected_messages, 1);
+        assert_eq!(cap.min_guaranteed_messages, 0);
+    }
+
+    #[test]
+    fn compute_capacity_rejects_invalid_win_prob() {
+        let stake = HoprBalance::new_base(100);
+        let price = HoprBalance::new_base(10);
+        assert!(compute_capacity(stake, price, 0.0).is_err());
+        assert!(compute_capacity(stake, price, 1.1).is_err());
+        assert!(compute_capacity(stake, price, f64::NAN).is_err());
+        assert!(compute_capacity(stake, price, f64::INFINITY).is_err());
     }
 }
