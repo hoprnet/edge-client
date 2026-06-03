@@ -237,21 +237,21 @@ pub async fn minimum_balance_recommendation(
 #[cfg(feature = "runtime-tokio")]
 pub async fn default_strategy_cfg(
     node: &crate::client::Edgli,
-    sizing: IncentiveConfiguration,
+    sizing: &IncentiveConfiguration,
 ) -> anyhow::Result<MultiStrategyConfig> {
     sizing.validate()?;
     let chain = node.chain_api();
     let ticket_price = chain.minimum_ticket_price().await?;
     let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
     let cfg = ChannelLifecycleConfig {
-        funding: compute_funding_config(ticket_price, win_prob, &sizing)?,
+        funding: compute_funding_config(ticket_price, win_prob, sizing)?,
         population: PopulationConfig {
             min_open_channels: sizing.min_open_channels,
             target_open_channels: sizing.target_open_channels,
             ..Default::default()
         },
         eligibility: EligibilityConfig {
-            allowlist: sizing.channel_allowlist,
+            allowlist: sizing.channel_allowlist.clone(),
             ..Default::default()
         },
         ..Default::default()
