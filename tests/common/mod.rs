@@ -1123,6 +1123,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         desired_message_count: (session_packets as u64) * 1_000,
         min_open_channels: 1,
         target_open_channels: CLUSTER_SIZE,
+        ..Default::default()
     };
     let mut strat_cfg = default_strategy_cfg(&edgli, sizing).await?;
 
