@@ -23,22 +23,9 @@ pub struct MultiStrategyConfig {
 
 /// Top-level incentive parameters for the channel lifecycle strategy reactor.
 ///
-/// Bundles channel funding sizing with population topology so callers
-/// have a single config knob for the reactor. Designed to accommodate
-/// future incentive extensions beyond the current channel lifecycle strategy.
-///
-/// ## Routing-mode aware channel targeting
-///
-/// When destinations are configured with explicit relay paths (`path = { intermediates = [...] }`),
-/// set `channel_allowlist` to the set of first-relayer addresses collected from those destinations.
-/// The channel lifecycle strategy will then open and maintain channels **exclusively** to those
-/// addresses, ignoring all other peers.
-///
-/// When `channel_allowlist` is `None` (the default), the strategy selects peers by quality score
-/// and opens channels freely across the network.
-///
-/// Callers should choose one mode or the other — mixing hop-based and explicit-path destinations
-/// is not supported and the behaviour is unspecified.
+/// Covers channel funding sizing, population topology, and optional address targeting.
+/// Set `channel_allowlist` when using explicit-path routing to restrict channel opening
+/// to the required relayer addresses; leave it `None` for quality-score-based peer selection.
 #[derive(Debug, Clone, smart_default::SmartDefault)]
 pub struct IncentiveConfiguration {
     /// Number of forwarded packets the initial channel stake is sized to cover.
@@ -61,13 +48,9 @@ pub struct IncentiveConfiguration {
     #[default = 8]
     pub target_open_channels: usize,
 
-    /// Restrict channel opening to this explicit set of peer addresses.
-    ///
-    /// When `Some`, the channel lifecycle strategy will only open channels to addresses
-    /// in this set. All other peers are skipped regardless of quality score.
-    /// Intended for explicit-path routing where channels must reach specific relayers.
-    ///
-    /// When `None` (default), channels are opened to any eligible peer by quality score.
+    /// When `Some`, channels are opened exclusively to these addresses; all other peers
+    /// are skipped regardless of quality score. Use this for explicit-path routing to
+    /// ensure channels exist to the required relayers. Default: `None` (open to any peer).
     #[default(None)]
     pub channel_allowlist: Option<HashSet<Address>>,
 }
