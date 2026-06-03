@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use hopr_lib::api::types::primitive::prelude::{
     Address, HoprBalance, UnitaryFloatOps as _, XDaiBalance,
 };
@@ -24,7 +26,20 @@ pub struct MultiStrategyConfig {
 /// Bundles channel funding sizing with population topology so callers
 /// have a single config knob for the reactor. Designed to accommodate
 /// future incentive extensions beyond the current channel lifecycle strategy.
-#[derive(Debug, Clone, Copy, smart_default::SmartDefault)]
+///
+/// ## Routing-mode aware channel targeting
+///
+/// When destinations are configured with explicit relay paths (`path = { intermediates = [...] }`),
+/// set `channel_allowlist` to the set of first-relayer addresses collected from those destinations.
+/// The channel lifecycle strategy will then open and maintain channels **exclusively** to those
+/// addresses, ignoring all other peers.
+///
+/// When `channel_allowlist` is `None` (the default), the strategy selects peers by quality score
+/// and opens channels freely across the network.
+///
+/// Callers should choose one mode or the other — mixing hop-based and explicit-path destinations
+/// is not supported and the behaviour is unspecified.
+#[derive(Debug, Clone, smart_default::SmartDefault)]
 pub struct IncentiveConfiguration {
     /// Number of forwarded packets the initial channel stake is sized to cover.
     ///
@@ -45,6 +60,16 @@ pub struct IncentiveConfiguration {
     /// Target number of open outgoing channels to open towards. Default: 8.
     #[default = 8]
     pub target_open_channels: usize,
+
+    /// Restrict channel opening to this explicit set of peer addresses.
+    ///
+    /// When `Some`, the channel lifecycle strategy will only open channels to addresses
+    /// in this set. All other peers are skipped regardless of quality score.
+    /// Intended for explicit-path routing where channels must reach specific relayers.
+    ///
+    /// When `None` (default), channels are opened to any eligible peer by quality score.
+    #[default(None)]
+    pub channel_allowlist: Option<HashSet<Address>>,
 }
 
 impl IncentiveConfiguration {
@@ -240,6 +265,10 @@ pub async fn default_strategy_cfg(
         population: PopulationConfig {
             min_open_channels: sizing.min_open_channels,
             target_open_channels: sizing.target_open_channels,
+            ..Default::default()
+        },
+        eligibility: EligibilityConfig {
+            allowlist: sizing.channel_allowlist,
             ..Default::default()
         },
         ..Default::default()
