@@ -4,7 +4,8 @@ Profiles the `edgli_session_rotsee` integration test against the Rotsee testnet.
 
 ## Identity setup
 
-Export the required env vars (see `tests/edgli_session_rotsee.rs` for the full list):
+Export the required env vars (see `tests/edgli_session_rotsee.rs` for the full
+list):
 
 ```sh
 # Required
@@ -83,5 +84,7 @@ cargo flamegraph \
 ### Verifying the result
 
 - Exit code is `0` and both session pumps report a SHA-256 match in stdout.
-- The `.svg` is >200 KB — a smaller file means the sampler captured no useful data.
-- Open the `.svg` in a browser. If frames show `??` addresses, the binary was stripped; confirm `--profile=flamegraph` was passed.
+- The `.svg` is >200 KB — a smaller file means the sampler captured no useful
+  data.
+- Open the `.svg` in a browser. If frames show `??` addresses, the binary was
+  stripped; confirm `--profile=flamegraph` was passed.

@@ -70,9 +70,22 @@ jobs:
           if [[ "$HEAD_REPO" != "$BASE_REPO" ]]; then
             gh pr edit "$PR_NUMBER" --add-label "external"
           fi
+  format:
+    name: Format
+    uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@64cb8ba34ff2e8caa43e366207d0cb1faa8d43d4 # workflow-checks-v1
+    with:
+      source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
+      pre_commit: false
+      deps: false
+      audit: false
+      lint: true
+      lint_command: "nix fmt && git diff --exit-code"
+      disable_sudo: false
+    secrets:
+      cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
   checks:
     name: Check
-    uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@bbd22e57cf954c15f0a6051d59329857809141dd # workflow-checks-v1
+    uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@64cb8ba34ff2e8caa43e366207d0cb1faa8d43d4 # workflow-checks-v1
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
       lint_command: "nix build -L .#checks.x86_64-linux.clippy"
