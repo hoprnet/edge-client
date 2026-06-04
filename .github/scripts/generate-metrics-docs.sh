@@ -118,10 +118,10 @@ if [[ ${1:-} == "--generate" ]]; then
         "${headers[0]}" "${headers[1]}" "${headers[2]}" "${headers[3]}"
     # Print separator
     printf "| %s | %s | %s | %s |\n" \
-        "$(printf '%0.s-' $(seq 1 ${widths[0]}))" \
-        "$(printf '%0.s-' $(seq 1 ${widths[1]}))" \
-        "$(printf '%0.s-' $(seq 1 ${widths[2]}))" \
-        "$(printf '%0.s-' $(seq 1 ${widths[3]}))"
+        "$(printf '%0.s-' $(seq 1 "${widths[0]}"))" \
+        "$(printf '%0.s-' $(seq 1 "${widths[1]}"))" \
+        "$(printf '%0.s-' $(seq 1 "${widths[2]}"))" \
+        "$(printf '%0.s-' $(seq 1 "${widths[3]}"))"
     # Print rows
     for row in "${rows[@]}"; do
         IFS=$'\t' read -r c1 c2 c3 c4 <<<"$row"
