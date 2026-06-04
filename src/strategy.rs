@@ -501,4 +501,25 @@ mod tests {
         assert!(compute_capacity(stake, price, f64::NAN).is_err());
         assert!(compute_capacity(stake, price, f64::INFINITY).is_err());
     }
+
+    #[test]
+    fn incentive_configuration_default_allowlist_is_none() {
+        assert!(IncentiveConfiguration::default().channel_allowlist.is_none());
+    }
+
+    #[test]
+    fn eligibility_config_uses_channel_allowlist() {
+        use std::collections::HashSet;
+        let addr = Address::default();
+        let allowlist = HashSet::from([addr]);
+        let sizing = IncentiveConfiguration {
+            channel_allowlist: Some(allowlist.clone()),
+            ..Default::default()
+        };
+        let eligibility = EligibilityConfig {
+            allowlist: sizing.channel_allowlist.clone(),
+            ..Default::default()
+        };
+        assert_eq!(eligibility.allowlist, Some(allowlist));
+    }
 }
