@@ -74,7 +74,7 @@ jobs:
     name: Format
     uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@64cb8ba34ff2e8caa43e366207d0cb1faa8d43d4 # workflow-checks-v1
     with:
-      source_branch: ${{ github.event.pull_request.head.sha }}
+      source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
       pre_commit: false
       deps: false
       audit: false
