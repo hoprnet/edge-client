@@ -19,8 +19,7 @@ fn mixer_section_round_trips_through_yaml() {
 
 #[test]
 fn missing_mixer_section_deserialises_as_default() {
-    let yaml = "host:\n  address:\n    IPv4: \"1.2.3.4\"\n  port: 9091\n";
-    let parsed: HoprLibConfig = serde_yaml::from_str(yaml).unwrap();
+    let parsed: HoprLibConfig = serde_yaml::from_str("{}").unwrap();
     assert_eq!(parsed.protocol.mixer, MixerConfig::default());
 }
 
@@ -33,7 +32,11 @@ fn edge_client_mixer_defaults() {
         delay_range: Duration::from_millis(1),
         ..Default::default()
     };
-    assert_ne!(edge_mixer, MixerConfig::default(), "edge-client mixer differs from hoprnet default");
+    assert_ne!(
+        edge_mixer,
+        MixerConfig::default(),
+        "edge-client mixer differs from hoprnet default"
+    );
     assert_eq!(edge_mixer.min_delay, Duration::ZERO);
     assert_eq!(edge_mixer.delay_range, Duration::from_millis(1));
 }
