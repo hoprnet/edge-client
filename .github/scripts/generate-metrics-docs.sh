@@ -16,8 +16,8 @@ METRICS_DOC="$REPO_ROOT/METRICS.md"
 # Outputs tab-separated rows:  name \t type \t description \t detail
 # Requires 8 lines of trailing context to capture buckets/keys on later lines.
 extract_metrics() {
-  (cd "$REPO_ROOT" && grep -rA8 -E '(Simple|Multi)(Counter|Gauge|Histogram)::new\(' --exclude-dir='.git' --exclude-dir='target' --exclude-dir='.cargo' --exclude-dir='.claude' --include='*.rs' .) |
-    gawk '
+    (cd "$REPO_ROOT" && grep -rA8 -E '(Simple|Multi)(Counter|Gauge|Histogram)::new\(' --exclude-dir='.git' --exclude-dir='target' --exclude-dir='.cargo' --exclude-dir='.claude' --include='*.rs' .) |
+        gawk '
     /^\.\/misc\/metrics\// { next }
 
     # ── new ::new( call → flush previous metric and start fresh ──
@@ -84,84 +84,84 @@ extract_metrics() {
       }
     }
   ' |
-    LC_ALL=C sort -t$'\t' -k1,1
+        LC_ALL=C sort -t$'\t' -k1,1
 }
 
 # ── --generate: print a column-aligned markdown table and exit ────────────────
 if [[ ${1:-} == "--generate" ]]; then
-  # Collect rows first to compute column widths
-  extract_stderr=$(mktemp)
-  trap 'rm -f "$extract_stderr"' EXIT
-  rows=()
-  while IFS=$'\t' read -r name type desc detail; do
-    rows+=("$(printf "\`%s\`\t%s\t%s\t%s" "$name" "$type" "$desc" "$detail")")
-  done < <(extract_metrics 2>"$extract_stderr")
+    # Collect rows first to compute column widths
+    extract_stderr=$(mktemp)
+    trap 'rm -f "$extract_stderr"' EXIT
+    rows=()
+    while IFS=$'\t' read -r name type desc detail; do
+        rows+=("$(printf "\`%s\`\t%s\t%s\t%s" "$name" "$type" "$desc" "$detail")")
+    done < <(extract_metrics 2>"$extract_stderr")
 
-  if [[ ${#rows[@]} -eq 0 ]]; then
-    echo "No Prometheus metrics are defined in this codebase."
-    exit 0
-  fi
+    if [[ ${#rows[@]} -eq 0 ]]; then
+        echo "No Prometheus metrics are defined in this codebase."
+        exit 0
+    fi
 
-  # Compute max width per column (start with header widths)
-  headers=("Name" "Type" "Description" "Detail")
-  widths=(${#headers[0]} ${#headers[1]} ${#headers[2]} ${#headers[3]})
-  for row in "${rows[@]}"; do
-    IFS=$'\t' read -r c1 c2 c3 c4 <<<"$row"
-    ((${#c1} > widths[0])) && widths[0]=${#c1}
-    ((${#c2} > widths[1])) && widths[1]=${#c2}
-    ((${#c3} > widths[2])) && widths[2]=${#c3}
-    ((${#c4} > widths[3])) && widths[3]=${#c4}
-  done
+    # Compute max width per column (start with header widths)
+    headers=("Name" "Type" "Description" "Detail")
+    widths=(${#headers[0]} ${#headers[1]} ${#headers[2]} ${#headers[3]})
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r c1 c2 c3 c4 <<<"$row"
+        ((${#c1} > widths[0])) && widths[0]=${#c1}
+        ((${#c2} > widths[1])) && widths[1]=${#c2}
+        ((${#c3} > widths[2])) && widths[2]=${#c3}
+        ((${#c4} > widths[3])) && widths[3]=${#c4}
+    done
 
-  # Print header
-  printf "| %-${widths[0]}s | %-${widths[1]}s | %-${widths[2]}s | %-${widths[3]}s |\n" \
-    "${headers[0]}" "${headers[1]}" "${headers[2]}" "${headers[3]}"
-  # Print separator
-  printf "| %s | %s | %s | %s |\n" \
-    "$(printf '%0.s-' $(seq 1 ${widths[0]}))" \
-    "$(printf '%0.s-' $(seq 1 ${widths[1]}))" \
-    "$(printf '%0.s-' $(seq 1 ${widths[2]}))" \
-    "$(printf '%0.s-' $(seq 1 ${widths[3]}))"
-  # Print rows
-  for row in "${rows[@]}"; do
-    IFS=$'\t' read -r c1 c2 c3 c4 <<<"$row"
+    # Print header
     printf "| %-${widths[0]}s | %-${widths[1]}s | %-${widths[2]}s | %-${widths[3]}s |\n" \
-      "$c1" "$c2" "$c3" "$c4"
-  done
-  exit 0
+        "${headers[0]}" "${headers[1]}" "${headers[2]}" "${headers[3]}"
+    # Print separator
+    printf "| %s | %s | %s | %s |\n" \
+        "$(printf '%0.s-' $(seq 1 ${widths[0]}))" \
+        "$(printf '%0.s-' $(seq 1 ${widths[1]}))" \
+        "$(printf '%0.s-' $(seq 1 ${widths[2]}))" \
+        "$(printf '%0.s-' $(seq 1 ${widths[3]}))"
+    # Print rows
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r c1 c2 c3 c4 <<<"$row"
+        printf "| %-${widths[0]}s | %-${widths[1]}s | %-${widths[2]}s | %-${widths[3]}s |\n" \
+            "$c1" "$c2" "$c3" "$c4"
+    done
+    exit 0
 fi
 
 # ── --fix: regenerate METRICS.md in place and stage it ─────────────────────────
 if [[ ${1:-} == "--fix" ]]; then
-  expected=$(bash "$0" --generate)
-  echo "$expected" >"$METRICS_DOC"
-  git -C "$REPO_ROOT" add "$METRICS_DOC"
-  echo "METRICS.md updated and staged."
-  exit 0
+    expected=$(bash "$0" --generate)
+    echo "$expected" >"$METRICS_DOC"
+    git -C "$REPO_ROOT" add "$METRICS_DOC"
+    echo "METRICS.md updated and staged."
+    exit 0
 fi
 
 # ── Lint mode ────────────────────────────────────────────────────────────────
 
 if [[ ! -f $METRICS_DOC ]]; then
-  echo "ERROR: METRICS.md not found at $METRICS_DOC" >&2
-  exit 1
+    echo "ERROR: METRICS.md not found at $METRICS_DOC" >&2
+    exit 1
 fi
 
 # Normalize a markdown table: collapse runs of whitespace around pipes so that
 # column-aligned (prettified) tables compare equal to compact ones.
 normalize_table() {
-  sed -E 's/[ ]+\|/|/g; s/\|[ ]+/|/g; s/\|-+/|---/g'
+    sed -E 's/[ ]+\|/|/g; s/\|[ ]+/|/g; s/\|-+/|---/g'
 }
 
 # Generate expected content and compare with the actual file (whitespace-tolerant)
 expected=$(bash "$0" --generate)
 
 if ! diff -q <(echo "$expected" | normalize_table) <(normalize_table <"$METRICS_DOC") >/dev/null 2>&1; then
-  echo "ERROR: METRICS.md is out of date. Differences:"
-  diff -u <(normalize_table <"$METRICS_DOC") <(echo "$expected" | normalize_table) | head -40
-  echo ""
-  echo "Run:  $0 --generate > METRICS.md"
-  exit 1
+    echo "ERROR: METRICS.md is out of date. Differences:"
+    diff -u <(normalize_table <"$METRICS_DOC") <(echo "$expected" | normalize_table) | head -40
+    echo ""
+    echo "Run:  $0 --generate > METRICS.md"
+    exit 1
 fi
 
 count=$(echo "$expected" | grep -c '^|' || true)
