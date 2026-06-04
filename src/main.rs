@@ -176,7 +176,17 @@ async fn main() -> anyhow::Result<()> {
         .into());
     }
 
-    let cfg: HoprLibConfig = serde_yaml::from_str(&std::fs::read_to_string(args.config)?)?;
+    let mut cfg: HoprLibConfig = serde_yaml::from_str(&std::fs::read_to_string(args.config)?)?;
+    // Edge-client specific mixer defaults (0 ms min, 1 ms range); env vars override.
+    let read_ms = |var: &str, default_ms: u64| -> std::time::Duration {
+        std::env::var(var)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or_else(|| std::time::Duration::from_millis(default_ms))
+    };
+    cfg.protocol.mixer.min_delay = read_ms("HOPR_INTERNAL_MIXER_MINIMUM_DELAY_IN_MS", 0);
+    cfg.protocol.mixer.delay_range = read_ms("HOPR_INTERNAL_MIXER_DELAY_RANGE_IN_MS", 1);
 
     // Find or create an identity
     let hopr_keys: HoprKeys = IdentityRetrievalModes::FromFile {
