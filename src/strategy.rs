@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use hopr_lib::api::types::primitive::prelude::{
     Address, HoprBalance, UnitaryFloatOps as _, XDaiBalance,
 };
@@ -21,10 +23,10 @@ pub struct MultiStrategyConfig {
 
 /// Top-level incentive parameters for the channel lifecycle strategy reactor.
 ///
-/// Bundles channel funding sizing with population topology so callers
-/// have a single config knob for the reactor. Designed to accommodate
-/// future incentive extensions beyond the current channel lifecycle strategy.
-#[derive(Debug, Clone, Copy, smart_default::SmartDefault)]
+/// Covers channel funding sizing, population topology, and optional address targeting.
+/// Set `channel_allowlist` when using explicit-path routing to restrict channel opening
+/// to the required relayer addresses; leave it `None` for quality-score-based peer selection.
+#[derive(Debug, Clone, smart_default::SmartDefault)]
 pub struct IncentiveConfiguration {
     /// Number of forwarded packets the initial channel stake is sized to cover.
     ///
@@ -45,6 +47,12 @@ pub struct IncentiveConfiguration {
     /// Target number of open outgoing channels to open towards. Default: 8.
     #[default = 8]
     pub target_open_channels: usize,
+
+    /// When `Some`, channels are opened exclusively to these addresses; all other peers
+    /// are skipped regardless of quality score. Use this for explicit-path routing to
+    /// ensure channels exist to the required relayers. Default: `None` (open to any peer).
+    #[default(None)]
+    pub channel_allowlist: Option<HashSet<Address>>,
 }
 
 impl IncentiveConfiguration {
@@ -229,17 +237,21 @@ pub async fn minimum_balance_recommendation(
 #[cfg(feature = "runtime-tokio")]
 pub async fn default_strategy_cfg(
     node: &crate::client::Edgli,
-    sizing: IncentiveConfiguration,
+    sizing: &IncentiveConfiguration,
 ) -> anyhow::Result<MultiStrategyConfig> {
     sizing.validate()?;
     let chain = node.chain_api();
     let ticket_price = chain.minimum_ticket_price().await?;
     let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
     let cfg = ChannelLifecycleConfig {
-        funding: compute_funding_config(ticket_price, win_prob, &sizing)?,
+        funding: compute_funding_config(ticket_price, win_prob, sizing)?,
         population: PopulationConfig {
             min_open_channels: sizing.min_open_channels,
             target_open_channels: sizing.target_open_channels,
+            ..Default::default()
+        },
+        eligibility: EligibilityConfig {
+            allowlist: sizing.channel_allowlist.clone(),
             ..Default::default()
         },
         ..Default::default()
@@ -488,5 +500,30 @@ mod tests {
         assert!(compute_capacity(stake, price, 1.1).is_err());
         assert!(compute_capacity(stake, price, f64::NAN).is_err());
         assert!(compute_capacity(stake, price, f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn incentive_configuration_default_allowlist_is_none() {
+        assert!(
+            IncentiveConfiguration::default()
+                .channel_allowlist
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn eligibility_config_uses_channel_allowlist() {
+        use std::collections::HashSet;
+        let addr = Address::default();
+        let allowlist = HashSet::from([addr]);
+        let sizing = IncentiveConfiguration {
+            channel_allowlist: Some(allowlist.clone()),
+            ..Default::default()
+        };
+        let eligibility = EligibilityConfig {
+            allowlist: sizing.channel_allowlist.clone(),
+            ..Default::default()
+        };
+        assert_eq!(eligibility.allowlist, Some(allowlist));
     }
 }
