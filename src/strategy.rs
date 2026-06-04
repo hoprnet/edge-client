@@ -504,7 +504,11 @@ mod tests {
 
     #[test]
     fn incentive_configuration_default_allowlist_is_none() {
-        assert!(IncentiveConfiguration::default().channel_allowlist.is_none());
+        assert!(
+            IncentiveConfiguration::default()
+                .channel_allowlist
+                .is_none()
+        );
     }
 
     #[test]
