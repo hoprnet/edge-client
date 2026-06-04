@@ -957,7 +957,7 @@ pub fn loopback_target() -> SessionTarget {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibConfig {
-    use edgli::hopr_lib::config::{HoprProtocolConfig, TransportConfig};
+    use edgli::hopr_lib::config::{HoprProtocolConfig, MixerConfig, TransportConfig};
     use edgli::hopr_lib::exports::transport::path::PathPlannerConfig;
     HoprLibConfig {
         host: HostConfig {
@@ -972,6 +972,11 @@ pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibCon
             },
             path_planner: PathPlannerConfig {
                 min_ack_rate: tuning.min_ack_rate,
+                ..Default::default()
+            },
+            mixer: MixerConfig {
+                min_delay: std::time::Duration::ZERO,
+                delay_range: std::time::Duration::from_millis(1),
                 ..Default::default()
             },
             ..Default::default()
