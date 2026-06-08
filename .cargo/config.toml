@@ -20,3 +20,13 @@ JEMALLOC_SYS_WITH_MALLOC_CONF = "abort_conf:true,narenas:4,tcache_max:65536,dirt
 CFLAGS = "-O3 -ffunction-sections -fdata-sections -fPIC"
 CPPFLAGS = "-O3 -ffunction-sections -fdata-sections -fPIC"
 LDFLAGS = "-O3 -ffunction-sections -fdata-sections -fPIC"
+
+# Enable hardware AES intrinsics on aarch64 — selects aes::armv8 backend at
+# compile time instead of the runtime-dispatched aes::soft::fixslice path.
+# Benchmarks show ~10× key-schedule improvement on Apple Silicon.
+# See: hoprnet/edge-client#82
+[target.'cfg(all(target_arch = "aarch64", target_vendor = "apple"))']
+rustflags = ["-C", "target-feature=+aes,+neon"]
+
+[target.'cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))']
+rustflags = ["-C", "target-feature=+aes"]
