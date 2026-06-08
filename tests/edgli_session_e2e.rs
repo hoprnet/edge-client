@@ -17,35 +17,49 @@
 //! The test starts `hoprd-localcluster`, waits for readiness, runs the session
 //! pumps, then tears the cluster down. Required env vars:
 //!
-//! | Variable                  | Required | Description                              |
-//! |---------------------------|----------|------------------------------------------|
-//! | `HOPRD_LOCALCLUSTER_BIN`  | yes      | Path to `hoprd-localcluster` binary      |
-//! | `HOPRD_BIN`               | yes      | Path to `hoprd` binary                   |
-//! | `HOPRD_CHAIN_IMAGE`       | yes      | `bloklid-anvil` container image tag      |
-//! | `HOPRD_CONTAINER_RUNTIME` | no       | Container runtime (default: docker)      |
+//! | Variable                  | Required | Description                                       |
+//! |---------------------------|----------|---------------------------------------------------|
+//! | `HOPRD_LOCALCLUSTER_BIN`  | yes      | Path to `hoprd-localcluster` binary               |
+//! | `HOPRD_BIN`               | yes      | Path to `hoprd` binary                            |
+//! | `HOPRD_CHAIN_IMAGE`       | yes      | `bloklid-anvil` container image tag               |
+//! | `HOPRD_CONTAINER_RUNTIME` | no       | Container runtime (default: `docker`)             |
+//!
+//! Both `hoprd-localcluster` and `hoprd` are built from the **`hoprnet/hoprd`** repo
+//! (not `hoprnet/hoprnet`):
 //!
 //! ```text
-//! export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd-localcluster
-//! export HOPRD_BIN=/path/to/hoprd
+//! # In the hoprnet/hoprd repo:
+//! cargo build --release -p hoprd-localcluster -p hoprd
+//!
+//! export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd/target/release/hoprd-localcluster
+//! export HOPRD_BIN=/path/to/hoprd/target/release/hoprd
 //! export HOPRD_CHAIN_IMAGE='<bloklid-anvil image tag>'
+//! # export HOPRD_CONTAINER_RUNTIME=container  # Apple native runtime
+//!
 //! # --release is required: HOPR's async future chains overflow the default debug stack
 //! RUST_LOG=info,edgli=debug cargo test --test edgli_session_e2e --release -- --ignored --nocapture
 //! ```
 //!
 //! ## External mode: attach to an already-running cluster
 //!
-//! Start the cluster manually in one terminal, capture its stdout to a file,
-//! then point the test at that file to skip cluster startup:
+//! Start the cluster manually in one terminal with a known `--data-dir`, then
+//! point the test at it via `HOPRD_CLUSTER_DATA_DIR`:
 //!
 //! ```text
-//! # Terminal 1 — start cluster and tee its output
+//! # Terminal 1 — start cluster
 //! hoprd-localcluster --size 3 --extra-identities 1 \
 //!   --api-port-base 13000 --p2p-port-base 19000 \
 //!   --api-token test-token-localcluster \
-//!   --chain-image '...' ... 2>&1 | tee /tmp/cluster.log
+//!   --data-dir /tmp/edgli-cluster \
+//!   --chain-image '...' ...
 //!
-//! # Wait for "localcluster running" in Terminal 1, then in Terminal 2:
-//! export HOPRD_CLUSTER_SUMMARY_FILE=/tmp/cluster.log
+//! # Wait until status reports "running":
+//! hoprd-localcluster status --data-dir /tmp/edgli-cluster
+//! # ... wait for {"state":"running"} ...
+//!
+//! # Terminal 2 — run the test
+//! export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd-localcluster
+//! export HOPRD_CLUSTER_DATA_DIR=/tmp/edgli-cluster
 //! RUST_LOG=info,edgli=debug cargo test --test edgli_session_e2e --release -- --ignored --nocapture
 //! ```
 //!
