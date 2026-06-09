@@ -2535,6 +2535,7 @@ dependencies = [
  "opentelemetry_sdk",
  "rand 0.8.6",
  "reqwest 0.13.3",
+ "serde",
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
