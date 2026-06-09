@@ -398,8 +398,8 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
             .await
             .with_context(|| format!("running `{lc_bin} status --data-dir {data_dir}`"))?;
         let json = String::from_utf8_lossy(&out.stdout);
-        let wire: ClusterSummaryWire = serde_json::from_str(&json)
-            .context("failed to parse cluster status JSON")?;
+        let wire: ClusterSummaryWire =
+            serde_json::from_str(&json).context("failed to parse cluster status JSON")?;
         anyhow::ensure!(
             matches!(wire.state, ClusterStateWire::Running),
             "HOPRD_CLUSTER_DATA_DIR is set but cluster state is '{:?}' (not 'running').\n\
