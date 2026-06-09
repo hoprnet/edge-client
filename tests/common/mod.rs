@@ -208,7 +208,7 @@ pub enum NetworkGuard {
 // Wire types for `hoprd-localcluster status` JSON  (hoprd/localcluster/src/summary.rs)
 // ────────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ClusterStateWire {
     NotRunning,
@@ -247,10 +247,7 @@ struct ExtraSummaryWire {
     password: String,
 }
 
-fn parse_summary_json(json: &str) -> anyhow::Result<ClusterSummary> {
-    let wire: ClusterSummaryWire =
-        serde_json::from_str(json).context("failed to parse cluster status JSON")?;
-
+fn wire_into_summary(wire: ClusterSummaryWire) -> anyhow::Result<ClusterSummary> {
     let blokli_url = wire
         .blokli_url
         .ok_or_else(|| anyhow::anyhow!("blokli_url missing from running cluster status"))?;
@@ -298,6 +295,12 @@ fn parse_summary_json(json: &str) -> anyhow::Result<ClusterSummary> {
         nodes,
         extras,
     })
+}
+
+fn parse_summary_json(json: &str) -> anyhow::Result<ClusterSummary> {
+    let wire: ClusterSummaryWire =
+        serde_json::from_str(json).context("failed to parse cluster status JSON")?;
+    wire_into_summary(wire)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -395,17 +398,16 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
             .await
             .with_context(|| format!("running `{lc_bin} status --data-dir {data_dir}`"))?;
         let json = String::from_utf8_lossy(&out.stdout);
-        let state = serde_json::from_str::<serde_json::Value>(&json)
-            .ok()
-            .and_then(|v| v["state"].as_str().map(String::from))
-            .unwrap_or_default();
+        let wire: ClusterSummaryWire = serde_json::from_str(&json)
+            .context("failed to parse cluster status JSON")?;
         anyhow::ensure!(
-            state == "running",
-            "HOPRD_CLUSTER_DATA_DIR is set but cluster state is '{state}' (not 'running').\n\
+            matches!(wire.state, ClusterStateWire::Running),
+            "HOPRD_CLUSTER_DATA_DIR is set but cluster state is '{:?}' (not 'running').\n\
              Wait until `hoprd-localcluster status --data-dir {data_dir}` reports \
-             \"state\": \"running\" before running this test."
+             \"state\": \"running\" before running this test.",
+            wire.state
         );
-        let summary = parse_summary_json(&json)?;
+        let summary = wire_into_summary(wire)?;
         tracing::info!(
             blokli_url = %summary.blokli_url,
             nodes = summary.nodes.len(),
@@ -565,15 +567,14 @@ async fn wait_status_running(
             .context("failed to run `hoprd-localcluster status`")?;
         let json = String::from_utf8_lossy(&out.stdout);
 
-        match serde_json::from_str::<serde_json::Value>(&json) {
-            Ok(v) => match v["state"].as_str() {
-                Some("running") => return parse_summary_json(&json),
-                Some("failed") => {
-                    let error = v["error"].as_str().unwrap_or("unknown error");
+        match serde_json::from_str::<ClusterSummaryWire>(&json) {
+            Ok(wire) => match wire.state {
+                ClusterStateWire::Running => return wire_into_summary(wire),
+                ClusterStateWire::Failed => {
+                    let error = wire.error.as_deref().unwrap_or("unknown error").to_owned();
                     anyhow::bail!("localcluster failed: {error}");
                 }
-                Some(state) => tracing::debug!("cluster status: {state}"),
-                None => tracing::debug!("cluster status: missing state field"),
+                state => tracing::debug!("cluster status: {state:?}"),
             },
             Err(_) => tracing::debug!("cluster status: response not yet parseable"),
         }
