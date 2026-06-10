@@ -15,7 +15,7 @@ use hopr_lib::api::{
 };
 use hopr_lib::builder::{ChainKeypair, Keypair, OffchainKeypair};
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
-use hopr_reference::build_edge_with_chain;
+use hopr_node::build_edge_with_chain;
 use strum::{AsRefStr, Display, EnumString};
 use tracing::info;
 
@@ -23,7 +23,7 @@ use crate::errors::EdgliError;
 use crate::new_blokli_client;
 
 /// The concrete HOPR edge node type used by this client.
-pub type HoprEdgeClient = hopr_reference::EdgeHopr;
+pub type HoprEdgeClient = hopr_node::EdgeHopr;
 
 /// Represents the initialization states of the Edgli client.
 /// Each state corresponds to a step in the `new()` function.
@@ -179,7 +179,7 @@ impl Edgli {
         };
 
         visitor(EdgliInitState::CreatingNode);
-        info!("Building HOPR edge node via hopr-reference");
+        info!("Building HOPR edge node via hopr-node");
 
         visitor(EdgliInitState::StartingNode);
         let node = build_edge_with_chain(
