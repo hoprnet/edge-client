@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use futures::StreamExt;
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
 use hopr_ct_full_network::ProberConfig as FullNetworkProberConfig;
@@ -13,9 +14,11 @@ use hopr_lib::api::{
         primitive::prelude::{Address, HoprBalance},
     },
 };
-use hopr_lib::builder::{ChainKeypair, Keypair, OffchainKeypair};
+use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
-use hopr_reference::build_edge_with_chain;
+use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
+use hopr_ticket_manager::ticket_factory_from_chain;
+use hopr_transport_p2p::{HoprLibp2pNetworkBuilder, HoprNetwork, PeerDiscovery};
 use strum::{AsRefStr, Display, EnumString};
 use tracing::info;
 
@@ -23,7 +26,16 @@ use crate::errors::EdgliError;
 use crate::new_blokli_client;
 
 /// The concrete HOPR edge node type used by this client.
-pub type HoprEdgeClient = hopr_reference::EdgeHopr;
+pub type HoprEdgeClient = hopr_lib::Hopr<
+    Arc<
+        hopr_chain_connector::HoprBlockchainSafeConnector<
+            hopr_chain_connector::blokli_client::BlokliClient,
+        >,
+    >,
+    SharedChannelGraph,
+    HoprNetwork,
+    (),
+>;
 
 /// Represents the initialization states of the Edgli client.
 /// Each state corresponds to a step in the `new()` function.
@@ -179,25 +191,74 @@ impl Edgli {
         };
 
         visitor(EdgliInitState::CreatingNode);
-        info!("Building HOPR edge node via hopr-reference");
+        info!("Building HOPR edge node directly via HoprBuilder");
+
+        let probe_cfg = FullNetworkProberConfig {
+            interval: std::time::Duration::from_secs(3),
+            shuffle_ttl: std::time::Duration::from_secs(3),
+            probe_connected_only: false,
+            ..Default::default()
+        };
+        probe_cfg.validate_against_probe_timeout(cfg.protocol.probe.timeout)?;
+
+        let ticket_factory = ticket_factory_from_chain(&chain_connector)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to seed ticket factory: {e}"))?;
+
+        let path_cfg = cfg.protocol.path_planner;
+        let graph: SharedChannelGraph = Arc::new(ChannelGraph::with_edge_params(
+            *packet_key.public(),
+            path_cfg.edge_penalty,
+            path_cfg.min_ack_rate,
+        ));
+        let graph_for_ct = graph.clone();
+        let safe_address = cfg.safe_module.safe_address;
+        let module_address = cfg.safe_module.module_address;
 
         visitor(EdgliInitState::StartingNode);
-        let node = build_edge_with_chain(
-            chain_key,
-            packet_key,
-            cfg,
-            // Probe all graph nodes every 3 s regardless of connection state.
-            // At startup no peers are `Connected(true)` yet, so `probe_connected_only: true`
-            // (the library default) would send no probes and stall graph convergence.
-            Some(FullNetworkProberConfig {
-                interval: std::time::Duration::from_secs(3),
-                shuffle_ttl: std::time::Duration::from_secs(3),
-                probe_connected_only: false,
-                ..Default::default()
-            }),
-            chain_connector,
-        )
-        .await?;
+        let node = Arc::new(
+            HoprBuilder
+                .with_identity(chain_key, packet_key)
+                .with_config(cfg)
+                .with_safe_module(&safe_address, &module_address)
+                .with_chain_api(move |_ctx| chain_connector)
+                .with_graph(move |_ctx| graph)
+                .with_network(move |ctx| {
+                    Box::pin(async move {
+                        let peer_discovery_rx = ctx.take_peer_discovery_rx().ok_or(
+                            hopr_lib::errors::HoprLibError::BuilderError(
+                                "peer_discovery_rx already taken",
+                            ),
+                        )?;
+                        let multiaddresses = vec![
+                            (&ctx.cfg.host)
+                                .try_into()
+                                .map_err(hopr_lib::errors::HoprLibError::TransportError)?,
+                        ];
+                        let nb = HoprLibp2pNetworkBuilder::new(
+                            peer_discovery_rx
+                                .map(|(peer_id, addrs)| PeerDiscovery::Announce(peer_id, addrs)),
+                        );
+                        nb.build(
+                            &ctx.packet_key,
+                            multiaddresses,
+                            "/hopr/mix/1.1.0",
+                            ctx.cfg.protocol.transport.prefer_local_addresses,
+                        )
+                        .await
+                        .map_err(|e| hopr_lib::errors::HoprLibError::GeneralError(e.to_string()))
+                    })
+                })
+                .with_cover_traffic(move |ctx| {
+                    hopr_ct_full_network::FullNetworkDiscovery::new(
+                        *ctx.packet_key.public(),
+                        probe_cfg,
+                        graph_for_ct,
+                    )
+                })
+                .build_edge(ticket_factory)
+                .await?,
+        );
 
         visitor(EdgliInitState::Ready);
         Ok(Self {
