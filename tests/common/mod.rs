@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use anyhow::Context as _;
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use edgli::{
     Edgli, EdgliInitState,
@@ -205,80 +205,90 @@ pub enum NetworkGuard {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Summary parser (reads hoprd-localcluster stdout)
+// Wire types for `hoprd-localcluster status` JSON  (hoprd/localcluster/src/summary.rs)
 // ────────────────────────────────────────────────────────────────────────────
 
-fn parse_summary(stdout: &str) -> anyhow::Result<ClusterSummary> {
-    let mut blokli_url: Option<String> = None;
-    let mut nodes: Vec<NodeInfo> = Vec::new();
-    let mut extras: Vec<ExtraInfo> = Vec::new();
-    let mut in_node: Option<HashMap<String, String>> = None;
-    let mut in_extra: Option<HashMap<String, String>> = None;
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ClusterStateWire {
+    NotRunning,
+    Initializing,
+    Starting,
+    Running,
+    ShuttingDown,
+    Failed,
+    #[serde(other)]
+    Unknown,
+}
 
-    let flush_node = |in_node: &mut Option<HashMap<String, String>>,
-                      nodes: &mut Vec<NodeInfo>|
-     -> anyhow::Result<()> {
-        if let Some(fields) = in_node.take() {
-            nodes.push(parse_node_info(&fields)?);
-        }
-        Ok(())
-    };
-    let flush_extra = |in_extra: &mut Option<HashMap<String, String>>,
-                       extras: &mut Vec<ExtraInfo>|
-     -> anyhow::Result<()> {
-        if let Some(fields) = in_extra.take() {
-            extras.push(parse_extra_info(&fields)?);
-        }
-        Ok(())
-    };
+#[derive(Debug, serde::Deserialize)]
+struct ClusterSummaryWire {
+    state: ClusterStateWire,
+    #[serde(default)]
+    blokli_url: Option<String>,
+    #[serde(default)]
+    nodes: Vec<NodeSummaryWire>,
+    #[serde(default)]
+    extras: Vec<ExtraSummaryWire>,
+    #[serde(default)]
+    error: Option<String>,
+}
 
-    for line in stdout.lines() {
-        let trimmed = line.trim();
+#[derive(Debug, serde::Deserialize)]
+struct NodeSummaryWire {
+    address: Option<String>,
+}
 
-        if let Some(rest) = trimmed.strip_prefix("Chain (Blokli):") {
-            blokli_url = Some(rest.trim().to_string());
-            continue;
-        }
+#[derive(Debug, serde::Deserialize)]
+struct ExtraSummaryWire {
+    safe_address: String,
+    module_address: String,
+    keystore_path: String,
+    password: String,
+}
 
-        if trimmed.starts_with("Node ") && !trimmed.contains(':') {
-            flush_node(&mut in_node, &mut nodes)?;
-            flush_extra(&mut in_extra, &mut extras)?;
-            in_node = Some(HashMap::new());
-            continue;
-        }
-        if trimmed.starts_with("Extra ") && !trimmed.contains(':') {
-            flush_node(&mut in_node, &mut nodes)?;
-            flush_extra(&mut in_extra, &mut extras)?;
-            in_extra = Some(HashMap::new());
-            continue;
-        }
+fn wire_into_summary(wire: ClusterSummaryWire) -> anyhow::Result<ClusterSummary> {
+    let blokli_url = wire
+        .blokli_url
+        .ok_or_else(|| anyhow::anyhow!("blokli_url missing from running cluster status"))?;
 
-        // "  Key  : value" field lines — skip if the key part contains '/' (URL).
-        if let Some(colon_pos) = trimmed.find(':') {
-            let key = trimmed[..colon_pos].trim();
-            if key.contains('/') {
-                continue;
-            }
-            let val = trimmed[colon_pos + 1..].trim().to_string();
-            let key_lower = key.to_ascii_lowercase();
-            if let Some(fields) = in_node.as_mut() {
-                fields.insert(key_lower, val);
-            } else if let Some(fields) = in_extra.as_mut() {
-                fields.insert(key_lower, val);
-            }
-        }
-    }
+    let nodes = wire
+        .nodes
+        .into_iter()
+        .map(|n| {
+            let address = n
+                .address
+                .ok_or_else(|| anyhow::anyhow!("node address is null in running cluster status"))?
+                .parse::<Address>()
+                .context("invalid node address")?;
+            Ok(NodeInfo { address })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
-    flush_node(&mut in_node, &mut nodes)?;
-    flush_extra(&mut in_extra, &mut extras)?;
+    anyhow::ensure!(!nodes.is_empty(), "no nodes in cluster status");
 
-    let blokli_url =
-        blokli_url.ok_or_else(|| anyhow::anyhow!("blokli URL not found in cluster summary"))?;
-    anyhow::ensure!(!nodes.is_empty(), "no nodes found in cluster summary");
-    anyhow::ensure!(
-        !extras.is_empty(),
-        "no extra identities found in cluster summary"
-    );
+    let extras = wire
+        .extras
+        .into_iter()
+        .map(|e| {
+            let safe_address = e
+                .safe_address
+                .parse::<Address>()
+                .context("invalid safe_address")?;
+            let module_address = e
+                .module_address
+                .parse::<Address>()
+                .context("invalid module_address")?;
+            Ok(ExtraInfo {
+                safe_address,
+                module_address,
+                keystore_path: PathBuf::from(e.keystore_path),
+                password: e.password,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    anyhow::ensure!(!extras.is_empty(), "no extra identities in cluster status");
 
     Ok(ClusterSummary {
         blokli_url,
@@ -287,38 +297,10 @@ fn parse_summary(stdout: &str) -> anyhow::Result<ClusterSummary> {
     })
 }
 
-fn parse_node_info(fields: &HashMap<String, String>) -> anyhow::Result<NodeInfo> {
-    let address = fields
-        .get("address")
-        .ok_or_else(|| anyhow::anyhow!("node: missing Address field"))?
-        .parse::<Address>()?;
-    Ok(NodeInfo { address })
-}
-
-fn parse_extra_info(fields: &HashMap<String, String>) -> anyhow::Result<ExtraInfo> {
-    let safe_address = fields
-        .get("safe address")
-        .ok_or_else(|| anyhow::anyhow!("extra: missing Safe address field"))?
-        .parse::<Address>()?;
-    let module_address = fields
-        .get("module address")
-        .ok_or_else(|| anyhow::anyhow!("extra: missing Module address field"))?
-        .parse::<Address>()?;
-    let keystore_path = PathBuf::from(
-        fields
-            .get("identity file")
-            .ok_or_else(|| anyhow::anyhow!("extra: missing Identity file field"))?,
-    );
-    let password = fields
-        .get("password")
-        .cloned()
-        .unwrap_or_else(|| "local-cluster".to_string());
-    Ok(ExtraInfo {
-        safe_address,
-        module_address,
-        keystore_path,
-        password,
-    })
+fn parse_summary_json(json: &str) -> anyhow::Result<ClusterSummary> {
+    let wire: ClusterSummaryWire =
+        serde_json::from_str(json).context("failed to parse cluster status JSON")?;
+    wire_into_summary(wire)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -330,10 +312,6 @@ pub struct ClusterHandle {
     child: Option<tokio::process::Child>,
     pub summary: ClusterSummary,
     _tempdir: Option<tempfile::TempDir>,
-    // Keeps the write end of the stdin pipe alive so the child never receives
-    // EOF on stdin.  hoprd-localcluster treats stdin EOF as a shutdown signal
-    // (useful in pipelines); dropping this causes graceful shutdown.
-    _child_stdin: Option<tokio::process::ChildStdin>,
 }
 
 impl Drop for ClusterHandle {
@@ -407,21 +385,39 @@ pub async fn provision(
 
 async fn provision_local() -> anyhow::Result<ClusterHandle> {
     // External mode: attach to an already-running cluster instead of starting one.
-    if let Ok(summary_file) = std::env::var("HOPRD_CLUSTER_SUMMARY_FILE") {
-        let text = std::fs::read_to_string(&summary_file)
-            .with_context(|| format!("reading HOPRD_CLUSTER_SUMMARY_FILE={summary_file}"))?;
-        let summary = parse_summary(&text)?;
+    if let Ok(data_dir) = std::env::var("HOPRD_CLUSTER_DATA_DIR") {
+        let lc_bin = std::env::var("HOPRD_LOCALCLUSTER_BIN").map_err(|_| {
+            anyhow::anyhow!(
+                "HOPRD_LOCALCLUSTER_BIN is not set (required even in external mode to run \
+                 `hoprd-localcluster status --data-dir {data_dir}`)"
+            )
+        })?;
+        let out = tokio::process::Command::new(&lc_bin)
+            .args(["status", "--data-dir", &data_dir])
+            .output()
+            .await
+            .with_context(|| format!("running `{lc_bin} status --data-dir {data_dir}`"))?;
+        let json = String::from_utf8_lossy(&out.stdout);
+        let wire: ClusterSummaryWire =
+            serde_json::from_str(&json).context("failed to parse cluster status JSON")?;
+        anyhow::ensure!(
+            matches!(wire.state, ClusterStateWire::Running),
+            "HOPRD_CLUSTER_DATA_DIR is set but cluster state is '{:?}' (not 'running').\n\
+             Wait until `hoprd-localcluster status --data-dir {data_dir}` reports \
+             \"state\": \"running\" before running this test.",
+            wire.state
+        );
+        let summary = wire_into_summary(wire)?;
         tracing::info!(
             blokli_url = %summary.blokli_url,
             nodes = summary.nodes.len(),
             extras = summary.extras.len(),
-            "external cluster summary loaded from {summary_file}"
+            "external cluster summary loaded from data-dir {data_dir}"
         );
         return Ok(ClusterHandle {
             child: None,
             summary,
             _tempdir: None,
-            _child_stdin: None,
         });
     }
 
@@ -433,28 +429,31 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
          \n\
          ── A. Managed mode (test owns cluster lifetime) ────────────────\n\
          \n\
-         Build binaries from hoprnet/hoprnet:\n\
+         Build binaries from hoprnet/hoprd:\n\
             cargo build --release -p hoprd-localcluster -p hoprd\n\
          \n\
          Export:\n\
             export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd-localcluster\n\
             export HOPRD_BIN=/path/to/hoprd\n\
             export HOPRD_CHAIN_IMAGE='<bloklid-anvil image tag>'\n\
-            # export HOPRD_CONTAINER_RUNTIME=/path/to/container  # non-Docker runtimes\n\
+            # export HOPRD_CONTAINER_RUNTIME=container  # Apple native runtime\n\
          \n\
          ── B. External mode (attach to already-running cluster) ─────────\n\
          \n\
-         Start the cluster in another terminal, tee output to a file:\n\
+         Start the cluster in another terminal:\n\
             hoprd-localcluster --size 3 --extra-identities 1 \\\n\
               --api-port-base 13000 --p2p-port-base 19000 \\\n\
-              --api-token test-token-localcluster ... 2>&1 | tee /tmp/cluster.log\n\
+              --api-token test-token-localcluster \\\n\
+              --data-dir /tmp/edgli-cluster ...\n\
          \n\
-         Once 'localcluster running' appears, run the test:\n\
-            export HOPRD_CLUSTER_SUMMARY_FILE=/tmp/cluster.log\n\
+         Once `hoprd-localcluster status --data-dir /tmp/edgli-cluster` reports\n\
+         \"state\": \"running\", run the test:\n\
+            export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd-localcluster\n\
+            export HOPRD_CLUSTER_DATA_DIR=/tmp/edgli-cluster\n\
          \n\
          ── Run the test ─────────────────────────────────────────────────\n\
             RUST_LOG=info,edgli=debug \
-                cargo test --test edgli_session_e2e -- --ignored --nocapture\n\
+                cargo test --test edgli_session_e2e --release -- --ignored --nocapture\n\
         "
         )
     })?;
@@ -495,58 +494,29 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
     // when no OTLP collector is running and keeps node logs clean.
     cmd.env("HOPRD_USE_OPENTELEMETRY", "false");
     cmd.stdout(std::process::Stdio::piped())
-        .stdin(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit());
 
     let mut child = cmd.spawn()?;
     let stdout = child.stdout.take().expect("stdout must be captured");
-    // Keep the write end of stdin alive so the cluster never sees EOF.
-    // hoprd-localcluster treats stdin EOF as a shutdown signal.
-    let child_stdin = child.stdin.take().expect("stdin pipe must be available");
 
-    // Stream and collect stdout; signal when the cluster prints its ready sentinel.
-    let collected = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
-    let collected_clone = collected.clone();
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
-    let mut ready_tx = Some(ready_tx);
-
+    // Stream stdout to the test logger for observability; readiness is determined
+    // by polling the `status` subcommand rather than scanning for a sentinel line.
     tokio::spawn(async move {
         let mut lines = tokio::io::BufReader::new(stdout).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             tracing::info!(target: "localcluster", "{}", line);
-            {
-                let mut buf = collected_clone.lock().await;
-                buf.push_str(&line);
-                buf.push('\n');
-            }
-            if line.contains("localcluster running")
-                && let Some(tx) = ready_tx.take()
-            {
-                let _ = tx.send(());
-            }
         }
     });
 
-    let startup_result: anyhow::Result<ClusterSummary> = async {
-        tokio::time::timeout(CLUSTER_START_TIMEOUT, ready_rx)
-            .await
-            .map_err(|_| anyhow::anyhow!(
-                "timeout ({CLUSTER_START_TIMEOUT:?}) waiting for 'localcluster running' sentinel"
-            ))?
-            .map_err(|_| anyhow::anyhow!(
-                "localcluster stdout closed before printing 'localcluster running'"
-            ))?;
-
-        // Brief pause so any trailing summary lines in the same stdout flush are
-        // buffered before we snapshot.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        let stdout_text = collected.lock().await.clone();
-        parse_summary(&stdout_text)
-    }
-    .await;
-
-    let summary = match startup_result {
+    let lc_bin_path = std::path::Path::new(&lc_bin);
+    let summary = match wait_status_running(
+        lc_bin_path,
+        &data_dir,
+        CLUSTER_START_TIMEOUT,
+        &mut child,
+    )
+    .await
+    {
         Ok(s) => s,
         Err(err) => {
             #[cfg(unix)]
@@ -572,8 +542,49 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
         child: Some(child),
         summary,
         _tempdir: Some(tempdir),
-        _child_stdin: Some(child_stdin),
     })
+}
+
+/// Poll `hoprd-localcluster status --data-dir <dir>` every 3 s until the cluster
+/// reports `state == "running"`.  Bails on `state == "failed"`, on premature
+/// child exit, and on `timeout`.
+async fn wait_status_running(
+    lc_bin: &std::path::Path,
+    data_dir: &std::path::Path,
+    timeout: Duration,
+    child: &mut tokio::process::Child,
+) -> anyhow::Result<ClusterSummary> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            anyhow::bail!("hoprd-localcluster exited prematurely with status {status:?}");
+        }
+
+        let out = tokio::process::Command::new(lc_bin)
+            .args(["status", "--data-dir", data_dir.to_str().unwrap()])
+            .output()
+            .await
+            .context("failed to run `hoprd-localcluster status`")?;
+        let json = String::from_utf8_lossy(&out.stdout);
+
+        match serde_json::from_str::<ClusterSummaryWire>(&json) {
+            Ok(wire) => match wire.state {
+                ClusterStateWire::Running => return wire_into_summary(wire),
+                ClusterStateWire::Failed => {
+                    let error = wire.error.as_deref().unwrap_or("unknown error").to_owned();
+                    anyhow::bail!("localcluster failed: {error}");
+                }
+                state => tracing::debug!("cluster status: {state:?}"),
+            },
+            Err(_) => tracing::debug!("cluster status: response not yet parseable"),
+        }
+
+        anyhow::ensure!(
+            tokio::time::Instant::now() < deadline,
+            "timeout ({timeout:?}) waiting for cluster to reach 'running' state"
+        );
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
 }
 
 /// Read Rotsee identity + network config from environment variables.
@@ -1249,4 +1260,59 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     // _guard drops here (kills local cluster if managed mode; no-op for Rotsee).
 
     Ok(())
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Unit tests
+// ────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RUNNING_SNAPSHOT: &str = r#"{
+  "state": "running",
+  "pid": 4242,
+  "blokli_url": "http://127.0.0.1:8545",
+  "nodes": [
+    { "id": 0, "state": "channels_open", "address": "0x1111111111111111111111111111111111111111", "api_url": "http://127.0.0.1:13000", "api_token": "test-token-localcluster", "p2p": "127.0.0.1:19000", "node_admin_url": "http://localhost:4677/", "pid": 100 },
+    { "id": 1, "state": "channels_open", "address": "0x2222222222222222222222222222222222222222", "api_url": "http://127.0.0.1:13001", "api_token": "test-token-localcluster", "p2p": "127.0.0.1:19001", "node_admin_url": "http://localhost:4677/", "pid": 101 },
+    { "id": 2, "state": "channels_open", "address": "0x3333333333333333333333333333333333333333", "api_url": "http://127.0.0.1:13002", "api_token": "test-token-localcluster", "p2p": "127.0.0.1:19002", "node_admin_url": "http://localhost:4677/", "pid": 102 }
+  ],
+  "extras": [
+    { "id": 0, "address": "0x4444444444444444444444444444444444444444", "safe_address": "0x5555555555555555555555555555555555555555", "module_address": "0x6666666666666666666666666666666666666666", "keystore_path": "/tmp/edgli-cluster/extra_id_0.id", "password": "local-cluster" }
+  ]
+}"#;
+
+    #[test]
+    fn parse_summary_json_running_snapshot() {
+        let summary = parse_summary_json(RUNNING_SNAPSHOT).unwrap();
+        assert_eq!(summary.blokli_url, "http://127.0.0.1:8545");
+        assert_eq!(summary.nodes.len(), 3);
+        assert_eq!(summary.extras.len(), 1);
+        assert_eq!(
+            summary.nodes[0].address.to_string(),
+            "0x1111111111111111111111111111111111111111"
+        );
+        assert_eq!(
+            summary.extras[0].keystore_path,
+            PathBuf::from("/tmp/edgli-cluster/extra_id_0.id")
+        );
+        assert_eq!(summary.extras[0].password, "local-cluster");
+    }
+
+    #[test]
+    fn parse_summary_json_rejects_null_address() {
+        let json = r#"{
+  "state": "running",
+  "blokli_url": "http://127.0.0.1:8545",
+  "nodes": [
+    { "id": 0, "state": "ready", "address": null, "api_url": "http://127.0.0.1:13000", "api_token": null, "p2p": "127.0.0.1:19000", "node_admin_url": "http://localhost:4677/", "pid": null }
+  ],
+  "extras": [
+    { "id": 0, "address": "0x4444444444444444444444444444444444444444", "safe_address": "0x5555555555555555555555555555555555555555", "module_address": "0x6666666666666666666666666666666666666666", "keystore_path": "/tmp/extra.id", "password": "pw" }
+  ]
+}"#;
+        assert!(parse_summary_json(json).is_err());
+    }
 }

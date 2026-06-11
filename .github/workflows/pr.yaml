@@ -70,22 +70,9 @@ jobs:
           if [[ "$HEAD_REPO" != "$BASE_REPO" ]]; then
             gh pr edit "$PR_NUMBER" --add-label "external"
           fi
-  format:
-    name: Format
-    uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@64cb8ba34ff2e8caa43e366207d0cb1faa8d43d4 # workflow-checks-v1
-    with:
-      source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
-      pre_commit: false
-      deps: false
-      audit: false
-      lint: true
-      lint_command: "nix fmt && git diff --exit-code"
-      disable_sudo: false
-    secrets:
-      cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
   checks:
     name: Check
-    uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@64cb8ba34ff2e8caa43e366207d0cb1faa8d43d4 # workflow-checks-v1
+    uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@d0cffaf9e9209c8eca00e8c74e82ac3f5f3cf7bb # workflow-checks-v2
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
       lint_command: "nix build -L .#checks.x86_64-linux.clippy"
@@ -100,11 +87,11 @@ jobs:
     uses: hoprnet/hopr-workflows/.github/workflows/tests.yaml@69d61153fe24338ea983dd657496f0bc8b4cd819 # workflow-tests-v5
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
-      unit_tests: true
+      enable_unit_tests: true
       unit_test_command: "nix develop -c cargo nextest run --no-tests=pass"
-      unit_coverage: true
+      enable_unit_coverage: true
       unit_coverage_command: "nix run .#coverage-unit"
-      runner: depot-ubuntu-24.04-8
+      runner_unit: depot-ubuntu-24.04-8
       test_timeout: 30
     secrets:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
