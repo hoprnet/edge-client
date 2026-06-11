@@ -27,7 +27,11 @@ use crate::new_blokli_client;
 
 /// The concrete HOPR edge node type used by this client.
 pub type HoprEdgeClient = hopr_lib::Hopr<
-    Arc<hopr_chain_connector::HoprBlockchainSafeConnector<hopr_chain_connector::blokli_client::BlokliClient>>,
+    Arc<
+        hopr_chain_connector::HoprBlockchainSafeConnector<
+            hopr_chain_connector::blokli_client::BlokliClient,
+        >,
+    >,
     SharedChannelGraph,
     HoprNetwork,
     (),
@@ -221,14 +225,16 @@ impl Edgli {
                 .with_graph(move |_ctx| graph)
                 .with_network(move |ctx| {
                     Box::pin(async move {
-                        let peer_discovery_rx = ctx
-                            .take_peer_discovery_rx()
-                            .ok_or(hopr_lib::errors::HoprLibError::BuilderError(
+                        let peer_discovery_rx = ctx.take_peer_discovery_rx().ok_or(
+                            hopr_lib::errors::HoprLibError::BuilderError(
                                 "peer_discovery_rx already taken",
-                            ))?;
-                        let multiaddresses = vec![(&ctx.cfg.host)
-                            .try_into()
-                            .map_err(hopr_lib::errors::HoprLibError::TransportError)?];
+                            ),
+                        )?;
+                        let multiaddresses = vec![
+                            (&ctx.cfg.host)
+                                .try_into()
+                                .map_err(hopr_lib::errors::HoprLibError::TransportError)?,
+                        ];
                         let nb = HoprLibp2pNetworkBuilder::new(
                             peer_discovery_rx
                                 .map(|(peer_id, addrs)| PeerDiscovery::Announce(peer_id, addrs)),
