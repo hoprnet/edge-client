@@ -159,6 +159,17 @@
               check-merge-conflicts.enable = true;
               check-added-large-files.enable = true;
               commitizen.enable = true;
+              renovate-config-validator = {
+                enable = true;
+                name = "Renovate config validator";
+                entry = "${pkgs.writeShellScript "validate-renovate" ''
+                  if [ -n "''${NIX_BUILD_TOP:-}" ]; then exit 0; fi
+                  ${pkgs.nodejs}/bin/npx --yes --package renovate -- renovate-config-validator "$@"
+                ''}";
+                files = "renovate\\.json$";
+                language = "system";
+                pass_filenames = true;
+              };
             };
             tools = pkgs;
             excludes = [
