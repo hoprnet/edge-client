@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "3.2.4"
+version = "3.3.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -66,20 +66,20 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "8c04d91a3310592b1bf36e48c531c4f31c67f38d", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "b128645cd89181b27d8a133370cf8208d5bdc12e", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "8c04d91a3310592b1bf36e48c531c4f31c67f38d", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "b128645cd89181b27d8a133370cf8208d5bdc12e", features = [
   "runtime-tokio",
 ] }
-hopr-reference = { git = "https://github.com/hoprnet/hoprnet", rev = "8c04d91a3310592b1bf36e48c531c4f31c67f38d", features = [
-  "runtime-tokio",
-] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "8c04d91a3310592b1bf36e48c531c4f31c67f38d" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "8c04d91a3310592b1bf36e48c531c4f31c67f38d", features = [
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "b128645cd89181b27d8a133370cf8208d5bdc12e" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "b128645cd89181b27d8a133370cf8208d5bdc12e", features = [
   "strategy-channel-lifecycle",
 ] }
+hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "b128645cd89181b27d8a133370cf8208d5bdc12e" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "b128645cd89181b27d8a133370cf8208d5bdc12e" }
+hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "b128645cd89181b27d8a133370cf8208d5bdc12e" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -88,7 +88,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "8c04d91a3310592b1bf36e48c531c4f31c67f38d", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "b128645cd89181b27d8a133370cf8208d5bdc12e", features = [
   "runtime-tokio",
   "testing",
 ] }
