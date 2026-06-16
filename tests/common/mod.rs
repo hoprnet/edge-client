@@ -29,7 +29,7 @@ use edgli::{
     traits::EdgeNodeApi,
 };
 use hopr_chain_connector::BlockchainConnectorConfig;
-use rand::RngCore as _;
+use rand::RngExt as _;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
@@ -1190,7 +1190,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     // packet-tag caches (which persist across Edgli reconnections to the same
     // hoprd instance).
     let mut payload = vec![0u8; PAYLOAD_SIZE];
-    rand::thread_rng().fill_bytes(&mut payload);
+    rand::rng().fill(&mut payload[..]);
 
     // ── 10. 0-hop session — direct path, no relay ────────────────────────────
     // NoRateControl disables the exit node's egress rate limiter (default: 10
