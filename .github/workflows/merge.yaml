@@ -25,6 +25,7 @@ jobs:
       id-token: write
     with:
       source_branch: ${{ github.event.pull_request.base.ref }}
+      version_type: pr
       architecture: ${{ matrix.architecture }}
       build_command: ${{ matrix.build_command }}
       runner: ${{ matrix.runner }}
