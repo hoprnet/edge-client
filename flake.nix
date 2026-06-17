@@ -170,6 +170,16 @@
                 language = "system";
                 pass_filenames = true;
               };
+              actionlint.enable = true;
+              pinact = {
+                enable = true;
+                name = "pinact";
+                description = "Check GitHub Action refs are SHA-pinned and resolvable";
+                entry = "${pkgs.pinact}/bin/pinact run --check";
+                files = "\\.ya?ml$";
+                language = "system";
+                pass_filenames = false;
+              };
             };
             tools = pkgs;
             excludes = [
@@ -285,6 +295,11 @@
             checks = self.checks.${system};
             # Additional dev-shell environment variables can be set directly
             # MY_CUSTOM_DEVELOPMENT_VAR = "something else";
+
+            shellHook = ''
+              ${pre-commit-check.shellHook}
+              export GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
+            '';
 
             # Extra inputs can be added here; cargo and rustc are provided by default.
             packages = [
