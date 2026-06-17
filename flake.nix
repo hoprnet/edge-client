@@ -297,12 +297,13 @@
             # MY_CUSTOM_DEVELOPMENT_VAR = "something else";
 
             shellHook = ''
-              ${pre-commit-check.shellHook}
               export GITHUB_TOKEN="''${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}"
+              ${pre-commit-check.shellHook}
             '';
 
             # Extra inputs can be added here; cargo and rustc are provided by default.
             packages = [
+              pkgs.gh
               pkgs.cargo-machete
               pkgs.cargo-shear
               pkgs.rust-analyzer
