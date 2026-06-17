@@ -25,13 +25,11 @@ jobs:
           - architecture: x86_64-linux
             runner: depot-ubuntu-24.04-8
             build_command: nix build -L .#lib-edgli-x86_64-linux
-    uses: hoprnet/hopr-workflows/.github/workflows/build-library.yaml@19d69bd81be66220932b18f1a7a655b422180b4e # build-library-v3
+    uses: hoprnet/hopr-workflows/.github/workflows/build-library.yaml@5ef5e50e028143b53da6545c1ca92477b70f42fc # build-library-v1
     permissions:
       contents: read
-      id-token: write
     with:
       source_branch: ${{ github.ref_name }}
-      version_type: release
       architecture: ${{ matrix.architecture }}
       build_command: ${{ matrix.build_command }}
       runner: ${{ matrix.runner }}

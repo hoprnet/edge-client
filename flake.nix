@@ -305,7 +305,6 @@
             packages = [
               pkgs.gh
               pkgs.cargo-machete
-              pkgs.cargo-release
               pkgs.cargo-shear
               pkgs.rust-analyzer
               pkgs.cargo-flamegraph
@@ -334,7 +333,7 @@
             };
 
           devShells.ci = pkgs.mkShell {
-            packages = [ pkgs.cargo-release pkgs.zizmor ];
+            packages = [ pkgs.zizmor ];
           };
 
           apps.coverage-unit = {
