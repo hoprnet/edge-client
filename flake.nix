@@ -333,7 +333,7 @@
             };
 
           devShells.ci = pkgs.mkShell {
-            packages = [ pkgs.zizmor ];
+            packages = [ pkgs.cargo-release pkgs.zizmor ];
           };
 
           apps.coverage-unit = {
