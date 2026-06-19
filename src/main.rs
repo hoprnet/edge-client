@@ -1,3 +1,4 @@
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use async_signal::{Signal, Signals};
@@ -16,6 +17,20 @@ use {
 };
 
 use edgli::errors::EdgliError;
+
+fn parse_blokli_dns_override(value: &str) -> Result<(IpAddr, Option<u16>), String> {
+    if let Ok(ip) = value.parse::<IpAddr>() {
+        return Ok((ip, None));
+    }
+
+    if let Ok(addr) = value.parse::<SocketAddr>() {
+        return Ok((addr.ip(), Some(addr.port())));
+    }
+
+    Err(format!(
+        "invalid DNS override '{value}', expected <IP_ADDRESS> or <IP_ADDRESS>:<PORT>"
+    ))
+}
 
 // Avoid musl's default allocator due to degraded performance
 // https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance
@@ -64,6 +79,16 @@ pub struct CliArgs {
         required = false
     )]
     pub blokli_url: Option<String>,
+
+    /// Blokli DNS override
+    #[arg(
+        long,
+        env = "HOPR_EDGE_BLOKLI_DNS_OVERRIDE",
+        value_parser = parse_blokli_dns_override,
+        help = "The DNS override for the blokli provider, with format <IP_ADDRESS>[:<PORT>]",
+        required = false
+    )]
+    pub blokli_dns_override: Option<(IpAddr, Option<u16>)>,
 }
 
 fn init_logger() -> anyhow::Result<()> {
@@ -201,7 +226,7 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    let edgli = edgli::Edgli::new(cfg, hopr_keys, args.blokli_url, None, |s| {
+    let edgli = edgli::Edgli::new(cfg, hopr_keys, args.blokli_url, args.blokli_dns_override, None, |s| {
         info!(?s, "Initialization stage");
     })
     .await?;
@@ -226,4 +251,25 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_blokli_dns_override;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn parses_dns_override_without_port() {
+        let parsed = parse_blokli_dns_override("127.0.0.1").unwrap();
+        assert_eq!(parsed, (IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), None));
+    }
+
+    #[test]
+    fn parses_dns_override_with_port() {
+        let parsed = parse_blokli_dns_override("10.1.2.1:3002").unwrap();
+        assert_eq!(
+            parsed,
+            (IpAddr::V4(Ipv4Addr::new(10, 1, 2, 1)), Some(3002))
+        );
+    }
 }

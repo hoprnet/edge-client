@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use hopr_chain_connector::{
-    BlockchainConnectorConfig, HoprBlockchainBasicConnector,
+    BlockchainConnectorConfig, HoprBlockchainBasicConnector, HoprBlokliClientConfig,
     blokli_client::{
-        BlokliClient, BlokliClientConfig, BlokliQueryClient, BlokliSubscriptionClient,
-        BlokliTransactionClient,
+        BlokliClient, BlokliQueryClient, BlokliSubscriptionClient, BlokliTransactionClient,
     },
-    create_trustful_safeless_hopr_blokli_connector,
+    create_blokli_client, create_trustful_safeless_hopr_blokli_connector,
 };
 use hopr_lib::{
     api::{
@@ -27,22 +26,6 @@ pub use hopr_lib::builder::ChainKeypair;
 
 lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.gnosisvpn.io".parse().unwrap();
-}
-
-pub(crate) fn new_blokli_client(url: Option<Url>) -> BlokliClient {
-    BlokliClient::new(
-        url.unwrap_or(DEFAULT_BLOKLI_URL.clone()),
-        BlokliClientConfig {
-            timeout: std::time::Duration::from_secs(3),
-            // This is actually maximum delay; starts at 2 s with backoff until 30 s.
-            stream_reconnect_timeout: std::time::Duration::from_secs(30),
-            // bloklid-anvil :latest does not yet advertise `indexes_safe_events`
-            // in its feature flags even though it indexes them. Skip the check
-            // so local-cluster testing works without pinning an unreleased image.
-            auto_compatibility_check: false,
-            ..Default::default()
-        },
-    )
 }
 
 /// Constructs a fully-wired [`IncentiveOperations`] handle backed by a Blokli client.
@@ -117,12 +100,10 @@ impl SafelessInteractor<BlokliClient> {
         chain_key: &ChainKeypair,
         connector_config: Option<BlockchainConnectorConfig>,
     ) -> anyhow::Result<Self> {
-        Self::new_with_client(
-            new_blokli_client(blokli_provider),
-            chain_key,
-            connector_config,
-        )
-        .await
+        let config = HoprBlokliClientConfig::new(
+            blokli_provider.unwrap_or_else(|| DEFAULT_BLOKLI_URL.clone()),
+        );
+        Self::new_with_client(create_blokli_client(config), chain_key, connector_config).await
     }
 }
 
@@ -288,19 +269,6 @@ mod tests {
             DEFAULT_BLOKLI_URL.as_str(),
             "https://blokli.jura.gnosisvpn.io/"
         );
-    }
-
-    #[test]
-    fn new_blokli_client_uses_default_url_when_none() {
-        let client = new_blokli_client(None);
-        let _ = client;
-    }
-
-    #[test]
-    fn new_blokli_client_accepts_custom_url() {
-        let url: Url = "https://custom.blokli.example.com".parse().unwrap();
-        let client = new_blokli_client(Some(url));
-        let _ = client;
     }
 
     #[test]
