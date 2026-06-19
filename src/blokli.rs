@@ -28,6 +28,10 @@ lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.gnosisvpn.io".parse().unwrap();
 }
 
+fn build_safeless_blokli_client_config(blokli_provider: Option<Url>) -> HoprBlokliClientConfig {
+    HoprBlokliClientConfig::new(blokli_provider.unwrap_or_else(|| DEFAULT_BLOKLI_URL.clone()))
+}
+
 /// Constructs a fully-wired [`IncentiveOperations`] handle backed by a Blokli client.
 ///
 /// This is the only public entry point for obtaining an `IncentiveOperations` impl —
@@ -100,9 +104,7 @@ impl SafelessInteractor<BlokliClient> {
         chain_key: &ChainKeypair,
         connector_config: Option<BlockchainConnectorConfig>,
     ) -> anyhow::Result<Self> {
-        let config = HoprBlokliClientConfig::new(
-            blokli_provider.unwrap_or_else(|| DEFAULT_BLOKLI_URL.clone()),
-        );
+        let config = build_safeless_blokli_client_config(blokli_provider);
         Self::new_with_client(create_blokli_client(config), chain_key, connector_config).await
     }
 }
@@ -269,6 +271,19 @@ mod tests {
             DEFAULT_BLOKLI_URL.as_str(),
             "https://blokli.jura.gnosisvpn.io/"
         );
+    }
+
+    #[test]
+    fn build_safeless_blokli_client_config_uses_default_url() {
+        let config = build_safeless_blokli_client_config(None);
+        assert_eq!(config.url, *DEFAULT_BLOKLI_URL);
+    }
+
+    #[test]
+    fn build_safeless_blokli_client_config_uses_custom_url() {
+        let custom_url: Url = "https://custom.blokli.example.com".parse().unwrap();
+        let config = build_safeless_blokli_client_config(Some(custom_url.clone()));
+        assert_eq!(config.url, custom_url);
     }
 
     #[test]

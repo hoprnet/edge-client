@@ -32,6 +32,24 @@ use hopr_chain_connector::HoprBlokliClientConfig;
 
 use crate::errors::EdgliError;
 
+#[cfg(feature = "blokli")]
+fn build_blokli_client_config(
+    blokli_url: Option<&str>,
+    blokli_dns_override: Option<(IpAddr, Option<u16>)>,
+) -> Result<HoprBlokliClientConfig, EdgliError> {
+    let url = match blokli_url {
+        Some(url) => url
+            .parse()
+            .map_err(|e| EdgliError::ConfigError(format!("invalid Blokli URL '{url}': {e}")))?,
+        None => DEFAULT_BLOKLI_URL.clone(),
+    };
+
+    Ok(HoprBlokliClientConfig {
+        url,
+        dns_override: blokli_dns_override,
+    })
+}
+
 /// The concrete HOPR edge node type used by this client.
 pub type HoprEdgeClient = hopr_lib::Hopr<
     Arc<
@@ -200,13 +218,10 @@ impl Edgli {
             let mut connector = create_trustful_hopr_blokli_connector(
                 chain_key,
                 blokli_config,
-                create_blokli_client(HoprBlokliClientConfig {
-                    url: blokli_url
-                        .as_ref()
-                        .and_then(|u| u.parse().ok())
-                        .unwrap_or_else(|| DEFAULT_BLOKLI_URL.clone()),
-                    dns_override: blokli_dns_override,
-                }),
+                create_blokli_client(build_blokli_client_config(
+                    blokli_url.as_deref(),
+                    blokli_dns_override,
+                )?),
                 cfg.safe_module.module_address,
             )
             .await?;
@@ -448,6 +463,7 @@ impl Edgli {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
     fn init_state_as_ref_matches_to_string() {
@@ -515,5 +531,33 @@ mod tests {
                 | EdgliInitState::Ready => {}
             }
         }
+    }
+
+    #[cfg(feature = "blokli")]
+    #[test]
+    fn build_blokli_client_config_uses_default_url() {
+        let config = build_blokli_client_config(None, None).unwrap();
+        assert_eq!(config.url, *DEFAULT_BLOKLI_URL);
+        assert_eq!(config.dns_override, None);
+    }
+
+    #[cfg(feature = "blokli")]
+    #[test]
+    fn build_blokli_client_config_keeps_dns_override() {
+        let dns_override = Some((IpAddr::V4(Ipv4Addr::new(10, 1, 2, 1)), Some(3002)));
+        let config =
+            build_blokli_client_config(Some("https://blokli.example.com"), dns_override).unwrap();
+        assert_eq!(config.url.as_str(), "https://blokli.example.com/");
+        assert_eq!(config.dns_override, dns_override);
+    }
+
+    #[cfg(feature = "blokli")]
+    #[test]
+    fn build_blokli_client_config_rejects_invalid_url() {
+        let error = build_blokli_client_config(Some("not a url"), None).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "configuration error: 'invalid Blokli URL 'not a url': relative URL without a base'"
+        );
     }
 }
