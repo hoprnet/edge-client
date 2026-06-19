@@ -226,9 +226,16 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    let edgli = edgli::Edgli::new(cfg, hopr_keys, args.blokli_url, args.blokli_dns_override, None, |s| {
-        info!(?s, "Initialization stage");
-    })
+    let edgli = edgli::Edgli::new(
+        cfg,
+        hopr_keys,
+        args.blokli_url,
+        args.blokli_dns_override,
+        None,
+        |s| {
+            info!(?s, "Initialization stage");
+        },
+    )
     .await?;
 
     let mut signals =
@@ -267,9 +274,6 @@ mod tests {
     #[test]
     fn parses_dns_override_with_port() {
         let parsed = parse_blokli_dns_override("10.1.2.1:3002").unwrap();
-        assert_eq!(
-            parsed,
-            (IpAddr::V4(Ipv4Addr::new(10, 1, 2, 1)), Some(3002))
-        );
+        assert_eq!(parsed, (IpAddr::V4(Ipv4Addr::new(10, 1, 2, 1)), Some(3002)));
     }
 }

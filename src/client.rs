@@ -26,9 +26,9 @@ use strum::{AsRefStr, Display, EnumString};
 use tracing::info;
 
 #[cfg(feature = "blokli")]
-use hopr_chain_connector::HoprBlokliClientConfig;
-#[cfg(feature = "blokli")]
 use crate::DEFAULT_BLOKLI_URL;
+#[cfg(feature = "blokli")]
+use hopr_chain_connector::HoprBlokliClientConfig;
 
 use crate::errors::EdgliError;
 
@@ -201,7 +201,10 @@ impl Edgli {
                 chain_key,
                 blokli_config,
                 create_blokli_client(HoprBlokliClientConfig {
-                    url: blokli_url.as_ref().and_then(|u| u.parse().ok()).unwrap_or_else(|| DEFAULT_BLOKLI_URL.clone()),
+                    url: blokli_url
+                        .as_ref()
+                        .and_then(|u| u.parse().ok())
+                        .unwrap_or_else(|| DEFAULT_BLOKLI_URL.clone()),
                     dns_override: blokli_dns_override,
                 }),
                 cfg.safe_module.module_address,
