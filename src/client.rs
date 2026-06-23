@@ -196,7 +196,6 @@ impl Edgli {
         let probe_cfg = FullNetworkProberConfig {
             interval: std::time::Duration::from_secs(3),
             shuffle_ttl: std::time::Duration::from_secs(3),
-            probe_connected_only: false,
             ..Default::default()
         };
         probe_cfg.validate_against_probe_timeout(cfg.protocol.probe.timeout)?;
