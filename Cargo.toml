@@ -10,7 +10,7 @@ license = "GPL-3.0-only"
 
 [features]
 default = ["runtime-tokio", "blokli"]
-runtime-tokio = ["dep:tokio", "hopr-lib/runtime-tokio", "hopr-transport-p2p/runtime-tokio"]
+runtime-tokio = ["dep:tokio", "hopr-lib/runtime-tokio", "hopr-transport-p2p/runtime-tokio", "hopr-transport-p2p/transport-quic"]
 # Enable hopr-lib telemetry (Prometheus metrics) and OpenTelemetry OTLP exporter
 telemetry = [
   "hopr-lib/telemetry",
