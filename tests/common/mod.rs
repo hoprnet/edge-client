@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use std::{path::PathBuf, time::Duration};
 
 use edgli::{
-    Edgli, EdgliInitState,
+    Edgli, EdgliInitState, latency_path_planner_config,
     hopr_lib::{
         HopRouting, HoprKeys, HoprSessionClientConfig, IdentityRetrievalModes,
         api::{
@@ -969,7 +969,6 @@ pub fn loopback_target() -> SessionTarget {
 
 pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibConfig {
     use edgli::hopr_lib::config::{HoprProtocolConfig, MixerConfig, TransportConfig};
-    use edgli::hopr_lib::exports::transport::path::PathPlannerConfig;
     HoprLibConfig {
         host: HostConfig {
             address: HostType::IPv4("0.0.0.0".to_string()),
@@ -980,10 +979,6 @@ pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibCon
             transport: TransportConfig {
                 announce_local_addresses: tuning.announce_local,
                 prefer_local_addresses: tuning.prefer_local_addresses,
-            },
-            path_planner: PathPlannerConfig {
-                min_ack_rate: tuning.min_ack_rate,
-                ..Default::default()
             },
             mixer: MixerConfig {
                 min_delay: std::time::Duration::ZERO,
@@ -1116,6 +1111,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         hopr_keys,
         Some(summary.blokli_url.clone()),
         Some(tuning.connector_cfg),
+        latency_path_planner_config(tuning.min_ack_rate),
         |s: EdgliInitState| tracing::info!(?s, "edgli init"),
     )
     .await?;
