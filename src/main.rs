@@ -187,6 +187,7 @@ async fn main() -> anyhow::Result<()> {
     };
     cfg.protocol.mixer.min_delay = read_ms("HOPR_INTERNAL_MIXER_MINIMUM_DELAY_IN_MS", 0);
     cfg.protocol.mixer.delay_range = read_ms("HOPR_INTERNAL_MIXER_DELAY_RANGE_IN_MS", 1);
+    cfg.protocol.path_planner = edgli::latency_path_planner_config(0.1);
 
     // Find or create an identity
     let hopr_keys: HoprKeys = IdentityRetrievalModes::FromFile {
@@ -201,7 +202,7 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    let edgli = edgli::Edgli::new(cfg, hopr_keys, args.blokli_url, None, edgli::latency_path_planner_config(0.1), |s| {
+    let edgli = edgli::Edgli::new(cfg, hopr_keys, args.blokli_url, None, |s| {
         info!(?s, "Initialization stage");
     })
     .await?;

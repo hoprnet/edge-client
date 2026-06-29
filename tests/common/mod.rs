@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use std::{path::PathBuf, time::Duration};
 
 use edgli::{
-    Edgli, EdgliInitState, latency_path_planner_config,
+    Edgli, EdgliInitState, PathPlannerConfig,
     hopr_lib::{
         HopRouting, HoprKeys, HoprSessionClientConfig, IdentityRetrievalModes,
         api::{
@@ -25,6 +25,7 @@ use edgli::{
         exports::transport::SessionCapability,
         exports::transport::{HoprSession, SessionTarget, SurbBalancerConfig},
     },
+    latency_path_planner_config,
     strategy::{EdgeStrategyKind, EligibilityConfig, IncentiveConfiguration, default_strategy_cfg},
     traits::EdgeNodeApi,
 };
@@ -117,6 +118,9 @@ pub struct EdgliTuning {
     /// 0.0 falls back to pure channel-topology routing (channels exist in the
     /// graph from SSE events) without requiring any probe success.
     pub min_ack_rate: f64,
+    /// Path-planner / selector configuration passed to the HOPR protocol.
+    /// Set on `cfg.protocol.path_planner` before constructing the Edgli instance.
+    pub path_planner: PathPlannerConfig,
 }
 
 impl EdgliTuning {
@@ -137,6 +141,7 @@ impl EdgliTuning {
             exit_node: None,
             pump_timeout: Duration::from_secs(120),
             min_ack_rate: 0.1, // local cluster probes succeed — use default quality gate
+            path_planner: latency_path_planner_config(0.1),
         }
     }
 
@@ -165,6 +170,7 @@ impl EdgliTuning {
             // selector to route through existing payment channels (populated via
             // SSE events) without requiring any probe history.
             min_ack_rate: 0.0,
+            path_planner: latency_path_planner_config(0.0),
         }
     }
 }
@@ -985,6 +991,7 @@ pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibCon
                 delay_range: std::time::Duration::from_millis(1),
                 ..Default::default()
             },
+            path_planner: tuning.path_planner,
             ..Default::default()
         },
         safe_module: SafeModule {
@@ -1111,7 +1118,6 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         hopr_keys,
         Some(summary.blokli_url.clone()),
         Some(tuning.connector_cfg),
-        latency_path_planner_config(tuning.min_ack_rate),
         |s: EdgliInitState| tracing::info!(?s, "edgli init"),
     )
     .await?;

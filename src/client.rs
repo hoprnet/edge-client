@@ -25,8 +25,6 @@ use tracing::info;
 use crate::errors::EdgliError;
 use crate::new_blokli_client;
 
-pub use hopr_lib::exports::transport::path::PathPlannerConfig;
-
 /// The concrete HOPR edge node type used by this client.
 pub type HoprEdgeClient = hopr_lib::Hopr<
     Arc<
@@ -97,7 +95,6 @@ pub async fn run_hopr_edge_node_with<F, T>(
     hopr_keys: HoprKeys,
     blokli_url: Option<String>,
     blokli_config: Option<BlockchainConnectorConfig>,
-    path_planner: PathPlannerConfig,
     f: F,
     visitor: impl Fn(EdgliInitState) + Send + 'static,
 ) -> anyhow::Result<AbortHandle>
@@ -105,7 +102,7 @@ where
     F: Fn(Arc<HoprEdgeClient>) -> T + Send + 'static,
     T: std::future::Future<Output = ()> + Send + 'static,
 {
-    let edgli = Edgli::new(cfg, hopr_keys, blokli_url, blokli_config, path_planner, visitor).await?;
+    let edgli = Edgli::new(cfg, hopr_keys, blokli_url, blokli_config, visitor).await?;
     let hopr = edgli.as_hopr();
     // Keep `edgli` alive inside the spawned task so the node and all its
     // background processes remain active until `f` completes (or the abort fires).
@@ -142,20 +139,18 @@ impl Edgli {
     /// Constructs and starts an edge HOPR node.
     ///
     /// # Arguments
-    /// * `cfg` – full HOPR node configuration
+    /// * `cfg` – full HOPR node configuration; set `cfg.protocol.path_planner`
+    ///   before calling to control the routing strategy.  Use
+    ///   [`crate::latency_path_planner_config`] to obtain a latency-optimised default.
     /// * `hopr_keys` – chain and packet keypairs
     /// * `blokli_url` – optional Blokli endpoint URL; defaults to the production endpoint
     /// * `blokli_connector_config` – optional connector config overrides
-    /// * `path_planner` – path-planner / selector configuration; overrides
-    ///   `cfg.protocol.path_planner`.  Use [`crate::latency_path_planner_config`] to
-    ///   obtain a latency-optimised default.
     /// * `visitor` – called at each [`EdgliInitState`] transition for progress reporting
     pub async fn new(
-        mut cfg: HoprLibConfig,
+        cfg: HoprLibConfig,
         hopr_keys: HoprKeys,
         blokli_url: Option<String>,
         blokli_connector_config: Option<BlockchainConnectorConfig>,
-        path_planner: PathPlannerConfig,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
         visitor(EdgliInitState::ValidatingConfig);
@@ -170,10 +165,6 @@ impl Edgli {
                 ))?;
             }
         }
-
-        // Apply the caller-supplied path-planner / selector configuration,
-        // overriding whatever was embedded in `cfg.protocol.path_planner`.
-        cfg.protocol.path_planner = path_planner;
 
         let chain_key: &ChainKeypair = &hopr_keys.chain_key;
         let packet_key: &OffchainKeypair = &hopr_keys.packet_key;
