@@ -93,10 +93,11 @@ pub struct EdgliTuning {
     pub announce_local: bool,
     /// Channel-lifecycle strategy tick interval.
     pub strategy_tick: Duration,
-    /// Minimum peer quality score for channel eligibility.
-    pub min_peer_quality: f64,
-    /// Whether to require the peer has been observed since Edgli started.
-    pub require_observed: bool,
+    /// Eligibility selector for the channel-opening strategy.  Controls which
+    /// peers qualify for an outgoing payment channel (quality threshold,
+    /// observation requirement, optional allowlist).  Passed directly into
+    /// [`EligibilityConfig`] when the strategy reactor is started.
+    pub eligibility: EligibilityConfig,
     /// How long to wait for the strategy to open at least one outgoing channel.
     /// Rotsee needs more headroom: 60 s tick + Gnosis Chain confirmation latency.
     pub channel_open_timeout: Duration,
@@ -135,8 +136,11 @@ impl EdgliTuning {
             prefer_local_addresses: true,
             announce_local: true,
             strategy_tick: Duration::from_secs(10),
-            min_peer_quality: 0.0,
-            require_observed: false,
+            eligibility: EligibilityConfig {
+                min_peer_quality_score: 0.0,
+                require_observed_since_start: false,
+                ..Default::default()
+            },
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
             pump_timeout: Duration::from_secs(120),
@@ -154,8 +158,11 @@ impl EdgliTuning {
             // Rotsee peers have ~150-200 ms RTT; latency_score caps at 0.3 for
             // that range, so even a perfect probe rate yields at most 0.30.
             // Setting 0.1 accepts any peer that has had at least one successful probe.
-            min_peer_quality: 0.1,
-            require_observed: true,
+            eligibility: EligibilityConfig {
+                min_peer_quality_score: 0.1,
+                require_observed_since_start: true,
+                ..Default::default()
+            },
             // 30 s tick + Gnosis Chain confirmation + on-chain sync latency.
             // Allow several ticks before giving up.
             channel_open_timeout: Duration::from_secs(300),
@@ -1147,11 +1154,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
 
     for kind in &mut strat_cfg.strategies {
         let EdgeStrategyKind::ChannelLifecycle(lc) = kind;
-        lc.eligibility = EligibilityConfig {
-            min_peer_quality_score: tuning.min_peer_quality,
-            require_observed_since_start: tuning.require_observed,
-            ..Default::default()
-        };
+        lc.eligibility = tuning.eligibility.clone();
         lc.tick_interval = tuning.strategy_tick;
     }
 
