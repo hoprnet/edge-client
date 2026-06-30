@@ -113,6 +113,7 @@ pub struct OtlpConfig {
     pub service_name: String,
     pub transport: OtlpTransport,
     pub signals: flagset::FlagSet<OtlpSignal>,
+    invalid_signals: Vec<String>,
 }
 
 #[cfg(feature = "telemetry")]
@@ -126,6 +127,7 @@ impl OtlpConfig {
             .filter(|endpoint| !endpoint.is_empty());
         let transport = OtlpTransport::from_endpoint(otlp_endpoint.as_deref());
         let mut signals = flagset::FlagSet::empty();
+        let mut invalid_signals = Vec::new();
         let raw_signals = std::env::var(EDGE_OTEL_SIGNALS_ENV).ok();
         let enabled = otlp_endpoint.is_some();
 
@@ -137,10 +139,7 @@ impl OtlpConfig {
                 }
                 match OtlpSignal::from_str(signal) {
                     Ok(parsed) => signals |= parsed,
-                    Err(_) => tracing::warn!(
-                        otel_signal = %signal,
-                        "Invalid OpenTelemetry signal specified in edge-client OTEL signals environment variable"
-                    ),
+                    Err(_) => invalid_signals.push(signal.to_string()),
                 }
             }
         }
@@ -156,6 +155,7 @@ impl OtlpConfig {
             service_name,
             transport,
             signals,
+            invalid_signals,
         }
     }
 
@@ -222,7 +222,6 @@ where
             record.add_attribute("line", i64::from(line));
         }
 
-        record.add_attribute("target", metadata.target().to_string());
         if !visitor.attributes.is_empty() {
             record.add_attributes(visitor.attributes);
         }
@@ -264,18 +263,22 @@ impl TracingEventVisitor {
 #[cfg(feature = "telemetry")]
 impl Visit for TracingEventVisitor {
     fn record_i64(&mut self, field: &Field, value: i64) {
-        if let Ok(value) = u64::try_from(value) {
-            self.maybe_record_unix_timestamp_millis(field, value);
+        if let Ok(u) = u64::try_from(value) {
+            self.maybe_record_unix_timestamp_millis(field, u);
         }
-        self.record_body_or_attribute(field, value);
+        if field.name() != "timestamp" {
+            self.record_body_or_attribute(field, value);
+        }
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
         self.maybe_record_unix_timestamp_millis(field, value);
-        if value <= i64::MAX as u64 {
-            self.record_body_or_attribute(field, value as i64);
-        } else {
-            self.record_body_or_attribute(field, value.to_string());
+        if field.name() != "timestamp" {
+            if value <= i64::MAX as u64 {
+                self.record_body_or_attribute(field, value as i64);
+            } else {
+                self.record_body_or_attribute(field, value.to_string());
+            }
         }
     }
 
@@ -414,7 +417,7 @@ fn init_logging_with_identity(
                         .build()?,
                     OtlpTransport::Http => opentelemetry_otlp::LogExporter::builder()
                         .with_http()
-                        .with_protocol(opentelemetry_otlp::Protocol::HttpJson)
+                        .with_protocol(opentelemetry_otlp::Protocol::HttpBinary)
                         .with_timeout(Duration::from_secs(5))
                         .build()?,
                 };
@@ -465,6 +468,13 @@ fn init_logging_with_identity(
             tracing::subscriber::set_global_default(registry)?;
         }
 
+        for bad in &config.invalid_signals {
+            tracing::warn!(
+                otel_signal = %bad,
+                "Invalid OpenTelemetry signal in EDGE_OTEL_SIGNALS; ignored"
+            );
+        }
+
         Ok(telemetry_handles)
     }
     #[cfg(not(feature = "telemetry"))]
@@ -474,6 +484,12 @@ fn init_logging_with_identity(
         tracing::subscriber::set_global_default(registry)?;
         Ok(TelemetryHandles::default())
     }
+}
+
+pub fn init_base_logging() -> anyhow::Result<TelemetryHandles> {
+    let registry = crate::telemetry_common::build_base_subscriber()?;
+    tracing::subscriber::set_global_default(registry)?;
+    Ok(TelemetryHandles::default())
 }
 
 pub fn init_metrics(
@@ -561,14 +577,208 @@ pub fn init_telemetry(hopr_keys: &HoprKeys) -> anyhow::Result<TelemetryHandles> 
 
 pub fn init_telemetry_with_extra_labels(
     hopr_keys: &HoprKeys,
-    extra_labels: Vec<(&str, &str)>,
+    extra_labels: Vec<(String, String)>,
 ) -> anyhow::Result<TelemetryHandles> {
-    let extra_labels = extra_labels
-        .into_iter()
-        .map(|(key, value)| (key.to_owned(), value.to_owned()))
-        .collect::<Vec<_>>();
     let node_identity = TelemetryIdentity::from_hopr_keys_with_labels(hopr_keys, extra_labels);
     let mut telemetry_handles = init_logging_with_identity(node_identity.clone())?;
     init_metrics_with_identity(&mut telemetry_handles, node_identity)?;
     Ok(telemetry_handles)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_handles_drop_no_panic() {
+        drop(TelemetryHandles::default());
+    }
+
+    #[cfg(feature = "telemetry")]
+    mod telemetry_tests {
+        use super::super::*;
+        use std::sync::{Arc, Mutex, OnceLock};
+
+        #[derive(Clone)]
+        struct EventCapture(Arc<Mutex<Option<TracingEventVisitor>>>);
+
+        fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+            static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            ENV_LOCK
+                .get_or_init(|| Mutex::new(()))
+                .lock()
+                .expect("env lock poisoned")
+        }
+
+        fn set_env_var(key: &str, value: &str) {
+            unsafe {
+                std::env::set_var(key, value);
+            }
+        }
+
+        fn remove_env_var(key: &str) {
+            unsafe {
+                std::env::remove_var(key);
+            }
+        }
+
+        impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for EventCapture {
+            fn on_event(
+                &self,
+                event: &tracing::Event<'_>,
+                _ctx: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                let mut visitor = TracingEventVisitor::default();
+                event.record(&mut visitor);
+                *self.0.lock().unwrap() = Some(visitor);
+            }
+        }
+
+        fn capture_visitor<F: FnOnce()>(f: F) -> TracingEventVisitor {
+            let captured = Arc::new(Mutex::new(None::<TracingEventVisitor>));
+            let layer = EventCapture(captured.clone());
+            let sub = tracing_subscriber::Registry::default().with(layer);
+            tracing::subscriber::with_default(sub, f);
+            captured.lock().unwrap().take().unwrap_or_default()
+        }
+
+        #[test]
+        fn transport_grpc_scheme() {
+            assert_eq!(
+                OtlpTransport::from_endpoint(Some("grpc://localhost:4317")),
+                OtlpTransport::Grpc
+            );
+        }
+
+        #[test]
+        fn transport_http_scheme() {
+            assert_eq!(
+                OtlpTransport::from_endpoint(Some("http://localhost:4318")),
+                OtlpTransport::Http
+            );
+        }
+
+        #[test]
+        fn transport_https_scheme() {
+            assert_eq!(
+                OtlpTransport::from_endpoint(Some("https://otel.example.com")),
+                OtlpTransport::Http
+            );
+        }
+
+        #[test]
+        fn transport_none_defaults_grpc() {
+            assert_eq!(OtlpTransport::from_endpoint(None), OtlpTransport::Grpc);
+        }
+
+        #[test]
+        fn transport_empty_defaults_grpc() {
+            assert_eq!(OtlpTransport::from_endpoint(Some("")), OtlpTransport::Grpc);
+        }
+
+        #[test]
+        fn config_disabled_when_no_endpoint() {
+            let _guard = env_lock();
+            remove_env_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            let config = OtlpConfig::from_env();
+            assert!(!config.enabled);
+        }
+
+        #[test]
+        fn config_enabled_with_endpoint() {
+            let _guard = env_lock();
+            set_env_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+            let config = OtlpConfig::from_env();
+            remove_env_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            assert!(config.enabled);
+        }
+
+        #[test]
+        fn config_default_signals_are_all_three() {
+            let _guard = env_lock();
+            set_env_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+            remove_env_var("EDGE_OTEL_SIGNALS");
+            let config = OtlpConfig::from_env();
+            remove_env_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            assert!(config.signals.contains(OtlpSignal::Traces));
+            assert!(config.signals.contains(OtlpSignal::Logs));
+            assert!(config.signals.contains(OtlpSignal::Metrics));
+        }
+
+        #[test]
+        fn config_subset_signals_parsed() {
+            let _guard = env_lock();
+            set_env_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+            set_env_var("EDGE_OTEL_SIGNALS", "traces,metrics");
+            let config = OtlpConfig::from_env();
+            remove_env_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            remove_env_var("EDGE_OTEL_SIGNALS");
+            assert!(config.signals.contains(OtlpSignal::Traces));
+            assert!(!config.signals.contains(OtlpSignal::Logs));
+            assert!(config.signals.contains(OtlpSignal::Metrics));
+        }
+
+        #[test]
+        fn config_invalid_signal_collected_not_panicked() {
+            let _guard = env_lock();
+            set_env_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+            set_env_var("EDGE_OTEL_SIGNALS", "traces,notasignal");
+            let config = OtlpConfig::from_env();
+            remove_env_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            remove_env_var("EDGE_OTEL_SIGNALS");
+            assert_eq!(config.invalid_signals, vec!["notasignal"]);
+            assert!(config.signals.contains(OtlpSignal::Traces));
+        }
+
+        #[test]
+        fn visitor_message_goes_to_body() {
+            let v = capture_visitor(|| {
+                tracing::info!("hello world");
+            });
+            assert_eq!(v.body.as_deref(), Some("hello world"));
+            assert!(!v.attributes.iter().any(|(k, _)| k == "message"));
+        }
+
+        #[test]
+        fn visitor_extra_field_goes_to_attributes() {
+            let v = capture_visitor(|| {
+                tracing::info!(key = "value", "msg");
+            });
+            assert!(v.attributes.iter().any(|(k, _)| k == "key"));
+        }
+
+        #[test]
+        fn visitor_u64_timestamp_not_in_attributes() {
+            let v = capture_visitor(|| {
+                tracing::info!(timestamp = 1_700_000_000_000u64, "msg");
+            });
+            assert!(v.timestamp.is_some());
+            assert!(!v.attributes.iter().any(|(k, _)| k == "timestamp"));
+        }
+
+        #[test]
+        fn visitor_i64_timestamp_not_in_attributes() {
+            let v = capture_visitor(|| {
+                tracing::info!(timestamp = 1_700_000_000_000i64, "msg");
+            });
+            assert!(v.timestamp.is_some());
+            assert!(!v.attributes.iter().any(|(k, _)| k == "timestamp"));
+        }
+
+        #[test]
+        fn visitor_large_u64_stored_as_string() {
+            let v = capture_visitor(|| {
+                tracing::info!(count = u64::MAX, "msg");
+            });
+            let val = v
+                .attributes
+                .iter()
+                .find(|(k, _)| k == "count")
+                .map(|(_, v)| v);
+            assert!(
+                matches!(val, Some(opentelemetry::logs::AnyValue::String(_))),
+                "u64::MAX should be stored as a string AnyValue"
+            );
+        }
+    }
 }

@@ -22,13 +22,22 @@ pub(crate) fn build_base_subscriber() -> anyhow::Result<
         .add_directive("tokio=trace".parse()?)
         .add_directive("runtime=trace".parse()?);
 
-    let format = tracing_subscriber::fmt::layer()
-        .with_level(true)
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_thread_names(false)
-        .json()
-        .boxed();
+    let use_json = std::env::var("HOPRD_LOG_FORMAT")
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+
+    let format: Box<dyn tracing_subscriber::Layer<_> + Send + Sync> = {
+        let base = tracing_subscriber::fmt::layer()
+            .with_level(true)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(false);
+        if use_json {
+            base.json().boxed()
+        } else {
+            base.boxed()
+        }
+    };
 
     #[cfg(feature = "prof")]
     let prof_layer = console_subscriber::spawn();
@@ -39,4 +48,55 @@ pub(crate) fn build_base_subscriber() -> anyhow::Result<
         .with(env_filter)
         .with(prof_layer)
         .with(format))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned")
+    }
+
+    fn set_env_var(key: &str, value: &str) {
+        unsafe {
+            std::env::set_var(key, value);
+        }
+    }
+
+    fn remove_env_var(key: &str) {
+        unsafe {
+            std::env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn build_base_subscriber_ok_without_format_env() {
+        let _guard = env_lock();
+        remove_env_var("HOPRD_LOG_FORMAT");
+        assert!(build_base_subscriber().is_ok());
+    }
+
+    #[test]
+    fn build_base_subscriber_ok_with_json_format() {
+        let _guard = env_lock();
+        set_env_var("HOPRD_LOG_FORMAT", "json");
+        let result = build_base_subscriber();
+        remove_env_var("HOPRD_LOG_FORMAT");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn build_base_subscriber_ok_with_plain_format() {
+        let _guard = env_lock();
+        set_env_var("HOPRD_LOG_FORMAT", "plain");
+        let result = build_base_subscriber();
+        remove_env_var("HOPRD_LOG_FORMAT");
+        assert!(result.is_ok());
+    }
 }
