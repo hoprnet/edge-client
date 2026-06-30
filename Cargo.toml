@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "3.3.0"
+version = "3.3.1"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -10,7 +10,12 @@ license = "GPL-3.0-only"
 
 [features]
 default = ["runtime-tokio", "blokli"]
-runtime-tokio = ["dep:tokio", "hopr-lib/runtime-tokio"]
+runtime-tokio = [
+  "dep:tokio",
+  "hopr-lib/runtime-tokio",
+  "hopr-transport-p2p/runtime-tokio",
+  "hopr-transport-p2p/transport-quic",
+]
 # Enable hopr-lib telemetry (Prometheus metrics) and OpenTelemetry OTLP exporter
 telemetry = [
   "hopr-lib/telemetry",
@@ -66,20 +71,20 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "26737845e7cc0dbe5b725ff862f6c66c53857662", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "d670a6c50517e50e400d40d21e2c11bd078461ac", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "26737845e7cc0dbe5b725ff862f6c66c53857662", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "d670a6c50517e50e400d40d21e2c11bd078461ac", features = [
   "runtime-tokio",
 ] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "26737845e7cc0dbe5b725ff862f6c66c53857662" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "26737845e7cc0dbe5b725ff862f6c66c53857662", features = [
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "d670a6c50517e50e400d40d21e2c11bd078461ac" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "d670a6c50517e50e400d40d21e2c11bd078461ac", features = [
   "strategy-channel-lifecycle",
 ] }
-hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "26737845e7cc0dbe5b725ff862f6c66c53857662" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "26737845e7cc0dbe5b725ff862f6c66c53857662" }
-hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "26737845e7cc0dbe5b725ff862f6c66c53857662" }
+hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "d670a6c50517e50e400d40d21e2c11bd078461ac" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "d670a6c50517e50e400d40d21e2c11bd078461ac" }
+hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "d670a6c50517e50e400d40d21e2c11bd078461ac" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -88,7 +93,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "26737845e7cc0dbe5b725ff862f6c66c53857662", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "d670a6c50517e50e400d40d21e2c11bd078461ac", features = [
   "runtime-tokio",
   "testing",
 ] }
