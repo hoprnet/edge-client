@@ -4,7 +4,7 @@ use tracing_subscriber::prelude::*;
 #[cfg(feature = "telemetry")]
 use std::{collections::HashMap, str::FromStr, time::Duration};
 
-use hopr_lib::{HoprKeys, Keypair, ToHex};
+use hopr_lib::{HoprKeys, api::types::primitive::traits::ToHex, builder::Keypair};
 #[cfg(feature = "telemetry")]
 use opentelemetry::{
     Key, KeyValue,
