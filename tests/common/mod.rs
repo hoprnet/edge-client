@@ -26,7 +26,7 @@ use edgli::{
         exports::transport::{HoprSession, SessionTarget, SurbBalancerConfig},
     },
     latency_path_planner_config,
-    strategy::{EdgeStrategyKind, EligibilityConfig, IncentiveConfiguration, default_strategy_cfg},
+    strategy::{EdgeStrategyKind, IncentiveConfiguration, SelectorProfile, default_strategy_cfg},
     traits::EdgeNodeApi,
 };
 use hopr_chain_connector::BlockchainConnectorConfig;
@@ -93,11 +93,11 @@ pub struct EdgliTuning {
     pub announce_local: bool,
     /// Channel-lifecycle strategy tick interval.
     pub strategy_tick: Duration,
-    /// Eligibility selector for the channel-opening strategy.  Controls which
-    /// peers qualify for an outgoing payment channel (quality threshold,
-    /// observation requirement, optional allowlist).  Passed directly into
-    /// [`EligibilityConfig`] when the strategy reactor is started.
-    pub eligibility: EligibilityConfig,
+    /// Channel-lifecycle selection policy.  Determines which peers qualify for
+    /// an outgoing payment channel and how candidates are ranked.  Passed
+    /// directly into [`ChannelLifecycleConfig::selector`] when the strategy
+    /// reactor is started.
+    pub selector: SelectorProfile,
     /// How long to wait for the strategy to open at least one outgoing channel.
     /// Rotsee needs more headroom: 60 s tick + Gnosis Chain confirmation latency.
     pub channel_open_timeout: Duration,
@@ -136,11 +136,7 @@ impl EdgliTuning {
             prefer_local_addresses: true,
             announce_local: true,
             strategy_tick: Duration::from_secs(10),
-            eligibility: EligibilityConfig {
-                min_peer_quality_score: 0.0,
-                require_observed_since_start: false,
-                ..Default::default()
-            },
+            selector: SelectorProfile::LowLatency,
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
             pump_timeout: Duration::from_secs(120),
@@ -158,11 +154,7 @@ impl EdgliTuning {
             // Rotsee peers have ~150-200 ms RTT; latency_score caps at 0.3 for
             // that range, so even a perfect probe rate yields at most 0.30.
             // Setting 0.1 accepts any peer that has had at least one successful probe.
-            eligibility: EligibilityConfig {
-                min_peer_quality_score: 0.1,
-                require_observed_since_start: true,
-                ..Default::default()
-            },
+            selector: SelectorProfile::LowLatency,
             // 30 s tick + Gnosis Chain confirmation + on-chain sync latency.
             // Allow several ticks before giving up.
             channel_open_timeout: Duration::from_secs(300),
@@ -1154,7 +1146,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
 
     for kind in &mut strat_cfg.strategies {
         let EdgeStrategyKind::ChannelLifecycle(lc) = kind;
-        lc.eligibility = tuning.eligibility.clone();
+        lc.selector = tuning.selector.clone();
         lc.tick_interval = tuning.strategy_tick;
     }
 
