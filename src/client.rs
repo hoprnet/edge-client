@@ -173,7 +173,9 @@ impl Edgli {
     /// Constructs and starts an edge HOPR node.
     ///
     /// # Arguments
-    /// * `cfg` – full HOPR node configuration
+    /// * `cfg` – full HOPR node configuration; set `cfg.protocol.path_planner`
+    ///   before calling to control the routing strategy.  Use
+    ///   [`crate::latency_path_planner_config`] to obtain a latency-optimised default.
     /// * `hopr_keys` – chain and packet keypairs
     /// * `blokli_url` – optional Blokli client URL; defaults to the production endpoint
     /// * `blokli_dns_override` – optional DNS override for the Blokli client

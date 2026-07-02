@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use std::{path::PathBuf, time::Duration};
 
 use edgli::{
-    Edgli, EdgliInitState,
+    Edgli, EdgliInitState, PathPlannerConfig,
     hopr_lib::{
         HopRouting, HoprKeys, HoprSessionClientConfig, IdentityRetrievalModes,
         api::{
@@ -25,7 +25,8 @@ use edgli::{
         exports::transport::SessionCapability,
         exports::transport::{HoprSession, SessionTarget, SurbBalancerConfig},
     },
-    strategy::{EdgeStrategyKind, EligibilityConfig, IncentiveConfiguration, default_strategy_cfg},
+    latency_path_planner_config,
+    strategy::{EdgeStrategyKind, IncentiveConfiguration, SelectorProfile, default_strategy_cfg},
     traits::EdgeNodeApi,
 };
 use hopr_chain_connector::BlockchainConnectorConfig;
@@ -92,10 +93,11 @@ pub struct EdgliTuning {
     pub announce_local: bool,
     /// Channel-lifecycle strategy tick interval.
     pub strategy_tick: Duration,
-    /// Minimum peer quality score for channel eligibility.
-    pub min_peer_quality: f64,
-    /// Whether to require the peer has been observed since Edgli started.
-    pub require_observed: bool,
+    /// Channel-lifecycle selection policy.  Determines which peers qualify for
+    /// an outgoing payment channel and how candidates are ranked.  Passed
+    /// directly into [`ChannelLifecycleConfig::selector`] when the strategy
+    /// reactor is started.
+    pub selector: SelectorProfile,
     /// How long to wait for the strategy to open at least one outgoing channel.
     /// Rotsee needs more headroom: 60 s tick + Gnosis Chain confirmation latency.
     pub channel_open_timeout: Duration,
@@ -117,6 +119,9 @@ pub struct EdgliTuning {
     /// 0.0 falls back to pure channel-topology routing (channels exist in the
     /// graph from SSE events) without requiring any probe success.
     pub min_ack_rate: f64,
+    /// Path-planner / selector configuration passed to the HOPR protocol.
+    /// Set on `cfg.protocol.path_planner` before constructing the Edgli instance.
+    pub path_planner: PathPlannerConfig,
 }
 
 impl EdgliTuning {
@@ -131,12 +136,12 @@ impl EdgliTuning {
             prefer_local_addresses: true,
             announce_local: true,
             strategy_tick: Duration::from_secs(10),
-            min_peer_quality: 0.0,
-            require_observed: false,
+            selector: SelectorProfile::LowLatency,
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
             pump_timeout: Duration::from_secs(120),
             min_ack_rate: 0.1, // local cluster probes succeed — use default quality gate
+            path_planner: latency_path_planner_config(0.1),
         }
     }
 
@@ -149,8 +154,7 @@ impl EdgliTuning {
             // Rotsee peers have ~150-200 ms RTT; latency_score caps at 0.3 for
             // that range, so even a perfect probe rate yields at most 0.30.
             // Setting 0.1 accepts any peer that has had at least one successful probe.
-            min_peer_quality: 0.1,
-            require_observed: true,
+            selector: SelectorProfile::LowLatency,
             // 30 s tick + Gnosis Chain confirmation + on-chain sync latency.
             // Allow several ticks before giving up.
             channel_open_timeout: Duration::from_secs(300),
@@ -165,6 +169,7 @@ impl EdgliTuning {
             // selector to route through existing payment channels (populated via
             // SSE events) without requiring any probe history.
             min_ack_rate: 0.0,
+            path_planner: latency_path_planner_config(0.0),
         }
     }
 }
@@ -969,7 +974,6 @@ pub fn loopback_target() -> SessionTarget {
 
 pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibConfig {
     use edgli::hopr_lib::config::{HoprProtocolConfig, MixerConfig, TransportConfig};
-    use edgli::hopr_lib::exports::transport::path::PathPlannerConfig;
     HoprLibConfig {
         host: HostConfig {
             address: HostType::IPv4("0.0.0.0".to_string()),
@@ -981,15 +985,12 @@ pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibCon
                 announce_local_addresses: tuning.announce_local,
                 prefer_local_addresses: tuning.prefer_local_addresses,
             },
-            path_planner: PathPlannerConfig {
-                min_ack_rate: tuning.min_ack_rate,
-                ..Default::default()
-            },
             mixer: MixerConfig {
                 min_delay: std::time::Duration::ZERO,
                 delay_range: std::time::Duration::from_millis(1),
                 ..Default::default()
             },
+            path_planner: tuning.path_planner,
             ..Default::default()
         },
         safe_module: SafeModule {
@@ -1146,11 +1147,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
 
     for kind in &mut strat_cfg.strategies {
         let EdgeStrategyKind::ChannelLifecycle(lc) = kind;
-        lc.eligibility = EligibilityConfig {
-            min_peer_quality_score: tuning.min_peer_quality,
-            require_observed_since_start: tuning.require_observed,
-            ..Default::default()
-        };
+        lc.selector = tuning.selector.clone();
         lc.tick_interval = tuning.strategy_tick;
     }
 
