@@ -114,9 +114,9 @@ pub enum EdgliInitState {
 
 /// Filters an announcement's multiaddresses down to those worth dialing.
 ///
-/// Private/local (RFC-1918, loopback, link-local) peer addresses are dropped
-/// unless `probe_local_addresses` is set, in which case local addresses are
-/// dialed too.
+/// Non-public peer addresses (private, loopback, link-local, unspecified) are
+/// dropped unless `probe_local_addresses` is set, in which case local addresses
+/// are dialed too.
 fn probeable_addresses(addrs: Vec<Multiaddr>, probe_local_addresses: bool) -> Vec<Multiaddr> {
     if probe_local_addresses {
         addrs
@@ -197,9 +197,9 @@ impl Edgli {
     /// * `blokli_url` – optional Blokli client URL; defaults to the production endpoint
     /// * `blokli_dns_override` – optional DNS override for the Blokli client
     /// * `blokli_connector_config` – optional connector config overrides
-    /// * `probe_local_addresses` – when `true`, probe private/local (RFC-1918)
-    ///   peer addresses from announcements; when `false` (default) they are
-    ///   filtered out before dialing
+    /// * `probe_local_addresses` – when `true`, probe non-public (private,
+    ///   loopback, link-local) peer addresses from announcements; when `false`
+    ///   (default) they are filtered out before dialing
     /// * `visitor` – called at each [`EdgliInitState`] transition for progress reporting
     pub async fn new(
         cfg: HoprLibConfig,
