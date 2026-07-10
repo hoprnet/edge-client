@@ -130,6 +130,7 @@ fn probeable_addresses(addrs: Vec<Multiaddr>, probe_local_addresses: bool) -> Ve
 /// Returns an [`AbortHandle`] that stops the closure task when aborted.
 /// `Edgli` is kept alive for the entire duration of `f` so that background tasks
 /// remain active until `f` completes or the returned [`AbortHandle`] is used to cancel it.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_hopr_edge_node_with<F, T>(
     cfg: HoprLibConfig,
     hopr_keys: HoprKeys,
