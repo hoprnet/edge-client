@@ -91,6 +91,10 @@ pub struct EdgliTuning {
     /// on a same-host cluster.
     pub prefer_local_addresses: bool,
     pub announce_local: bool,
+    /// Whether to probe private/local peer addresses received in announcements.
+    /// True only on a same-host cluster, where peers reach each other over
+    /// RFC-1918 addresses.
+    pub probe_local: bool,
     /// Channel-lifecycle strategy tick interval.
     pub strategy_tick: Duration,
     /// Channel-lifecycle selection policy.  Determines which peers qualify for
@@ -135,6 +139,7 @@ impl EdgliTuning {
             },
             prefer_local_addresses: true,
             announce_local: true,
+            probe_local: true,
             strategy_tick: Duration::from_secs(10),
             selector: SelectorProfile::LowLatency,
             channel_open_timeout: Duration::from_secs(120),
@@ -150,6 +155,7 @@ impl EdgliTuning {
             connector_cfg: BlockchainConnectorConfig::default(),
             prefer_local_addresses: false,
             announce_local: false,
+            probe_local: false,
             strategy_tick: Duration::from_secs(30),
             // Rotsee peers have ~150-200 ms RTT; latency_score caps at 0.3 for
             // that range, so even a perfect probe rate yields at most 0.30.
@@ -1118,6 +1124,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         Some(summary.blokli_url.clone()),
         None,
         Some(tuning.connector_cfg),
+        tuning.probe_local,
         |s: EdgliInitState| tracing::info!(?s, "edgli init"),
     )
     .await?;

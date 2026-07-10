@@ -18,7 +18,9 @@ use hopr_lib::api::{
     },
 };
 use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
+use hopr_lib::exports::network::types::addr::is_public_address;
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
+use multiaddr::Multiaddr;
 use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
 use hopr_ticket_manager::ticket_factory_from_chain;
 use hopr_transport_p2p::{HoprLibp2pNetworkBuilder, HoprNetwork, PeerDiscovery};
@@ -110,6 +112,19 @@ pub enum EdgliInitState {
     Ready,
 }
 
+/// Filters an announcement's multiaddresses down to those worth dialing.
+///
+/// Private/local (RFC-1918, loopback, link-local) peer addresses are dropped
+/// unless `probe_local_addresses` is set, in which case local addresses are
+/// dialed too.
+fn probeable_addresses(addrs: Vec<Multiaddr>, probe_local_addresses: bool) -> Vec<Multiaddr> {
+    if probe_local_addresses {
+        addrs
+    } else {
+        addrs.into_iter().filter(is_public_address).collect()
+    }
+}
+
 /// Spawns an abortable task that drives a user-supplied closure over the running node.
 ///
 /// Returns an [`AbortHandle`] that stops the closure task when aborted.
@@ -121,6 +136,7 @@ pub async fn run_hopr_edge_node_with<F, T>(
     blokli_url: Option<String>,
     blokli_dns_override: Option<(IpAddr, Option<u16>)>,
     blokli_connector_config: Option<BlockchainConnectorConfig>,
+    probe_local_addresses: bool,
     f: F,
     visitor: impl Fn(EdgliInitState) + Send + 'static,
 ) -> anyhow::Result<AbortHandle>
@@ -134,6 +150,7 @@ where
         blokli_url,
         blokli_dns_override,
         blokli_connector_config,
+        probe_local_addresses,
         visitor,
     )
     .await?;
@@ -180,6 +197,9 @@ impl Edgli {
     /// * `blokli_url` – optional Blokli client URL; defaults to the production endpoint
     /// * `blokli_dns_override` – optional DNS override for the Blokli client
     /// * `blokli_connector_config` – optional connector config overrides
+    /// * `probe_local_addresses` – when `true`, probe private/local (RFC-1918)
+    ///   peer addresses from announcements; when `false` (default) they are
+    ///   filtered out before dialing
     /// * `visitor` – called at each [`EdgliInitState`] transition for progress reporting
     pub async fn new(
         cfg: HoprLibConfig,
@@ -187,6 +207,7 @@ impl Edgli {
         blokli_url: Option<String>,
         blokli_dns_override: Option<(IpAddr, Option<u16>)>,
         blokli_connector_config: Option<BlockchainConnectorConfig>,
+        probe_local_addresses: bool,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
         visitor(EdgliInitState::ValidatingConfig);
@@ -275,10 +296,14 @@ impl Edgli {
                                 .try_into()
                                 .map_err(hopr_lib::errors::HoprLibError::TransportError)?,
                         ];
-                        let nb = HoprLibp2pNetworkBuilder::new(
-                            peer_discovery_rx
-                                .map(|(peer_id, addrs)| PeerDiscovery::Announce(peer_id, addrs)),
-                        );
+                        let nb = HoprLibp2pNetworkBuilder::new(peer_discovery_rx.map(
+                            move |(peer_id, addrs)| {
+                                PeerDiscovery::Announce(
+                                    peer_id,
+                                    probeable_addresses(addrs, probe_local_addresses),
+                                )
+                            },
+                        ));
                         nb.build(
                             &ctx.packet_key,
                             multiaddresses,
@@ -560,5 +585,49 @@ mod tests {
             error.to_string(),
             "configuration error: 'invalid Blokli URL 'not a url': relative URL without a base'"
         );
+    }
+
+    fn ma(s: &str) -> Multiaddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn probeable_addresses_filters_local_by_default() {
+        let public = ma("/ip4/8.8.8.8/tcp/9091");
+        let addrs = vec![
+            public.clone(),
+            ma("/ip4/192.168.1.5/tcp/9091"),
+            ma("/ip4/10.0.0.2/tcp/9091"),
+            ma("/ip4/127.0.0.1/tcp/9091"),
+        ];
+
+        assert_eq!(probeable_addresses(addrs, false), vec![public]);
+    }
+
+    #[test]
+    fn probeable_addresses_keeps_all_when_probing_local() {
+        let addrs = vec![
+            ma("/ip4/8.8.8.8/tcp/9091"),
+            ma("/ip4/192.168.1.5/tcp/9091"),
+            ma("/ip4/127.0.0.1/tcp/9091"),
+        ];
+
+        assert_eq!(probeable_addresses(addrs.clone(), true), addrs);
+    }
+
+    #[test]
+    fn probeable_addresses_drops_all_local_to_empty() {
+        let addrs = vec![
+            ma("/ip4/192.168.1.5/tcp/9091"),
+            ma("/ip4/10.0.0.2/tcp/9091"),
+        ];
+
+        assert!(probeable_addresses(addrs, false).is_empty());
+    }
+
+    #[test]
+    fn probeable_addresses_empty_input() {
+        assert!(probeable_addresses(vec![], false).is_empty());
+        assert!(probeable_addresses(vec![], true).is_empty());
     }
 }

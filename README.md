@@ -131,6 +131,11 @@ Key inputs handed to `Edgli::new`:
   when `RUST_LOG` is unset.
 - **Loopback address rejected.** `Edgli::new` refuses to announce a loopback
   host unless `protocol.transport.prefer_local_addresses = true`.
+- **Local peers not probed.** By default private/local (RFC-1918) peer
+  addresses from announcements are filtered before dialing. Pass
+  `--probe-local-addresses` (or `HOPR_EDGE_PROBE_LOCAL_ADDRESSES=true`, or the
+  `probe_local_addresses` argument to `Edgli::new`) to probe them (e.g. a
+  same-host test cluster).
 - **Profiling.** Build with
   `RUSTFLAGS="--cfg tokio_unstable" cargo build --features prof` and attach
   `tokio-console`.
