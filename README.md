@@ -37,17 +37,16 @@ Embed the client by constructing an `Edgli` instance. Initialization is reported
 through a visitor callback that receives `EdgliInitState` transitions.
 
 ```rust
-use std::path::Path;
-
 use edgli::{Edgli, EdgliInitState, hopr_lib::{HoprKeys, config::HoprLibConfig}};
 
-async fn run(cfg: HoprLibConfig, db: &Path, keys: HoprKeys) -> anyhow::Result<()> {
+async fn run(cfg: HoprLibConfig, keys: HoprKeys) -> anyhow::Result<()> {
     let edgli = Edgli::new(
         cfg,
-        db,
         keys,
-        None, // blokli URL (optional)
-        None, // BlockchainConnectorConfig (optional)
+        None,  // blokli URL (optional)
+        None,  // blokli DNS override (optional)
+        None,  // BlockchainConnectorConfig (optional)
+        false, // probe_local_addresses: filter non-public peer addresses
         |state: EdgliInitState| tracing::info!(?state, "init"),
     )
     .await?;
@@ -132,9 +131,9 @@ Key inputs handed to `Edgli::new`:
 - **Loopback address rejected.** `Edgli::new` refuses to announce a loopback
   host unless `protocol.transport.prefer_local_addresses = true`.
 - **Local peers not probed.** By default non-public (private, loopback,
-  link-local) peer addresses from announcements are filtered before dialing. Pass
-  `--probe-local-addresses` (or `HOPR_EDGE_PROBE_LOCAL_ADDRESSES=true`, or the
-  `probe_local_addresses` argument to `Edgli::new`) to probe them (e.g. a
+  link-local) peer addresses from announcements are filtered before dialing.
+  Pass `--probe-local-addresses` (or `HOPR_EDGE_PROBE_LOCAL_ADDRESSES=true`, or
+  the `probe_local_addresses` argument to `Edgli::new`) to probe them (e.g. a
   same-host test cluster).
 - **Profiling.** Build with
   `RUSTFLAGS="--cfg tokio_unstable" cargo build --features prof` and attach

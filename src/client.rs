@@ -20,10 +20,10 @@ use hopr_lib::api::{
 use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::exports::network::types::addr::is_public_address;
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
-use multiaddr::Multiaddr;
 use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
 use hopr_ticket_manager::ticket_factory_from_chain;
 use hopr_transport_p2p::{HoprLibp2pNetworkBuilder, HoprNetwork, PeerDiscovery};
+use multiaddr::Multiaddr;
 use strum::{AsRefStr, Display, EnumString};
 use tracing::info;
 
@@ -599,6 +599,8 @@ mod tests {
             ma("/ip4/192.168.1.5/tcp/9091"),
             ma("/ip4/10.0.0.2/tcp/9091"),
             ma("/ip4/127.0.0.1/tcp/9091"),
+            ma("/ip6/::1/tcp/9091"),
+            ma("/ip6/fc00::1/tcp/9091"),
         ];
 
         assert_eq!(probeable_addresses(addrs, false), vec![public]);
@@ -610,6 +612,8 @@ mod tests {
             ma("/ip4/8.8.8.8/tcp/9091"),
             ma("/ip4/192.168.1.5/tcp/9091"),
             ma("/ip4/127.0.0.1/tcp/9091"),
+            ma("/ip6/::1/tcp/9091"),
+            ma("/ip6/fc00::1/tcp/9091"),
         ];
 
         assert_eq!(probeable_addresses(addrs.clone(), true), addrs);
@@ -620,6 +624,8 @@ mod tests {
         let addrs = vec![
             ma("/ip4/192.168.1.5/tcp/9091"),
             ma("/ip4/10.0.0.2/tcp/9091"),
+            ma("/ip6/::1/tcp/9091"),
+            ma("/ip6/fc00::1/tcp/9091"),
         ];
 
         assert!(probeable_addresses(addrs, false).is_empty());
