@@ -4,7 +4,7 @@
     "config:recommended",
     "schedule:earlyMondays",
     "group:allNonMajor",
-    "group:allDigest",
+    "group:allDigest"
   ],
   "prCreation": "not-pending",
   "semanticCommits": "enabled",
