@@ -5,7 +5,6 @@
     "schedule:earlyMondays",
     "group:allNonMajor",
     "group:allDigest",
-    ":disableDependencyDashboard"
   ],
   "prCreation": "not-pending",
   "semanticCommits": "enabled",
