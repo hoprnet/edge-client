@@ -1,0 +1,52 @@
+name: Update Nix flake inputs
+# Renovate's hosted runner fails to update nix flake inputs because it runs
+# the deprecated `nix flake lock --update-input` syntax (removed in Nix 2.19+).
+# This workflow replaces that by running `nix flake update` on our own runners.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # every Monday at 06:00 UTC
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  update:
+    name: Update flake.lock
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          disable-sudo: true
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Update flake inputs
+        run: nix flake update
+      - name: Open or update PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet flake.lock; then
+            echo "flake.lock unchanged, nothing to do"
+            exit 0
+          fi
+
+          BRANCH="update/nix-flake-lock"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add flake.lock
+          git commit -m "chore(deps): update Nix flake inputs"
+          git push --force origin "$BRANCH"
+
+          # Reuse existing open PR if one is already there, otherwise create one
+          EXISTING=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING already open — branch updated"
+          else
+            gh pr create \
+              --title "chore(deps): update Nix flake inputs" \
+              --body "Weekly automated update of Nix flake inputs via \`nix flake update\`." \
+              --label "dependencies"
+          fi
