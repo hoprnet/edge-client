@@ -4,8 +4,7 @@
     "config:recommended",
     "schedule:earlyMondays",
     "group:allNonMajor",
-    "group:allDigest",
-    ":disableDependencyDashboard"
+    "group:allDigest"
   ],
   "prCreation": "not-pending",
   "semanticCommits": "enabled",
