@@ -17,19 +17,21 @@ pub use hopr_lib::exports::transport::path::PathPlannerConfig;
 
 /// Returns a [`PathPlannerConfig`] optimised for low-latency path selection.
 ///
-/// Uses a shorter latency half-life (`50 ms`) than the default (`100 ms`) so
+/// Uses a much shorter latency half-life (`20 ms`) than the default (`100 ms`) so
 /// paths with lower observed round-trip times receive a stronger preference
-/// during candidate scoring and pruning.  The `min_ack_rate` controls the
-/// minimum message-acknowledgement rate an edge must exhibit before it is
-/// eligible for path inclusion.
+/// during candidate scoring and pruning, and prunes candidates down to the two
+/// lowest-latency paths to reduce per-packet relay rotation (and with it the
+/// latency variance that causes frame-reassembly reordering).  The
+/// `min_ack_rate` controls the minimum message-acknowledgement rate an edge
+/// must exhibit before it is eligible for path inclusion.
 ///
 /// Pass the result as the `path_planner` argument of [`Edgli::new`] or
 /// [`run_hopr_edge_node_with`] to activate latency-optimised routing.
 pub fn latency_path_planner_config(min_ack_rate: f64) -> PathPlannerConfig {
     PathPlannerConfig {
         min_ack_rate,
-        latency_halflife: std::time::Duration::from_millis(50),
-        min_paths_anonymity_floor: 4,
+        latency_halflife: std::time::Duration::from_millis(20),
+        min_paths_anonymity_floor: 2,
         ..PathPlannerConfig::default()
     }
 }
