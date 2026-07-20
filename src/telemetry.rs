@@ -22,8 +22,26 @@ use opentelemetry_sdk::{
 #[cfg(feature = "telemetry")]
 use tracing::field::{Field, Visit};
 
+// User-facing OTLP configuration environment variables. These mirror the
+// `HOPRD_*` variables used by `hoprd` so the two share the same operator flow,
+// minus the explicit enable flag: setting an endpoint is enough to enable
+// export here.
 #[cfg(feature = "telemetry")]
 const EDGE_OTEL_SIGNALS_ENV: &str = "EDGE_OTEL_SIGNALS";
+// User-facing endpoint. Mirrors `HOPRD_OTLP_ENDPOINT`; at startup it is copied
+// into the standard `OTEL_EXPORTER_OTLP_ENDPOINT` that the OTLP SDK reads.
+#[cfg(feature = "telemetry")]
+const EDGE_OTLP_ENDPOINT_ENV: &str = "EDGE_OTLP_ENDPOINT";
+// Standard OTLP endpoint honoured by the SDK; also accepted as a legacy fallback.
+#[cfg(feature = "telemetry")]
+const LEGACY_OTLP_ENDPOINT_ENV: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
+// Default metric export cadence override (single duration; `ms` integer or
+// `ms`/`s`/`m` suffixes). Mirrors the default-interval part of
+// `HOPRD_METRIC_EXPORT_INTERVAL` without the per-prefix overrides.
+#[cfg(feature = "telemetry")]
+const EDGE_METRIC_EXPORT_INTERVAL_ENV: &str = "EDGE_METRIC_EXPORT_INTERVAL";
+#[cfg(feature = "telemetry")]
+const OTEL_SERVICE_NAME_ENV: &str = "OTEL_SERVICE_NAME";
 
 #[cfg_attr(not(feature = "telemetry"), allow(dead_code))]
 #[derive(Clone, Debug)]
@@ -34,12 +52,20 @@ struct TelemetryIdentity {
 }
 
 impl TelemetryIdentity {
-    fn from_hopr_keys_with_labels(
+    fn from_hopr_keys_with_labels<K, V>(
         hopr_keys: &HoprKeys,
-        extra_labels: Vec<(String, String)>,
-    ) -> Self {
+        extra_labels: impl IntoIterator<Item = (K, V)>,
+    ) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
         let node_address = Keypair::public(&hopr_keys.chain_key).to_address().to_hex();
         let node_peer_id = Keypair::public(&hopr_keys.packet_key).to_peerid_str();
+        let extra_labels = extra_labels
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
         Self {
             node_address,
             node_peer_id,
@@ -106,6 +132,86 @@ impl OtlpTransport {
     }
 }
 
+/// Copies the user-facing [`EDGE_OTLP_ENDPOINT_ENV`] into the standard
+/// [`LEGACY_OTLP_ENDPOINT_ENV`] that the OTLP SDK reads, so operators only ever
+/// configure the `EDGE_`-prefixed variable. Mirrors `hoprd`'s behaviour: if both
+/// are set and differ, the `EDGE_`-prefixed value wins.
+#[cfg(feature = "telemetry")]
+fn apply_edge_otlp_endpoint_override() {
+    let Ok(value) = std::env::var(EDGE_OTLP_ENDPOINT_ENV) else {
+        return;
+    };
+
+    let endpoint = value.trim();
+    if endpoint.is_empty() {
+        tracing::warn!(
+            env_key = EDGE_OTLP_ENDPOINT_ENV,
+            "empty OTLP endpoint value ignored"
+        );
+        return;
+    }
+
+    if let Ok(existing) = std::env::var(LEGACY_OTLP_ENDPOINT_ENV) {
+        let existing = existing.trim();
+        if !existing.is_empty() && existing != endpoint {
+            tracing::warn!(
+                env_key = EDGE_OTLP_ENDPOINT_ENV,
+                overridden_env_key = LEGACY_OTLP_ENDPOINT_ENV,
+                "custom EDGE OTLP endpoint overrides OTEL exporter endpoint"
+            );
+        }
+    }
+
+    unsafe { std::env::set_var(LEGACY_OTLP_ENDPOINT_ENV, endpoint) };
+}
+
+/// Resolves the service name from [`OTEL_SERVICE_NAME_ENV`], falling back to the
+/// crate name when unset or blank.
+#[cfg(feature = "telemetry")]
+fn resolve_service_name() -> String {
+    match std::env::var(OTEL_SERVICE_NAME_ENV) {
+        Ok(service_name) if !service_name.trim().is_empty() => service_name.trim().to_string(),
+        _ => env!("CARGO_PKG_NAME").to_string(),
+    }
+}
+
+/// Parses a single export-interval value: a bare integer is milliseconds, or an
+/// integer with a `ms`/`s`/`m` suffix. Returns `None` for empty, zero, or
+/// unparseable input.
+#[cfg(feature = "telemetry")]
+fn parse_export_interval(value: &str) -> Option<Duration> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(ms) = trimmed.parse::<u64>() {
+        return (ms != 0).then(|| Duration::from_millis(ms));
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    if let Some(ms) = normalized
+        .strip_suffix("ms")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+    {
+        return (ms != 0).then(|| Duration::from_millis(ms));
+    }
+    if let Some(secs) = normalized
+        .strip_suffix('s')
+        .and_then(|v| v.trim().parse::<u64>().ok())
+    {
+        return (secs != 0).then(|| Duration::from_secs(secs));
+    }
+    if let Some(mins) = normalized
+        .strip_suffix('m')
+        .and_then(|v| v.trim().parse::<u64>().ok())
+    {
+        return (mins != 0).then(|| Duration::from_secs(mins.saturating_mul(60)));
+    }
+
+    None
+}
+
 #[cfg(feature = "telemetry")]
 #[derive(Debug, Clone)]
 pub struct OtlpConfig {
@@ -113,48 +219,60 @@ pub struct OtlpConfig {
     pub service_name: String,
     pub transport: OtlpTransport,
     pub signals: flagset::FlagSet<OtlpSignal>,
+    metric_export_interval: Option<Duration>,
     invalid_signals: Vec<String>,
 }
 
 #[cfg(feature = "telemetry")]
 impl OtlpConfig {
+    /// Builds the config from the environment. The user-facing
+    /// [`EDGE_OTLP_ENDPOINT_ENV`] must already have been folded into
+    /// [`LEGACY_OTLP_ENDPOINT_ENV`] via [`apply_edge_otlp_endpoint_override`]
+    /// before calling this. Export is enabled whenever a non-empty endpoint is
+    /// present — there is no separate enable flag.
     pub fn from_env() -> Self {
-        let service_name =
-            std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| env!("CARGO_PKG_NAME").into());
-        let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        let service_name = resolve_service_name();
+        let otlp_endpoint = std::env::var(LEGACY_OTLP_ENDPOINT_ENV)
             .ok()
             .map(|endpoint| endpoint.trim().to_string())
             .filter(|endpoint| !endpoint.is_empty());
         let transport = OtlpTransport::from_endpoint(otlp_endpoint.as_deref());
-        let mut signals = flagset::FlagSet::empty();
-        let mut invalid_signals = Vec::new();
-        let raw_signals = std::env::var(EDGE_OTEL_SIGNALS_ENV).ok();
         let enabled = otlp_endpoint.is_some();
 
-        if let Some(raw_signals) = raw_signals {
-            for signal in raw_signals.split(',') {
-                let signal = signal.trim();
-                if signal.is_empty() {
-                    continue;
-                }
-                match OtlpSignal::from_str(signal) {
-                    Ok(parsed) => signals |= parsed,
-                    Err(_) => invalid_signals.push(signal.to_string()),
+        let mut signals = flagset::FlagSet::empty();
+        let mut invalid_signals = Vec::new();
+        // Distinguish "unset" (default to traces, matching hoprd) from "set but
+        // empty/invalid" (also falls back to traces via the guard below).
+        match std::env::var(EDGE_OTEL_SIGNALS_ENV) {
+            Ok(raw_signals) => {
+                for signal in raw_signals.split(',') {
+                    let signal = signal.trim();
+                    if signal.is_empty() {
+                        continue;
+                    }
+                    match OtlpSignal::from_str(signal) {
+                        Ok(parsed) => signals |= parsed,
+                        Err(_) => invalid_signals.push(signal.to_string()),
+                    }
                 }
             }
+            Err(_) => signals |= OtlpSignal::Traces,
         }
 
         if signals.is_empty() {
             signals |= OtlpSignal::Traces;
-            signals |= OtlpSignal::Logs;
-            signals |= OtlpSignal::Metrics;
         }
+
+        let metric_export_interval = std::env::var(EDGE_METRIC_EXPORT_INTERVAL_ENV)
+            .ok()
+            .and_then(|raw| parse_export_interval(&raw));
 
         Self {
             enabled,
             service_name,
             transport,
             signals,
+            metric_export_interval,
             invalid_signals,
         }
     }
@@ -349,13 +467,17 @@ fn enabled_signal_names(config: &OtlpConfig, signals: &[OtlpSignal]) -> String {
 }
 
 pub fn init_logging(hopr_keys: &HoprKeys) -> anyhow::Result<TelemetryHandles> {
-    init_logging_with_extra_labels(hopr_keys, Vec::new())
+    init_logging_with_extra_labels(hopr_keys, Vec::<(String, String)>::new())
 }
 
-pub fn init_logging_with_extra_labels(
+pub fn init_logging_with_extra_labels<K, V>(
     hopr_keys: &HoprKeys,
-    extra_labels: Vec<(String, String)>,
-) -> anyhow::Result<TelemetryHandles> {
+    extra_labels: impl IntoIterator<Item = (K, V)>,
+) -> anyhow::Result<TelemetryHandles>
+where
+    K: Into<String>,
+    V: Into<String>,
+{
     init_logging_with_identity(TelemetryIdentity::from_hopr_keys_with_labels(
         hopr_keys,
         extra_labels,
@@ -369,6 +491,7 @@ fn init_logging_with_identity(
     {
         let mut telemetry_handles = TelemetryHandles::default();
         let registry = crate::telemetry_common::build_base_subscriber()?;
+        apply_edge_otlp_endpoint_override();
         let config = OtlpConfig::from_env();
 
         if config.enabled {
@@ -496,14 +619,18 @@ pub fn init_metrics(
     telemetry_handles: &mut TelemetryHandles,
     hopr_keys: &HoprKeys,
 ) -> anyhow::Result<()> {
-    init_metrics_with_extra_labels(telemetry_handles, hopr_keys, Vec::new())
+    init_metrics_with_extra_labels(telemetry_handles, hopr_keys, Vec::<(String, String)>::new())
 }
 
-pub fn init_metrics_with_extra_labels(
+pub fn init_metrics_with_extra_labels<K, V>(
     telemetry_handles: &mut TelemetryHandles,
     hopr_keys: &HoprKeys,
-    extra_labels: Vec<(String, String)>,
-) -> anyhow::Result<()> {
+    extra_labels: impl IntoIterator<Item = (K, V)>,
+) -> anyhow::Result<()>
+where
+    K: Into<String>,
+    V: Into<String>,
+{
     init_metrics_with_identity(
         telemetry_handles,
         TelemetryIdentity::from_hopr_keys_with_labels(hopr_keys, extra_labels),
@@ -520,6 +647,7 @@ fn init_metrics_with_identity(
             return Ok(());
         }
 
+        apply_edge_otlp_endpoint_override();
         let config = OtlpConfig::from_env();
         if !config.enabled || !config.has_signal(OtlpSignal::Metrics) {
             return Ok(());
@@ -539,11 +667,15 @@ fn init_metrics_with_identity(
                 .build()?,
         };
 
-        let reader = opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader::builder(
-            exporter,
-            opentelemetry_sdk::runtime::Tokio,
-        )
-        .build();
+        let mut reader_builder =
+            opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader::builder(
+                exporter,
+                opentelemetry_sdk::runtime::Tokio,
+            );
+        if let Some(interval) = config.metric_export_interval {
+            reader_builder = reader_builder.with_interval(interval);
+        }
+        let reader = reader_builder.build();
         let meter_provider = SdkMeterProvider::builder()
             .with_reader(reader)
             .with_resource(resource)
@@ -552,10 +684,15 @@ fn init_metrics_with_identity(
         telemetry_handles.meter_provider = Some(meter_provider);
 
         let enabled_signals = enabled_signal_names(&config, &[OtlpSignal::Metrics]);
+        let metric_export_interval_ms = config
+            .metric_export_interval
+            .unwrap_or(Duration::from_secs(60))
+            .as_millis() as u64;
         tracing::info!(
             otel_service_name = %config.service_name,
             otel_signals = %enabled_signals,
             otel_protocol = %config.transport.to_string(),
+            otel_metric_export_interval_ms = metric_export_interval_ms,
             node_address = %node_identity.node_address,
             node_peer_id = %node_identity.node_peer_id,
             "OpenTelemetry metrics initialized"
@@ -572,13 +709,17 @@ fn init_metrics_with_identity(
 }
 
 pub fn init_telemetry(hopr_keys: &HoprKeys) -> anyhow::Result<TelemetryHandles> {
-    init_telemetry_with_extra_labels(hopr_keys, Vec::new())
+    init_telemetry_with_extra_labels(hopr_keys, Vec::<(String, String)>::new())
 }
 
-pub fn init_telemetry_with_extra_labels(
+pub fn init_telemetry_with_extra_labels<K, V>(
     hopr_keys: &HoprKeys,
-    extra_labels: Vec<(String, String)>,
-) -> anyhow::Result<TelemetryHandles> {
+    extra_labels: impl IntoIterator<Item = (K, V)>,
+) -> anyhow::Result<TelemetryHandles>
+where
+    K: Into<String>,
+    V: Into<String>,
+{
     let node_identity = TelemetryIdentity::from_hopr_keys_with_labels(hopr_keys, extra_labels);
     let mut telemetry_handles = init_logging_with_identity(node_identity.clone())?;
     init_metrics_with_identity(&mut telemetry_handles, node_identity)?;
@@ -694,15 +835,59 @@ mod tests {
         }
 
         #[test]
-        fn config_default_signals_are_all_three() {
+        fn config_default_signals_is_traces_only() {
             let _guard = env_lock();
             set_env_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
             remove_env_var("EDGE_OTEL_SIGNALS");
             let config = OtlpConfig::from_env();
             remove_env_var("OTEL_EXPORTER_OTLP_ENDPOINT");
             assert!(config.signals.contains(OtlpSignal::Traces));
-            assert!(config.signals.contains(OtlpSignal::Logs));
-            assert!(config.signals.contains(OtlpSignal::Metrics));
+            assert!(!config.signals.contains(OtlpSignal::Logs));
+            assert!(!config.signals.contains(OtlpSignal::Metrics));
+        }
+
+        #[test]
+        fn config_set_but_empty_signals_falls_back_to_traces() {
+            let _guard = env_lock();
+            set_env_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+            set_env_var("EDGE_OTEL_SIGNALS", " , ");
+            let config = OtlpConfig::from_env();
+            remove_env_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            remove_env_var("EDGE_OTEL_SIGNALS");
+            assert!(config.signals.contains(OtlpSignal::Traces));
+            assert!(!config.signals.contains(OtlpSignal::Logs));
+            assert!(!config.signals.contains(OtlpSignal::Metrics));
+        }
+
+        #[test]
+        fn edge_endpoint_override_enables_and_maps_to_legacy() {
+            let _guard = env_lock();
+            remove_env_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            set_env_var("EDGE_OTLP_ENDPOINT", "http://localhost:4318");
+            apply_edge_otlp_endpoint_override();
+            let config = OtlpConfig::from_env();
+            let mapped = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            remove_env_var("EDGE_OTLP_ENDPOINT");
+            remove_env_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+            assert!(config.enabled);
+            assert_eq!(mapped.as_deref(), Ok("http://localhost:4318"));
+        }
+
+        #[test]
+        fn metric_export_interval_parsing() {
+            assert_eq!(
+                parse_export_interval("15000"),
+                Some(Duration::from_millis(15000))
+            );
+            assert_eq!(
+                parse_export_interval("500ms"),
+                Some(Duration::from_millis(500))
+            );
+            assert_eq!(parse_export_interval("10s"), Some(Duration::from_secs(10)));
+            assert_eq!(parse_export_interval("2m"), Some(Duration::from_secs(120)));
+            assert_eq!(parse_export_interval("0"), None);
+            assert_eq!(parse_export_interval(""), None);
+            assert_eq!(parse_export_interval("garbage"), None);
         }
 
         #[test]

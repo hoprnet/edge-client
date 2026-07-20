@@ -154,8 +154,20 @@ let _telemetry = init_telemetry_with_extra_labels(
 Keep the returned handle alive for the full process lifetime so exporters are
 not dropped early.
 
+The configuration mirrors `hoprd`'s OTLP flow (same `EDGE_`-prefixed variables
+in place of `HOPRD_`), with one simplification: there is **no enable flag**.
+Setting an endpoint is what turns export on.
+
 Environment variables:
 
-- `OTEL_EXPORTER_OTLP_ENDPOINT` (required to enable OpenTelemetry export)
-- `EDGE_OTEL_SIGNALS` (optional comma-separated subset: `traces,logs,metrics`;
-  defaults to all signals)
+- `EDGE_OTLP_ENDPOINT` (setting this enables OpenTelemetry export). Transport is
+  inferred from the scheme (`grpc://`, `http://`, `https://`). At startup it is
+  copied into the standard `OTEL_EXPORTER_OTLP_ENDPOINT`; if both are set and
+  differ, `EDGE_OTLP_ENDPOINT` wins.
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (legacy fallback; also enables export if set)
+- `EDGE_OTEL_SIGNALS` (optional comma-separated subset of `traces,logs,metrics`;
+  defaults to `traces`)
+- `EDGE_METRIC_EXPORT_INTERVAL` (optional default metric export cadence; accepts
+  a bare millisecond integer or an `ms`/`s`/`m` suffix, e.g. `15000`, `10s`,
+  `1m`; defaults to `60s`)
+- `OTEL_SERVICE_NAME` (optional; defaults to the crate name)

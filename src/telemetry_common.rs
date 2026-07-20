@@ -3,6 +3,12 @@ use tracing_subscriber::prelude::*;
 pub(crate) fn build_base_subscriber() -> anyhow::Result<
     impl tracing::Subscriber + Send + Sync + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 > {
+    // When `RUST_LOG` is unset we fall back to a sane default: `info` globally,
+    // which keeps operational logs visible without drowning them in library
+    // noise. The per-target `=info` overrides below pin chatty transport/DB
+    // crates to `info` too, so that raising the global level to `debug`/`trace`
+    // via `RUST_LOG` does not flood the output with their internals unless the
+    // operator explicitly asks for them.
     let env_filter = match tracing_subscriber::EnvFilter::try_from_default_env() {
         Ok(filter) => filter,
         Err(_) => tracing_subscriber::filter::EnvFilter::new("info")
