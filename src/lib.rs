@@ -5,6 +5,9 @@ pub mod errors;
 #[cfg(feature = "blokli")]
 pub mod blokli;
 
+#[cfg(feature = "blokli")]
+pub mod endpoint;
+
 pub mod strategy;
 pub mod traits;
 
@@ -12,8 +15,13 @@ pub use hopr_lib;
 
 #[cfg(feature = "blokli")]
 pub use blokli::*;
+#[cfg(feature = "blokli")]
+pub use endpoint::*;
 pub use hopr_chain_connector::BlockchainConnectorConfig;
 pub use hopr_lib::exports::transport::path::PathPlannerConfig;
+// Re-exported so consumers constructing a `BlokliEndpoint` do not need their own
+// `url` dependency, which would have to match this crate's version to unify.
+pub use url::Url;
 
 /// Returns a [`PathPlannerConfig`] optimised for low-latency path selection.
 ///

@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use std::{path::PathBuf, time::Duration};
 
 use edgli::{
-    Edgli, EdgliInitState, PathPlannerConfig,
+    BlokliEndpoint, Edgli, EdgliInitState, PathPlannerConfig,
     hopr_lib::{
         HopRouting, HoprKeys, HoprSessionClientConfig, IdentityRetrievalModes,
         api::{
@@ -1121,8 +1121,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     let edgli = Edgli::new(
         build_edgli_config(extra, &tuning),
         hopr_keys,
-        Some(summary.blokli_url.clone()),
-        None,
+        BlokliEndpoint::parse(Some(&summary.blokli_url), None)?,
         Some(tuning.connector_cfg),
         tuning.probe_local,
         |s: EdgliInitState| tracing::info!(?s, "edgli init"),

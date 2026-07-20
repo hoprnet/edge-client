@@ -37,14 +37,13 @@ Embed the client by constructing an `Edgli` instance. Initialization is reported
 through a visitor callback that receives `EdgliInitState` transitions.
 
 ```rust
-use edgli::{Edgli, EdgliInitState, hopr_lib::{HoprKeys, config::HoprLibConfig}};
+use edgli::{BlokliEndpoint, Edgli, EdgliInitState, hopr_lib::{HoprKeys, config::HoprLibConfig}};
 
 async fn run(cfg: HoprLibConfig, keys: HoprKeys) -> anyhow::Result<()> {
     let edgli = Edgli::new(
         cfg,
         keys,
-        None,  // blokli URL (optional)
-        None,  // blokli DNS override (optional)
+        BlokliEndpoint::default(), // production endpoint, system DNS
         None,  // BlockchainConnectorConfig (optional)
         false, // probe_local_addresses: filter non-public peer addresses
         |state: EdgliInitState| tracing::info!(?state, "init"),
@@ -56,6 +55,21 @@ async fn run(cfg: HoprLibConfig, keys: HoprKeys) -> anyhow::Result<()> {
     Ok(())
 }
 ```
+
+To reach Blokli when system DNS is unavailable, pin the endpoint host to a fixed
+address. The request URL is not rewritten, so the HTTP `Host` header, TLS SNI and
+certificate validation still use the original hostname:
+
+```rust
+use edgli::{BlokliDnsOverride, BlokliEndpoint};
+
+let endpoint = BlokliEndpoint::default()
+    .with_dns_override(Some("10.1.2.1:3002".parse::<BlokliDnsOverride>()?));
+```
+
+The same `BlokliEndpoint` is accepted by `make_incentive_operations`, so the
+on-boarding flow (balances, ticket pricing, Safe deployment, withdrawals) honours
+the override too.
 
 See `src/client.rs` for `run_hopr_edge_node_with` (spawn helper) and
 `Edgli::run_reactor_from_cfg` (edge strategy reactor: channel funding,
@@ -118,10 +132,11 @@ Key inputs handed to `Edgli::new`:
 
 - `HoprLibConfig` — host / transport / safe-module configuration.
 - `HoprKeys` — packet key + chain key pair.
-- `db_data_path` — persistent node DB directory. Edge clients are
-  ticket-originators only and therefore do not store received tickets.
-- `blokli_url` / `BlockchainConnectorConfig` — blokli endpoint and connector
-  tuning (both optional; defaults applied when omitted).
+- `BlokliEndpoint` — blokli service URL plus an optional DNS override that
+  bypasses system DNS for that host. `BlokliEndpoint::default()` uses the
+  production endpoint and system DNS.
+- `BlockchainConnectorConfig` — connector tuning (optional; defaults applied
+  when omitted).
 
 ## Troubleshooting
 
