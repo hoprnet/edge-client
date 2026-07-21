@@ -1,3 +1,5 @@
+// The concrete client needs both an async runtime and a blockchain connector;
+// `blokli` is currently the only supported connector.
 #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
 pub mod client;
 pub mod errors;
@@ -17,10 +19,12 @@ pub use hopr_lib;
 pub use blokli::*;
 #[cfg(feature = "blokli")]
 pub use endpoint::*;
+#[cfg(feature = "blokli")]
 pub use hopr_chain_connector::BlockchainConnectorConfig;
 pub use hopr_lib::exports::transport::path::PathPlannerConfig;
 // Re-exported so consumers constructing a `BlokliEndpoint` do not need their own
 // `url` dependency, which would have to match this crate's version to unify.
+#[cfg(feature = "blokli")]
 pub use url::Url;
 
 /// Returns a [`PathPlannerConfig`] optimised for low-latency path selection.

@@ -257,11 +257,13 @@
               }
             );
 
+            # Append to (not replace) any cargoExtraArgs set in commonArgs so
+            # shared flags keep applying to the feature-matrix checks.
             feature-minimal = craneLib.cargoBuild (
               commonArgs
               // {
                 inherit cargoArtifacts;
-                cargoExtraArgs = "--locked --no-default-features";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features";
               }
             );
 
@@ -269,7 +271,7 @@
               commonArgs
               // {
                 inherit cargoArtifacts;
-                cargoExtraArgs = "--locked --no-default-features --features runtime-tokio";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features runtime-tokio";
               }
             );
 
@@ -277,7 +279,7 @@
               commonArgs
               // {
                 inherit cargoArtifacts;
-                cargoExtraArgs = "--locked --no-default-features --features blokli";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features blokli";
               }
             );
 

@@ -75,21 +75,23 @@ The same `BlokliEndpoint` is accepted by `make_incentive_operations`, so the
 on-boarding flow (balances, ticket pricing, Safe deployment, withdrawals)
 honours the override too.
 
+`BlokliEndpoint`, `BlokliDnsOverride` and `make_incentive_operations` are
+blokli-specific: they are only available with the `blokli` feature enabled
+(it is on by default).
+
 See `src/client.rs` for `run_hopr_edge_node_with` (spawn helper) and
 `Edgli::run_reactor_from_cfg` (edge strategy reactor: channel funding,
 pending-close sweeping) when the `blokli` feature is enabled.
 
 ### Feature flags
 
-| flag             | default | effect                                                    |
-| ---------------- | :-----: | --------------------------------------------------------- |
-| `runtime-tokio`  |   yes   | Tokio runtime integration                                 |
-| `prometheus`     |   yes   | Prometheus metrics via `hopr-lib`                         |
-| `blokli`         |   yes   | Blokli-backed trustful blockchain connector               |
-| `session-server` |   no    | Enables the session-server side of `hopr-lib`             |
-| `telemetry`      |   no    | OpenTelemetry OTLP export                                 |
-| `testing`        |   no    | Test-only helpers from `hopr-lib`                         |
-| `prof`           |   no    | `tokio-console` subscriber (needs `--cfg tokio_unstable`) |
+| flag            | default | effect                                                    |
+| --------------- | :-----: | --------------------------------------------------------- |
+| `runtime-tokio` |   yes   | Tokio runtime integration                                 |
+| `blokli`        |   yes   | Blokli-backed trustful blockchain connector               |
+| `telemetry`     |   no    | OpenTelemetry OTLP export                                 |
+| `testing`       |   no    | Test-only helpers from `hopr-lib`                         |
+| `prof`          |   no    | `tokio-console` subscriber (needs `--cfg tokio_unstable`) |
 
 The concrete `Edgli` client and the `edgli` binary require both `runtime-tokio`
 and `blokli`. Other feature combinations still build the feature-independent
