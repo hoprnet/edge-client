@@ -76,8 +76,8 @@ on-boarding flow (balances, ticket pricing, Safe deployment, withdrawals)
 honours the override too.
 
 `BlokliEndpoint`, `BlokliDnsOverride` and `make_incentive_operations` are
-blokli-specific: they are only available with the `blokli` feature enabled
-(it is on by default).
+blokli-specific: they are only available with the `blokli` feature enabled (it
+is on by default).
 
 See `src/client.rs` for `run_hopr_edge_node_with` (spawn helper) and
 `Edgli::run_reactor_from_cfg` (edge strategy reactor: channel funding,

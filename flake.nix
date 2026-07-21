@@ -271,7 +271,8 @@
               commonArgs
               // {
                 inherit cargoArtifacts;
-                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features runtime-tokio";
+                cargoExtraArgs =
+                  (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features runtime-tokio";
               }
             );
 
@@ -279,7 +280,8 @@
               commonArgs
               // {
                 inherit cargoArtifacts;
-                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features blokli";
+                cargoExtraArgs =
+                  (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features blokli";
               }
             );
 
