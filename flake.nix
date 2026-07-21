@@ -257,6 +257,30 @@
               }
             );
 
+            feature-minimal = craneLib.cargoBuild (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoExtraArgs = "--locked --no-default-features";
+              }
+            );
+
+            feature-runtime-tokio = craneLib.cargoBuild (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoExtraArgs = "--locked --no-default-features --features runtime-tokio";
+              }
+            );
+
+            feature-blokli = craneLib.cargoBuild (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoExtraArgs = "--locked --no-default-features --features blokli";
+              }
+            );
+
             # Audit dependencies
             audit = craneLib.cargoAudit {
               inherit src advisory-db;

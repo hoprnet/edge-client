@@ -71,7 +71,7 @@ pub struct CliArgs {
         long,
         env = "HOPR_EDGE_BLOKLI_DNS_OVERRIDE",
         value_parser = BlokliDnsOverride::from_str,
-        help = "The DNS override for the blokli provider, with format <IP_ADDRESS>[:<PORT>]",
+        help = "The DNS override for the blokli provider; IPv6 addresses with a port must use brackets, for example [::1]:3002",
         required = false
     )]
     pub blokli_dns_override: Option<BlokliDnsOverride>,
@@ -222,8 +222,10 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    let blokli_endpoint =
-        BlokliEndpoint::parse(args.blokli_url.as_deref(), args.blokli_dns_override)?;
+    let mut blokli_endpoint = BlokliEndpoint::from_optional_url(args.blokli_url.as_deref())?;
+    if let Some(dns_override) = args.blokli_dns_override {
+        blokli_endpoint = blokli_endpoint.with_dns_override(dns_override);
+    }
 
     let edgli = edgli::Edgli::new(
         cfg,

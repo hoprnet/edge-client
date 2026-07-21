@@ -1,4 +1,4 @@
-#[cfg(feature = "runtime-tokio")]
+#[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
 pub mod client;
 pub mod errors;
 
@@ -33,8 +33,9 @@ pub use url::Url;
 /// `min_ack_rate` controls the minimum message-acknowledgement rate an edge
 /// must exhibit before it is eligible for path inclusion.
 ///
-/// Pass the result as the `path_planner` argument of [`Edgli::new`] or
-/// [`run_hopr_edge_node_with`] to activate latency-optimised routing.
+/// Pass the result as the `path_planner` configuration when constructing an
+/// edge client to activate latency-optimised routing. The concrete client is
+/// available when both the `runtime-tokio` and `blokli` features are enabled.
 pub fn latency_path_planner_config(min_ack_rate: f64) -> PathPlannerConfig {
     PathPlannerConfig {
         min_ack_rate,
@@ -44,7 +45,7 @@ pub fn latency_path_planner_config(min_ack_rate: f64) -> PathPlannerConfig {
     }
 }
 
-#[cfg(feature = "runtime-tokio")]
+#[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
 pub use client::*;
 pub use traits::{EdgeNodeApi, NodeBalances};
 

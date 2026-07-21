@@ -57,19 +57,23 @@ async fn run(cfg: HoprLibConfig, keys: HoprKeys) -> anyhow::Result<()> {
 ```
 
 To reach Blokli when system DNS is unavailable, pin the endpoint host to a fixed
-address. The request URL is not rewritten, so the HTTP `Host` header, TLS SNI and
-certificate validation still use the original hostname:
+address. The request URL is not rewritten, so the HTTP `Host` header, TLS SNI
+and certificate validation still use the original hostname:
 
 ```rust
 use edgli::{BlokliDnsOverride, BlokliEndpoint};
 
 let endpoint = BlokliEndpoint::default()
-    .with_dns_override(Some("10.1.2.1:3002".parse::<BlokliDnsOverride>()?));
+    .with_dns_override("10.1.2.1:3002".parse::<BlokliDnsOverride>()?);
 ```
 
+IPv6 addresses with a port use bracketed socket syntax, for example
+`[::1]:3002`. An unbracketed value such as `::1:3002` is treated as an IPv6
+address without a separate port.
+
 The same `BlokliEndpoint` is accepted by `make_incentive_operations`, so the
-on-boarding flow (balances, ticket pricing, Safe deployment, withdrawals) honours
-the override too.
+on-boarding flow (balances, ticket pricing, Safe deployment, withdrawals)
+honours the override too.
 
 See `src/client.rs` for `run_hopr_edge_node_with` (spawn helper) and
 `Edgli::run_reactor_from_cfg` (edge strategy reactor: channel funding,
@@ -86,6 +90,10 @@ pending-close sweeping) when the `blokli` feature is enabled.
 | `telemetry`      |   no    | OpenTelemetry OTLP export                                 |
 | `testing`        |   no    | Test-only helpers from `hopr-lib`                         |
 | `prof`           |   no    | `tokio-console` subscriber (needs `--cfg tokio_unstable`) |
+
+The concrete `Edgli` client and the `edgli` binary require both `runtime-tokio`
+and `blokli`. Other feature combinations still build the feature-independent
+library modules.
 
 ## Testing
 

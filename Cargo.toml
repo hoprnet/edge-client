@@ -8,6 +8,11 @@ homepage = "https://hoprnet.org/"
 repository = "https://github.com/hoprnet/edge-client"
 license = "GPL-3.0-only"
 
+[[bin]]
+name = "edgli"
+path = "src/main.rs"
+required-features = ["runtime-tokio", "blokli"]
+
 [features]
 default = ["runtime-tokio", "blokli"]
 runtime-tokio = [
@@ -25,7 +30,7 @@ telemetry = [
   # "dep:tracing-opentelemetry",
 ]
 testing = ["hopr-lib/testing"]
-blokli = []
+blokli = ["dep:tokio"]
 
 # To use profiling:
 # 1. Set RUSTFLAGS="--cfg tokio_unstable" before building

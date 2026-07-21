@@ -1121,7 +1121,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     let edgli = Edgli::new(
         build_edgli_config(extra, &tuning),
         hopr_keys,
-        BlokliEndpoint::parse(Some(&summary.blokli_url), None)?,
+        BlokliEndpoint::from_optional_url(Some(&summary.blokli_url))?,
         Some(tuning.connector_cfg),
         tuning.probe_local,
         |s: EdgliInitState| tracing::info!(?s, "edgli init"),

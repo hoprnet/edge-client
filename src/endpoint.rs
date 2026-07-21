@@ -17,6 +17,15 @@ use url::Url;
 use crate::blokli::DEFAULT_BLOKLI_URL;
 use crate::errors::EdgliError;
 
+/// Error returned when a [`BlokliDnsOverride`] cannot be parsed.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ParseBlokliDnsOverrideError {
+    /// The input is neither an IP address nor an IP address with a port.
+    #[error("invalid DNS override '{input}', expected <IP_ADDRESS> or <IP_ADDRESS>:<PORT>")]
+    InvalidFormat { input: String },
+}
+
 /// DNS resolution override for the Blokli endpoint host.
 ///
 /// Pins the endpoint hostname to a fixed address so no system DNS lookup is needed.
@@ -24,6 +33,8 @@ use crate::errors::EdgliError;
 /// validation still use the original hostname.
 ///
 /// When [`Self::port`] is `None`, the endpoint URL's port (or its scheme default) is used.
+/// IPv6 addresses with a port must use brackets, for example `[::1]:3002`;
+/// an unbracketed value such as `::1:3002` is parsed as an address without a port.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BlokliDnsOverride {
     /// IP address to connect to instead of resolving the endpoint host.
@@ -40,7 +51,7 @@ impl BlokliDnsOverride {
 }
 
 impl FromStr for BlokliDnsOverride {
-    type Err = String;
+    type Err = ParseBlokliDnsOverrideError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         if let Ok(ip) = value.parse::<IpAddr>() {
@@ -54,9 +65,9 @@ impl FromStr for BlokliDnsOverride {
             });
         }
 
-        Err(format!(
-            "invalid DNS override '{value}', expected <IP_ADDRESS> or <IP_ADDRESS>:<PORT>"
-        ))
+        Err(ParseBlokliDnsOverrideError::InvalidFormat {
+            input: value.to_string(),
+        })
     }
 }
 
@@ -99,17 +110,15 @@ impl BlokliEndpoint {
     }
 
     /// Sets the DNS override, replacing any previously configured one.
-    pub fn with_dns_override(mut self, dns_override: Option<BlokliDnsOverride>) -> Self {
-        self.dns_override = dns_override;
+    pub fn with_dns_override(mut self, dns_override: BlokliDnsOverride) -> Self {
+        self.dns_override = Some(dns_override);
         self
     }
 
-    /// Creates an endpoint from a URL string, falling back to [`DEFAULT_BLOKLI_URL`]
-    /// when `url` is `None`.
-    pub fn parse(
-        url: Option<&str>,
-        dns_override: Option<BlokliDnsOverride>,
-    ) -> Result<Self, EdgliError> {
+    /// Creates an endpoint from an optional URL string.
+    ///
+    /// Uses [`DEFAULT_BLOKLI_URL`] when `url` is `None`.
+    pub fn from_optional_url(url: Option<&str>) -> Result<Self, EdgliError> {
         let url = match url {
             Some(url) => url
                 .parse()
@@ -117,7 +126,10 @@ impl BlokliEndpoint {
             None => DEFAULT_BLOKLI_URL.clone(),
         };
 
-        Ok(Self { url, dns_override })
+        Ok(Self {
+            url,
+            dns_override: None,
+        })
     }
 
     /// Converts the endpoint into the chain connector's client configuration.
@@ -147,28 +159,29 @@ mod tests {
     }
 
     #[test]
-    fn parse_defaults_to_production_url() {
-        let endpoint = BlokliEndpoint::parse(None, None).unwrap();
+    fn from_optional_url_defaults_to_production_url() {
+        let endpoint = BlokliEndpoint::from_optional_url(None).unwrap();
         assert_eq!(endpoint.url, *DEFAULT_BLOKLI_URL);
         assert_eq!(endpoint.dns_override, None);
     }
 
     #[test]
-    fn parse_keeps_dns_override() {
-        let dns_override = Some(BlokliDnsOverride::new(v4(10, 1, 2, 1), Some(3002)));
+    fn from_optional_url_keeps_custom_url() {
         let endpoint =
-            BlokliEndpoint::parse(Some("https://blokli.example.com"), dns_override).unwrap();
+            BlokliEndpoint::from_optional_url(Some("https://blokli.example.com")).unwrap();
         assert_eq!(endpoint.url.as_str(), "https://blokli.example.com/");
-        assert_eq!(endpoint.dns_override, dns_override);
+        assert_eq!(endpoint.dns_override, None);
     }
 
     #[test]
-    fn parse_rejects_invalid_url() {
-        let error = BlokliEndpoint::parse(Some("not a url"), None).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "configuration error: 'invalid Blokli URL 'not a url': relative URL without a base'"
-        );
+    fn from_optional_url_rejects_invalid_url() {
+        let error = BlokliEndpoint::from_optional_url(Some("not a url")).unwrap_err();
+        match error {
+            EdgliError::ConfigError(message) => {
+                assert!(message.starts_with("invalid Blokli URL 'not a url':"));
+            }
+            other => panic!("expected configuration error, got {other}"),
+        }
     }
 
     #[test]
@@ -185,7 +198,7 @@ mod tests {
     #[test]
     fn to_client_config_propagates_dns_override() {
         let dns_override = BlokliDnsOverride::new(v4(10, 1, 2, 1), Some(3002));
-        let endpoint = BlokliEndpoint::default().with_dns_override(Some(dns_override));
+        let endpoint = BlokliEndpoint::default().with_dns_override(dns_override);
 
         let config = endpoint.to_client_config();
         assert_eq!(config.url, endpoint.url);
@@ -222,11 +235,20 @@ mod tests {
     }
 
     #[test]
+    fn from_str_treats_unbracketed_ipv6_suffix_as_address() {
+        let ip = "::1:3002".parse::<IpAddr>().unwrap();
+        let parsed: BlokliDnsOverride = "::1:3002".parse().unwrap();
+        assert_eq!(parsed, BlokliDnsOverride::new(ip, None));
+    }
+
+    #[test]
     fn from_str_rejects_garbage() {
         let error = "nope".parse::<BlokliDnsOverride>().unwrap_err();
         assert_eq!(
             error,
-            "invalid DNS override 'nope', expected <IP_ADDRESS> or <IP_ADDRESS>:<PORT>"
+            ParseBlokliDnsOverrideError::InvalidFormat {
+                input: "nope".to_string()
+            }
         );
     }
 
