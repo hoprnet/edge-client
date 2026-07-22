@@ -81,6 +81,15 @@ pub struct CliArgs {
         required = false
     )]
     pub blokli_dns_override: Option<(IpAddr, Option<u16>)>,
+
+    /// Probe non-public (private, loopback, link-local) peer addresses from announcements
+    #[arg(
+        long,
+        env = "HOPR_EDGE_PROBE_LOCAL_ADDRESSES",
+        help = "Probe non-public (private/loopback/link-local) peer addresses received in announcements (default: filtered out)",
+        default_value_t = false
+    )]
+    pub probe_local_addresses: bool,
 }
 
 #[cfg_attr(feature = "runtime-tokio", tokio::main)]
@@ -113,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
     };
     cfg.protocol.mixer.min_delay = read_ms("HOPR_INTERNAL_MIXER_MINIMUM_DELAY_IN_MS", 0);
     cfg.protocol.mixer.delay_range = read_ms("HOPR_INTERNAL_MIXER_DELAY_RANGE_IN_MS", 1);
+    cfg.protocol.path_planner = edgli::latency_path_planner_config(0.1);
 
     // Find or create an identity
     let hopr_keys: HoprKeys = IdentityRetrievalModes::FromFile {
@@ -135,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
         args.blokli_url,
         args.blokli_dns_override,
         None,
+        args.probe_local_addresses,
         |s| {
             info!(?s, "Initialization stage");
         },

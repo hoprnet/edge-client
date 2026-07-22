@@ -4,7 +4,7 @@ use hopr_lib::api::types::primitive::prelude::{
     Address, HoprBalance, UnitaryFloatOps as _, XDaiBalance,
 };
 pub use hopr_strategy::channel_lifecycle::{
-    ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig,
+    ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig, SelectorProfile,
 };
 
 #[cfg(feature = "runtime-tokio")]
