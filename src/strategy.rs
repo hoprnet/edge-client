@@ -118,7 +118,8 @@ pub fn compute_funding_config(
 /// Minimum recommended wxHOPR and xDAI balance to open the target number of channels.
 #[derive(Clone, Copy, Debug)]
 pub struct BalanceRecommendation {
-    /// Minimum wxHOPR needed to stake the missing channels.
+    /// Minimum wxHOPR needed to stake the missing channels, plus the one-time
+    /// key-binding fee when the node has not announced itself on-chain yet.
     pub wxhopr: HoprBalance,
     /// Minimum xDAI for gas (fixed at [`hopr_lib::SUGGESTED_NATIVE_BALANCE`]).
     pub xdai: XDaiBalance,
@@ -157,22 +158,26 @@ pub struct Capacity {
 }
 
 /// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels.
+///
+/// `key_binding_fee` is the one-time announcement fee added on top of the channel
+/// stakes; pass zero when the node's key is already bound on-chain. On networks
+/// with a dust ticket price (e.g. rotsee: 100 wei tickets, 0.01 wxHOPR fee) the
+/// fee dominates the recommendation, so omitting it underfunds the node.
 pub(crate) fn compute_balance_recommendation(
     ticket_price: HoprBalance,
     win_prob: f64,
     cfg: &IncentiveConfiguration,
     missing_channels: usize,
+    key_binding_fee: HoprBalance,
 ) -> anyhow::Result<BalanceRecommendation> {
-    if missing_channels == 0 {
-        return Ok(BalanceRecommendation {
-            wxhopr: HoprBalance::zero(),
-            xdai: *hopr_lib::SUGGESTED_NATIVE_BALANCE,
-        });
-    }
-    let stake_per_channel = compute_funding_config(ticket_price, win_prob, cfg)?.initial_balance;
-    let wxhopr = stake_per_channel * (missing_channels as u64);
+    let stake = if missing_channels == 0 {
+        HoprBalance::zero()
+    } else {
+        compute_funding_config(ticket_price, win_prob, cfg)?.initial_balance
+            * (missing_channels as u64)
+    };
     Ok(BalanceRecommendation {
-        wxhopr,
+        wxhopr: stake + key_binding_fee,
         xdai: *hopr_lib::SUGGESTED_NATIVE_BALANCE,
     })
 }
@@ -217,7 +222,9 @@ pub(crate) fn compute_capacity(
 /// `cfg.target_open_channels` channels from scratch.
 ///
 /// Queries ticket pricing from the safeless chain interactor so this can be
-/// called before the full node is started (e.g. during onboarding).
+/// called before the full node is started (e.g. during onboarding). Because
+/// the node starts from scratch, the one-time key-binding (announcement) fee
+/// is included on top of the channel stakes.
 #[cfg(feature = "blokli")]
 pub async fn minimum_balance_recommendation(
     incentive_ops: &dyn crate::blokli::IncentiveOperations,
@@ -225,7 +232,14 @@ pub async fn minimum_balance_recommendation(
 ) -> anyhow::Result<BalanceRecommendation> {
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
-    compute_balance_recommendation(stats.ticket_price, win_prob, cfg, cfg.target_open_channels)
+    let key_binding_fee = incentive_ops.key_binding_fee().await?;
+    compute_balance_recommendation(
+        stats.ticket_price,
+        win_prob,
+        cfg,
+        cfg.target_open_channels,
+        key_binding_fee,
+    )
 }
 
 /// Returns the default [`MultiStrategyConfig`] for an edge client reactor.
@@ -401,10 +415,45 @@ mod tests {
             1.0,
             &IncentiveConfiguration::default(),
             0,
+            HoprBalance::zero(),
         )
         .unwrap();
         assert_eq!(rec.wxhopr, HoprBalance::zero());
         assert_eq!(rec.xdai, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
+    }
+
+    #[test]
+    fn compute_balance_recommendation_includes_key_binding_fee() {
+        // rotsee-like: the fee dwarfs the channel stakes and must be added on top
+        let fee = HoprBalance::new_base(3);
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            &IncentiveConfiguration {
+                desired_message_count: 1,
+                ..Default::default()
+            },
+            8,
+            fee,
+        )
+        .unwrap();
+        assert_eq!(rec.wxhopr, HoprBalance::new_base(10) * 8u64 + fee);
+    }
+
+    #[test]
+    fn compute_balance_recommendation_zero_missing_still_includes_fee() {
+        // No channels to fund, key not yet bound: recommendation is exactly the
+        // fee — and a zero ticket price must not error on this path.
+        let fee = HoprBalance::new_base(1);
+        let rec = compute_balance_recommendation(
+            HoprBalance::zero(),
+            1.0,
+            &IncentiveConfiguration::default(),
+            0,
+            fee,
+        )
+        .unwrap();
+        assert_eq!(rec.wxhopr, fee);
     }
 
     #[test]
@@ -418,6 +467,7 @@ mod tests {
                 ..Default::default()
             },
             8,
+            HoprBalance::zero(),
         )
         .unwrap();
         assert_eq!(rec.wxhopr, HoprBalance::new_base(10) * 8u64);
@@ -431,7 +481,14 @@ mod tests {
             min_open_channels: 0,
             ..Default::default()
         };
-        let rec = compute_balance_recommendation(HoprBalance::new_base(10), 1.0, &cfg, 0).unwrap();
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            &cfg,
+            0,
+            HoprBalance::zero(),
+        )
+        .unwrap();
         assert_eq!(rec.wxhopr, HoprBalance::zero());
     }
 

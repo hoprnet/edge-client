@@ -77,6 +77,10 @@ pub trait IncentiveOperations: Send + Sync {
     /// Fetch current on-chain ticket pricing parameters.
     async fn ticket_stats(&self) -> anyhow::Result<TicketStats>;
 
+    /// Fetch the one-time key-binding fee burned from the Safe when a fresh
+    /// node announces itself on-chain. Not charged again once the account exists.
+    async fn key_binding_fee(&self) -> anyhow::Result<HoprBalance>;
+
     /// Fetch the WxHOPR and xDAI balances for this key-pair.
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)>;
 
@@ -204,6 +208,12 @@ where
         })
     }
 
+    pub async fn key_binding_fee(&self) -> anyhow::Result<HoprBalance> {
+        ChainValues::key_binding_fee(&self.connector)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
     pub async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
         let me = self.chain_key.public().to_address();
         let hopr: HoprBalance = ChainValues::balance(&self.connector, me)
@@ -239,6 +249,10 @@ where
 
     async fn ticket_stats(&self) -> anyhow::Result<TicketStats> {
         SafelessInteractor::ticket_stats(self).await
+    }
+
+    async fn key_binding_fee(&self) -> anyhow::Result<HoprBalance> {
+        SafelessInteractor::key_binding_fee(self).await
     }
 
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {

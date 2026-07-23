@@ -387,7 +387,14 @@ impl Edgli {
             .count();
 
         let missing = cfg.target_open_channels.saturating_sub(open_to_connected);
-        super::strategy::compute_balance_recommendation(ticket_price, win_prob, cfg, missing)
+        // A running node has already paid the one-time key-binding fee.
+        super::strategy::compute_balance_recommendation(
+            ticket_price,
+            win_prob,
+            cfg,
+            missing,
+            HoprBalance::zero(),
+        )
     }
 
     /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].
