@@ -387,13 +387,15 @@ impl Edgli {
             .count();
 
         let missing = cfg.target_open_channels.saturating_sub(open_to_connected);
-        // A running node has already paid the one-time key-binding fee.
+        // Zero for a running node — hopr-lib announces during startup — but
+        // verified on-chain rather than assumed.
+        let key_binding_fee = super::strategy::pending_key_binding_fee(chain, source).await?;
         super::strategy::compute_balance_recommendation(
             ticket_price,
             win_prob,
             cfg,
             missing,
-            HoprBalance::zero(),
+            key_binding_fee,
         )
     }
 

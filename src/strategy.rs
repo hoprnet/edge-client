@@ -7,8 +7,10 @@ pub use hopr_strategy::channel_lifecycle::{
     ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig, SelectorProfile,
 };
 
+#[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
+use hopr_lib::api::chain::{AccountSelector, ChainReadAccountOperations, ChainValues};
 #[cfg(feature = "runtime-tokio")]
-use hopr_lib::api::{chain::ChainValues as _, node::HasChainApi as _};
+use hopr_lib::api::node::HasChainApi as _;
 
 /// Subset of strategies relevant to an edge node.
 pub enum EdgeStrategyKind {
@@ -160,9 +162,10 @@ pub struct Capacity {
 /// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels.
 ///
 /// `key_binding_fee` is the one-time announcement fee added on top of the channel
-/// stakes; pass zero when the node's key is already bound on-chain. On networks
-/// with a dust ticket price (e.g. rotsee: 100 wei tickets, 0.01 wxHOPR fee) the
-/// fee dominates the recommendation, so omitting it underfunds the node.
+/// stakes; callers obtain it from [`pending_key_binding_fee`], which returns zero
+/// when the node's key is already bound on-chain. On networks with a dust ticket
+/// price (e.g. rotsee: 100 wei tickets, 0.01 wxHOPR fee) the fee dominates the
+/// recommendation, so omitting it underfunds the node.
 pub(crate) fn compute_balance_recommendation(
     ticket_price: HoprBalance,
     win_prob: f64,
@@ -218,13 +221,35 @@ pub(crate) fn compute_capacity(
     })
 }
 
+/// Returns the one-time key-binding fee still owed by `node_address`, verified
+/// against on-chain state: the full fee when no account exists for the address
+/// yet, zero once the key is bound (the fee is never charged twice).
+#[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
+pub(crate) async fn pending_key_binding_fee<T>(
+    chain: &T,
+    node_address: Address,
+) -> anyhow::Result<HoprBalance>
+where
+    T: ChainReadAccountOperations + ChainValues + Sync,
+{
+    let bound = chain
+        .count_accounts(AccountSelector::default().with_chain_key(node_address))
+        .await?
+        > 0;
+    if bound {
+        Ok(HoprBalance::zero())
+    } else {
+        Ok(chain.key_binding_fee().await?)
+    }
+}
+
 /// Returns the minimum recommended wxHOPR and xDAI for this node to open
 /// `cfg.target_open_channels` channels from scratch.
 ///
 /// Queries ticket pricing from the safeless chain interactor so this can be
-/// called before the full node is started (e.g. during onboarding). Because
-/// the node starts from scratch, the one-time key-binding (announcement) fee
-/// is included on top of the channel stakes.
+/// called before the full node is started (e.g. during onboarding). The
+/// one-time key-binding (announcement) fee is included on top of the channel
+/// stakes only when the node's key is not yet bound on-chain.
 #[cfg(feature = "blokli")]
 pub async fn minimum_balance_recommendation(
     incentive_ops: &dyn crate::blokli::IncentiveOperations,
@@ -232,7 +257,7 @@ pub async fn minimum_balance_recommendation(
 ) -> anyhow::Result<BalanceRecommendation> {
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
-    let key_binding_fee = incentive_ops.key_binding_fee().await?;
+    let key_binding_fee = incentive_ops.pending_key_binding_fee().await?;
     compute_balance_recommendation(
         stats.ticket_price,
         win_prob,

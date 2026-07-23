@@ -77,9 +77,10 @@ pub trait IncentiveOperations: Send + Sync {
     /// Fetch current on-chain ticket pricing parameters.
     async fn ticket_stats(&self) -> anyhow::Result<TicketStats>;
 
-    /// Fetch the one-time key-binding fee burned from the Safe when a fresh
-    /// node announces itself on-chain. Not charged again once the account exists.
-    async fn key_binding_fee(&self) -> anyhow::Result<HoprBalance>;
+    /// Returns the one-time key-binding fee burned from the Safe when a fresh
+    /// node announces itself on-chain, verified against on-chain state: the full
+    /// fee when this key-pair has no account yet, zero once the key is bound.
+    async fn pending_key_binding_fee(&self) -> anyhow::Result<HoprBalance>;
 
     /// Fetch the WxHOPR and xDAI balances for this key-pair.
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)>;
@@ -208,10 +209,9 @@ where
         })
     }
 
-    pub async fn key_binding_fee(&self) -> anyhow::Result<HoprBalance> {
-        ChainValues::key_binding_fee(&self.connector)
-            .await
-            .map_err(anyhow::Error::from)
+    pub async fn pending_key_binding_fee(&self) -> anyhow::Result<HoprBalance> {
+        let me = self.chain_key.public().to_address();
+        crate::strategy::pending_key_binding_fee(self.connector.as_ref(), me).await
     }
 
     pub async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
@@ -251,8 +251,8 @@ where
         SafelessInteractor::ticket_stats(self).await
     }
 
-    async fn key_binding_fee(&self) -> anyhow::Result<HoprBalance> {
-        SafelessInteractor::key_binding_fee(self).await
+    async fn pending_key_binding_fee(&self) -> anyhow::Result<HoprBalance> {
+        SafelessInteractor::pending_key_binding_fee(self).await
     }
 
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
@@ -382,6 +382,43 @@ mod tests {
             connector_err.as_transaction_rejection_error().is_some(),
             "expected tx-rejection error from chain emulator, got: {connector_err:?}"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pending_key_binding_fee_charges_fee_when_key_not_bound() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+        let recipient: Address = [0x22u8; 20].into();
+
+        let client = build_test_client(me, HoprBalance::new_base(100), recipient);
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        let fee = interactor.pending_key_binding_fee().await?;
+        assert_eq!(fee, "0.01 wxHOPR".parse::<HoprBalance>().unwrap());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pending_key_binding_fee_is_zero_once_key_is_bound() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+
+        let client = BlokliTestStateBuilder::default()
+            .with_generated_accounts(
+                &[&me],
+                false,
+                XDaiBalance::new_base(10),
+                HoprBalance::new_base(100),
+            )
+            .with_hopr_network_chain_info("rotsee")
+            .build_dynamic_client(placeholder_module_addr());
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        let fee = interactor.pending_key_binding_fee().await?;
+        assert_eq!(fee, HoprBalance::zero());
 
         Ok(())
     }
