@@ -77,6 +77,13 @@ pub trait IncentiveOperations: Send + Sync {
     /// Fetch current on-chain ticket pricing parameters.
     async fn ticket_stats(&self) -> anyhow::Result<TicketStats>;
 
+    /// Returns what this key-pair still owes before being fully up and running,
+    /// verified against on-chain state: the one-time key-binding fee burned from
+    /// the Safe when a fresh node announces itself (zero once the key is bound),
+    /// and the number of on-chain transactions left before channel funding can
+    /// begin (Safe deployment, Safe registration, key-binding announcement).
+    async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts>;
+
     /// Fetch the WxHOPR and xDAI balances for this key-pair.
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)>;
 
@@ -204,6 +211,13 @@ where
         })
     }
 
+    pub async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts> {
+        let me = self.chain_key.public().to_address();
+        let safe_deployed = self.retrieve_safe().await?.is_some();
+        crate::strategy::compute_costs_to_start(self.connector.as_ref(), Some(me), safe_deployed)
+            .await
+    }
+
     pub async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
         let me = self.chain_key.public().to_address();
         let hopr: HoprBalance = ChainValues::balance(&self.connector, me)
@@ -239,6 +253,10 @@ where
 
     async fn ticket_stats(&self) -> anyhow::Result<TicketStats> {
         SafelessInteractor::ticket_stats(self).await
+    }
+
+    async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts> {
+        SafelessInteractor::compute_costs_to_start(self).await
     }
 
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
@@ -368,6 +386,50 @@ mod tests {
             connector_err.as_transaction_rejection_error().is_some(),
             "expected tx-rejection error from chain emulator, got: {connector_err:?}"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn compute_costs_to_start_charges_fee_when_key_not_bound() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+        let recipient: Address = [0x22u8; 20].into();
+
+        let client = build_test_client(me, HoprBalance::new_base(100), recipient);
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        let costs = interactor.compute_costs_to_start().await?;
+        assert_eq!(
+            costs.fee_to_start,
+            "0.01 wxHOPR".parse::<HoprBalance>().unwrap()
+        );
+        // No Safe and no key binding yet: deploy + register + announce.
+        assert_eq!(costs.txs_to_start, 3);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn compute_costs_to_start_is_zero_once_key_is_bound() -> anyhow::Result<()> {
+        let chain_key = ChainKeypair::random();
+        let me = chain_key.public().to_address();
+
+        let client = BlokliTestStateBuilder::default()
+            .with_generated_accounts(
+                &[&me],
+                false,
+                XDaiBalance::new_base(10),
+                HoprBalance::new_base(100),
+            )
+            .with_hopr_network_chain_info("rotsee")
+            .build_dynamic_client(placeholder_module_addr());
+        let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
+
+        let costs = interactor.compute_costs_to_start().await?;
+        assert_eq!(costs.fee_to_start, HoprBalance::zero());
+        // Bound key implies registration and announcement are done.
+        assert_eq!(costs.txs_to_start, 0);
 
         Ok(())
     }
