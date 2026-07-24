@@ -389,14 +389,9 @@ impl Edgli {
         let missing = cfg.target_open_channels.saturating_sub(open_to_connected);
         // Zero for a running node — hopr-lib announces during startup — but
         // verified on-chain rather than assumed.
-        let fee_to_start = super::strategy::compute_fee_to_start(chain, Some(source)).await?;
-        super::strategy::compute_balance_recommendation(
-            ticket_price,
-            win_prob,
-            cfg,
-            missing,
-            fee_to_start,
-        )
+        // A running node cannot start without a Safe, so it is always deployed here.
+        let costs = super::strategy::compute_costs_to_start(chain, Some(source), true).await?;
+        super::strategy::compute_balance_recommendation(ticket_price, win_prob, cfg, missing, costs)
     }
 
     /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].

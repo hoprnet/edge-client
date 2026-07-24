@@ -77,12 +77,12 @@ pub trait IncentiveOperations: Send + Sync {
     /// Fetch current on-chain ticket pricing parameters.
     async fn ticket_stats(&self) -> anyhow::Result<TicketStats>;
 
-    /// Returns the fee still owed before this key-pair can be fully up and
-    /// running, verified against on-chain state. Today that is only the one-time
-    /// key-binding fee burned from the Safe when a fresh node announces itself:
-    /// the full fee when this key-pair has no account yet, zero once the key is
-    /// bound.
-    async fn compute_fee_to_start(&self) -> anyhow::Result<HoprBalance>;
+    /// Returns what this key-pair still owes before being fully up and running,
+    /// verified against on-chain state: the one-time key-binding fee burned from
+    /// the Safe when a fresh node announces itself (zero once the key is bound),
+    /// and the number of on-chain transactions left before channel funding can
+    /// begin (Safe deployment, Safe registration, key-binding announcement).
+    async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts>;
 
     /// Fetch the WxHOPR and xDAI balances for this key-pair.
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)>;
@@ -211,9 +211,11 @@ where
         })
     }
 
-    pub async fn compute_fee_to_start(&self) -> anyhow::Result<HoprBalance> {
+    pub async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts> {
         let me = self.chain_key.public().to_address();
-        crate::strategy::compute_fee_to_start(self.connector.as_ref(), Some(me)).await
+        let safe_deployed = self.retrieve_safe().await?.is_some();
+        crate::strategy::compute_costs_to_start(self.connector.as_ref(), Some(me), safe_deployed)
+            .await
     }
 
     pub async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
@@ -253,8 +255,8 @@ where
         SafelessInteractor::ticket_stats(self).await
     }
 
-    async fn compute_fee_to_start(&self) -> anyhow::Result<HoprBalance> {
-        SafelessInteractor::compute_fee_to_start(self).await
+    async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts> {
+        SafelessInteractor::compute_costs_to_start(self).await
     }
 
     async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
@@ -389,7 +391,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compute_fee_to_start_charges_fee_when_key_not_bound() -> anyhow::Result<()> {
+    async fn compute_costs_to_start_charges_fee_when_key_not_bound() -> anyhow::Result<()> {
         let chain_key = ChainKeypair::random();
         let me = chain_key.public().to_address();
         let recipient: Address = [0x22u8; 20].into();
@@ -397,14 +399,19 @@ mod tests {
         let client = build_test_client(me, HoprBalance::new_base(100), recipient);
         let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
 
-        let fee = interactor.compute_fee_to_start().await?;
-        assert_eq!(fee, "0.01 wxHOPR".parse::<HoprBalance>().unwrap());
+        let costs = interactor.compute_costs_to_start().await?;
+        assert_eq!(
+            costs.fee_to_start,
+            "0.01 wxHOPR".parse::<HoprBalance>().unwrap()
+        );
+        // No Safe and no key binding yet: deploy + register + announce.
+        assert_eq!(costs.txs_to_start, 3);
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn compute_fee_to_start_is_zero_once_key_is_bound() -> anyhow::Result<()> {
+    async fn compute_costs_to_start_is_zero_once_key_is_bound() -> anyhow::Result<()> {
         let chain_key = ChainKeypair::random();
         let me = chain_key.public().to_address();
 
@@ -419,8 +426,10 @@ mod tests {
             .build_dynamic_client(placeholder_module_addr());
         let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
 
-        let fee = interactor.compute_fee_to_start().await?;
-        assert_eq!(fee, HoprBalance::zero());
+        let costs = interactor.compute_costs_to_start().await?;
+        assert_eq!(costs.fee_to_start, HoprBalance::zero());
+        // Bound key implies registration and announcement are done.
+        assert_eq!(costs.txs_to_start, 0);
 
         Ok(())
     }

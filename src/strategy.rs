@@ -117,14 +117,41 @@ pub fn compute_funding_config(
     })
 }
 
-/// Minimum recommended wxHOPR and xDAI balance to open the target number of channels.
+/// One-time costs still owed before this node can be fully up and running,
+/// verified against on-chain state.
+#[derive(Clone, Copy, Debug)]
+pub struct StartupCosts {
+    /// One-time fee still owed before the node can start (today the
+    /// key-binding fee); zero once the key is bound on-chain.
+    pub fee_to_start: HoprBalance,
+    /// Number of on-chain transactions still needed before channel-funding
+    /// transactions can begin: Safe + module deployment (when no Safe exists
+    /// yet), then Safe registration and the key-binding announcement (when the
+    /// key is not bound yet). Zero for a fully set-up node.
+    pub txs_to_start: u64,
+}
+
+/// Everything still needed for this node to be fully up and running.
 #[derive(Clone, Copy, Debug)]
 pub struct BalanceRecommendation {
-    /// Minimum wxHOPR needed to stake the missing channels, plus the one-time
-    /// key-binding fee when the node has not announced itself on-chain yet.
-    pub wxhopr: HoprBalance,
-    /// Minimum xDAI for gas (fixed at [`hopr_lib::SUGGESTED_NATIVE_BALANCE`]).
-    pub xdai: XDaiBalance,
+    /// wxHOPR needed to stake the missing channels.
+    pub channel_stakes: HoprBalance,
+    /// One-time fee still owed before the node can start (today the
+    /// key-binding fee); zero once the key is bound on-chain.
+    pub fee_to_start: HoprBalance,
+    /// Number of on-chain transactions still needed before channel-funding
+    /// transactions can begin; see [`StartupCosts::txs_to_start`].
+    pub txs_to_start: u64,
+    /// Maximum xDAI fee per transaction (gas)
+    /// (fixed at [`hopr_lib::SUGGESTED_NATIVE_BALANCE`]).
+    pub xdai_fee_per_tx: XDaiBalance,
+}
+
+impl BalanceRecommendation {
+    /// Total wxHOPR to fund: channel stakes plus the fee to start.
+    pub fn total_wxhopr(&self) -> HoprBalance {
+        self.channel_stakes + self.fee_to_start
+    }
 }
 
 /// Data-throughput capacity for a stake of wxHOPR at the current ticket price.
@@ -161,18 +188,18 @@ pub struct Capacity {
 
 /// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels.
 ///
-/// `fee_to_start` is the fee still owed before the node can be fully up and
-/// running (today only the one-time announcement fee), added on top of the
-/// channel stakes; callers obtain it from [`compute_fee_to_start`], which
-/// returns zero when the node's key is already bound on-chain. On networks with
-/// a dust ticket price (e.g. rotsee: 100 wei tickets, 0.01 wxHOPR fee) the fee
-/// dominates the recommendation, so omitting it underfunds the node.
+/// `costs` are the one-time startup costs (fee and remaining transactions)
+/// reported as their own fields next to the channel stakes; callers obtain
+/// them from [`compute_costs_to_start`], which returns zeros for a fully
+/// set-up node. On networks with a dust ticket price (e.g. rotsee: 100 wei
+/// tickets, 0.01 wxHOPR fee) the fee dominates the recommendation, so omitting
+/// it underfunds the node.
 pub(crate) fn compute_balance_recommendation(
     ticket_price: HoprBalance,
     win_prob: f64,
     cfg: &IncentiveConfiguration,
     missing_channels: usize,
-    fee_to_start: HoprBalance,
+    costs: StartupCosts,
 ) -> anyhow::Result<BalanceRecommendation> {
     let stake = if missing_channels == 0 {
         HoprBalance::zero()
@@ -181,8 +208,10 @@ pub(crate) fn compute_balance_recommendation(
             * (missing_channels as u64)
     };
     Ok(BalanceRecommendation {
-        wxhopr: stake + fee_to_start,
-        xdai: *hopr_lib::SUGGESTED_NATIVE_BALANCE,
+        channel_stakes: stake,
+        fee_to_start: costs.fee_to_start,
+        txs_to_start: costs.txs_to_start,
+        xdai_fee_per_tx: *hopr_lib::SUGGESTED_NATIVE_BALANCE,
     })
 }
 
@@ -222,18 +251,22 @@ pub(crate) fn compute_capacity(
     })
 }
 
-/// Returns the fee still owed before this user can be fully up and running,
-/// verified against on-chain state. Today that is only the one-time key-binding
-/// (announcement) fee: the full fee when no account exists for `node_address`
-/// yet, zero once the key is bound (the fee is never charged twice).
+/// Returns what this user still owes before being fully up and running,
+/// verified against on-chain state: the one-time key-binding (announcement)
+/// fee — the full fee when no account exists for `node_address` yet, zero once
+/// the key is bound (the fee is never charged twice) — and the number of
+/// on-chain transactions left before channel funding can begin (Safe + module
+/// deployment, Safe registration, key-binding announcement).
 ///
 /// `node_address` is `None` when the user has no address yet — nothing can be
-/// bound, so the full fee is owed.
+/// bound, so everything is still owed. `safe_deployed` tells whether a Safe
+/// already exists for this user; a running node always has one.
 #[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
-pub(crate) async fn compute_fee_to_start<T>(
+pub(crate) async fn compute_costs_to_start<T>(
     chain: &T,
     node_address: Option<Address>,
-) -> anyhow::Result<HoprBalance>
+    safe_deployed: bool,
+) -> anyhow::Result<StartupCosts>
 where
     T: ChainReadAccountOperations + ChainValues + Sync,
 {
@@ -246,11 +279,19 @@ where
         }
         None => false,
     };
-    if bound {
-        Ok(HoprBalance::zero())
+    let fee_to_start = if bound {
+        HoprBalance::zero()
     } else {
-        Ok(chain.key_binding_fee().await?)
-    }
+        chain.key_binding_fee().await?
+    };
+    // Startup submits: Safe + module deployment (unless one exists), then Safe
+    // registration and the key-binding announcement (skipped once the key is
+    // bound — a bound key implies a completed registration).
+    let txs_to_start = u64::from(!safe_deployed) + if bound { 0 } else { 2 };
+    Ok(StartupCosts {
+        fee_to_start,
+        txs_to_start,
+    })
 }
 
 /// Returns the minimum recommended wxHOPR and xDAI for this node to open
@@ -267,13 +308,13 @@ pub async fn minimum_balance_recommendation(
 ) -> anyhow::Result<BalanceRecommendation> {
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
-    let fee_to_start = incentive_ops.compute_fee_to_start().await?;
+    let costs = incentive_ops.compute_costs_to_start().await?;
     compute_balance_recommendation(
         stats.ticket_price,
         win_prob,
         cfg,
         cfg.target_open_channels,
-        fee_to_start,
+        costs,
     )
 }
 
@@ -315,6 +356,14 @@ mod tests {
     use hopr_lib::api::types::primitive::prelude::HoprBalance;
 
     use super::*;
+
+    /// Fully set-up node: no fee owed, no startup transactions left.
+    fn no_startup_costs() -> StartupCosts {
+        StartupCosts {
+            fee_to_start: HoprBalance::zero(),
+            txs_to_start: 0,
+        }
+    }
 
     #[test]
     fn compute_funding_config_win_prob_one() {
@@ -450,16 +499,17 @@ mod tests {
             1.0,
             &IncentiveConfiguration::default(),
             0,
-            HoprBalance::zero(),
+            no_startup_costs(),
         )
         .unwrap();
-        assert_eq!(rec.wxhopr, HoprBalance::zero());
-        assert_eq!(rec.xdai, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
+        assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
+        assert_eq!(rec.xdai_fee_per_tx, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
     }
 
     #[test]
-    fn compute_balance_recommendation_includes_fee_to_start() {
-        // rotsee-like: the fee dwarfs the channel stakes and must be added on top
+    fn compute_balance_recommendation_includes_startup_costs() {
+        // rotsee-like: the fee dwarfs the channel stakes and must be reported
+        // both as its own field and in the total
         let fee = HoprBalance::new_base(3);
         let rec = compute_balance_recommendation(
             HoprBalance::new_base(10),
@@ -469,10 +519,16 @@ mod tests {
                 ..Default::default()
             },
             8,
-            fee,
+            StartupCosts {
+                fee_to_start: fee,
+                txs_to_start: 3,
+            },
         )
         .unwrap();
-        assert_eq!(rec.wxhopr, HoprBalance::new_base(10) * 8u64 + fee);
+        assert_eq!(rec.channel_stakes, HoprBalance::new_base(10) * 8u64);
+        assert_eq!(rec.fee_to_start, fee);
+        assert_eq!(rec.txs_to_start, 3);
+        assert_eq!(rec.total_wxhopr(), HoprBalance::new_base(10) * 8u64 + fee);
     }
 
     #[test]
@@ -485,10 +541,16 @@ mod tests {
             1.0,
             &IncentiveConfiguration::default(),
             0,
-            fee,
+            StartupCosts {
+                fee_to_start: fee,
+                txs_to_start: 2,
+            },
         )
         .unwrap();
-        assert_eq!(rec.wxhopr, fee);
+        assert_eq!(rec.channel_stakes, HoprBalance::zero());
+        assert_eq!(rec.fee_to_start, fee);
+        assert_eq!(rec.txs_to_start, 2);
+        assert_eq!(rec.total_wxhopr(), fee);
     }
 
     #[test]
@@ -502,11 +564,14 @@ mod tests {
                 ..Default::default()
             },
             8,
-            HoprBalance::zero(),
+            no_startup_costs(),
         )
         .unwrap();
-        assert_eq!(rec.wxhopr, HoprBalance::new_base(10) * 8u64);
-        assert_eq!(rec.xdai, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
+        assert_eq!(rec.channel_stakes, HoprBalance::new_base(10) * 8u64);
+        assert_eq!(rec.fee_to_start, HoprBalance::zero());
+        assert_eq!(rec.txs_to_start, 0);
+        assert_eq!(rec.total_wxhopr(), HoprBalance::new_base(10) * 8u64);
+        assert_eq!(rec.xdai_fee_per_tx, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
     }
 
     #[test]
@@ -521,10 +586,10 @@ mod tests {
             1.0,
             &cfg,
             0,
-            HoprBalance::zero(),
+            no_startup_costs(),
         )
         .unwrap();
-        assert_eq!(rec.wxhopr, HoprBalance::zero());
+        assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
     }
 
     #[test]
