@@ -15,14 +15,20 @@ runtime-tokio = [
   "hopr-lib/runtime-tokio",
   "hopr-transport-p2p/runtime-tokio",
   "hopr-transport-p2p/transport-quic",
+  "opentelemetry_sdk?/rt-tokio",
+  "opentelemetry_sdk?/experimental_trace_batch_span_processor_with_async_runtime",
+  "opentelemetry_sdk?/experimental_logs_batch_log_processor_with_async_runtime",
+  "opentelemetry_sdk?/experimental_metrics_periodicreader_with_async_runtime",
 ]
 # Enable hopr-lib telemetry (Prometheus metrics) and OpenTelemetry OTLP exporter
 telemetry = [
+  "runtime-tokio",
   "hopr-lib/telemetry",
   "dep:opentelemetry",
   "dep:opentelemetry-otlp",
   "dep:opentelemetry_sdk",
-  # "dep:tracing-opentelemetry",
+  "dep:flagset",
+  "dep:tracing-opentelemetry",
 ]
 testing = ["hopr-lib/testing"]
 blokli = []
@@ -60,16 +66,19 @@ tracing-subscriber = { version = "0.3.23", features = [
   "json",
   "env-filter",
 ] }
+flagset = { version = "0.4.7", optional = true }
 opentelemetry = { version = "0.32.0", optional = true }
 opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
   "trace",
+  "metrics",
+  "logs",
   "reqwest-client",
   "tls-roots",
   "http-proto",
   "grpc-tonic",
 ], optional = true }
 opentelemetry_sdk = { version = "0.32.1", optional = true }
-# tracing-opentelemetry = { version = "0.32.0", optional = true }
+tracing-opentelemetry = { version = "0.33.0", optional = true }
 url = "2.5.8"
 
 hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "118c4951f907bae5ca39083404f88357f2fa3722", features = [

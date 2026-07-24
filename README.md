@@ -139,3 +139,39 @@ Key inputs handed to `Edgli::new`:
   `RUSTFLAGS="--cfg tokio_unstable" cargo build --features prof` and attach
   `tokio-console`.
 - **Reporting issues.** <https://github.com/hoprnet/edge-client/issues>
+
+## Telemetry
+
+`edgli` exposes telemetry setup from the library so host applications can wire
+tracing/OTLP themselves.
+
+```rust
+use edgli::telemetry::{init_telemetry, init_telemetry_with_extra_labels};
+
+let _telemetry = init_telemetry(&hopr_keys)?;
+let _telemetry = init_telemetry_with_extra_labels(
+    &hopr_keys,
+    vec![("type", "client")],
+)?;
+```
+
+Keep the returned handle alive for the full process lifetime so exporters are
+not dropped early.
+
+The configuration mirrors `hoprd`'s OTLP flow (same `EDGE_`-prefixed variables
+in place of `HOPRD_`), with one simplification: there is **no enable flag**.
+Setting an endpoint is what turns export on.
+
+Environment variables:
+
+- `EDGE_OTLP_ENDPOINT` (setting this enables OpenTelemetry export). Transport is
+  inferred from the scheme (`grpc://`, `http://`, `https://`). At startup it is
+  copied into the standard `OTEL_EXPORTER_OTLP_ENDPOINT`; if both are set and
+  differ, `EDGE_OTLP_ENDPOINT` wins.
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (legacy fallback; also enables export if set)
+- `EDGE_OTEL_SIGNALS` (optional comma-separated subset of `traces,logs,metrics`;
+  defaults to `traces`)
+- `EDGE_METRIC_EXPORT_INTERVAL` (optional default metric export cadence; accepts
+  a bare millisecond integer or an `ms`/`s`/`m` suffix, e.g. `15000`, `10s`,
+  `1m`; defaults to `60s`)
+- `OTEL_SERVICE_NAME` (optional; defaults to the crate name)
