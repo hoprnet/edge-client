@@ -161,17 +161,18 @@ pub struct Capacity {
 
 /// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels.
 ///
-/// `key_binding_fee` is the one-time announcement fee added on top of the channel
-/// stakes; callers obtain it from [`pending_key_binding_fee`], which returns zero
-/// when the node's key is already bound on-chain. On networks with a dust ticket
-/// price (e.g. rotsee: 100 wei tickets, 0.01 wxHOPR fee) the fee dominates the
-/// recommendation, so omitting it underfunds the node.
+/// `fee_to_start` is the fee still owed before the node can be fully up and
+/// running (today only the one-time announcement fee), added on top of the
+/// channel stakes; callers obtain it from [`compute_fee_to_start`], which
+/// returns zero when the node's key is already bound on-chain. On networks with
+/// a dust ticket price (e.g. rotsee: 100 wei tickets, 0.01 wxHOPR fee) the fee
+/// dominates the recommendation, so omitting it underfunds the node.
 pub(crate) fn compute_balance_recommendation(
     ticket_price: HoprBalance,
     win_prob: f64,
     cfg: &IncentiveConfiguration,
     missing_channels: usize,
-    key_binding_fee: HoprBalance,
+    fee_to_start: HoprBalance,
 ) -> anyhow::Result<BalanceRecommendation> {
     let stake = if missing_channels == 0 {
         HoprBalance::zero()
@@ -180,7 +181,7 @@ pub(crate) fn compute_balance_recommendation(
             * (missing_channels as u64)
     };
     Ok(BalanceRecommendation {
-        wxhopr: stake + key_binding_fee,
+        wxhopr: stake + fee_to_start,
         xdai: *hopr_lib::SUGGESTED_NATIVE_BALANCE,
     })
 }
@@ -221,21 +222,30 @@ pub(crate) fn compute_capacity(
     })
 }
 
-/// Returns the one-time key-binding fee still owed by `node_address`, verified
-/// against on-chain state: the full fee when no account exists for the address
+/// Returns the fee still owed before this user can be fully up and running,
+/// verified against on-chain state. Today that is only the one-time key-binding
+/// (announcement) fee: the full fee when no account exists for `node_address`
 /// yet, zero once the key is bound (the fee is never charged twice).
+///
+/// `node_address` is `None` when the user has no address yet — nothing can be
+/// bound, so the full fee is owed.
 #[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
-pub(crate) async fn pending_key_binding_fee<T>(
+pub(crate) async fn compute_fee_to_start<T>(
     chain: &T,
-    node_address: Address,
+    node_address: Option<Address>,
 ) -> anyhow::Result<HoprBalance>
 where
     T: ChainReadAccountOperations + ChainValues + Sync,
 {
-    let bound = chain
-        .count_accounts(AccountSelector::default().with_chain_key(node_address))
-        .await?
-        > 0;
+    let bound = match node_address {
+        Some(addr) => {
+            chain
+                .count_accounts(AccountSelector::default().with_chain_key(addr))
+                .await?
+                > 0
+        }
+        None => false,
+    };
     if bound {
         Ok(HoprBalance::zero())
     } else {
@@ -257,13 +267,13 @@ pub async fn minimum_balance_recommendation(
 ) -> anyhow::Result<BalanceRecommendation> {
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
-    let key_binding_fee = incentive_ops.pending_key_binding_fee().await?;
+    let fee_to_start = incentive_ops.compute_fee_to_start().await?;
     compute_balance_recommendation(
         stats.ticket_price,
         win_prob,
         cfg,
         cfg.target_open_channels,
-        key_binding_fee,
+        fee_to_start,
     )
 }
 
@@ -448,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_balance_recommendation_includes_key_binding_fee() {
+    fn compute_balance_recommendation_includes_fee_to_start() {
         // rotsee-like: the fee dwarfs the channel stakes and must be added on top
         let fee = HoprBalance::new_base(3);
         let rec = compute_balance_recommendation(

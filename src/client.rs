@@ -389,13 +389,13 @@ impl Edgli {
         let missing = cfg.target_open_channels.saturating_sub(open_to_connected);
         // Zero for a running node — hopr-lib announces during startup — but
         // verified on-chain rather than assumed.
-        let key_binding_fee = super::strategy::pending_key_binding_fee(chain, source).await?;
+        let fee_to_start = super::strategy::compute_fee_to_start(chain, Some(source)).await?;
         super::strategy::compute_balance_recommendation(
             ticket_price,
             win_prob,
             cfg,
             missing,
-            key_binding_fee,
+            fee_to_start,
         )
     }
 
