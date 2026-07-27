@@ -1160,7 +1160,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
 
     let EdgeStrategyKind::ChannelLifecycle(lc0) = &strat_cfg.strategies[0];
     tracing::info!(
-        initial_balance = ?lc0.funding.initial_balance,
+        initial_capacity = ?lc0.funding.initial_capacity,
         target_channels = sizing.target_open_channels,
         "strategy configured; starting reactor"
     );
