@@ -105,6 +105,12 @@ pub fn compute_funding_config(sizing: &IncentiveConfiguration) -> anyhow::Result
 /// capacity→balance conversion of `initial_capacity`
 /// (`ticket_price × packets × ASSUMED_HOPS / win_prob`).
 ///
+/// **Semantics:** `ticket_price` is the *expected* per-hop value
+/// (= `face_value × win_prob`), not the face value. The ticket face value
+/// (amount locked per ticket) = `ticket_price / win_prob`, which is why the
+/// stake divides by `win_prob`: the channel must hold at least one face value
+/// to mint a ticket at all.
+///
 /// Uses `desired_message_count` directly as the packet count (capacity is
 /// `N × SESSION_MTU`, and `SESSION_MTU < HoprPacket::PAYLOAD_SIZE`, so the
 /// strategy's own `ceil(bytes / PAYLOAD_SIZE)` resolves to ≤ N packets). This
@@ -209,6 +215,10 @@ pub(crate) fn compute_balance_recommendation(
     let stake = if missing_channels == 0 {
         HoprBalance::zero()
     } else {
+        anyhow::ensure!(
+            cfg.desired_message_count > 0,
+            "desired_message_count is zero; cannot size a channel stake"
+        );
         initial_channel_stake(cfg.desired_message_count, ticket_price, win_prob)?
             * (missing_channels as u64)
     };
