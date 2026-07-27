@@ -27,9 +27,9 @@ telemetry = [
 testing = ["hopr-lib/testing"]
 blokli = []
 
-# To use profiling:
-# 1. Set RUSTFLAGS="--cfg tokio_unstable" before building
-# 2. Enable the 'prof' feature: cargo build --feature prof
+# tokio-console profiling. Build with the `tracer` profile so TRACE-level task
+# spans stay compiled in (see [profile.tracer] below):
+#   RUSTFLAGS="--cfg tokio_unstable" cargo build --profile tracer --features prof
 prof = [
   "dep:console-subscriber",
 ] # must be built with 'tokio_unstable': https://github.com/tokio-rs/console/tree/main/console-subscriber
@@ -98,7 +98,7 @@ hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "118c
   "runtime-tokio",
   "testing",
 ] }
-tokio = { version = "1.52.3", features = ["full", "process"] }
+tokio = { version = "1.52.3", features = ["full", "process", "tracing"] }
 reqwest = { version = "0.13.4", default-features = false, features = [
   "rustls",
   "json",
@@ -114,3 +114,14 @@ test-log = { version = "0.2.21", features = ["trace"] }
 
 [build-dependencies]
 anyhow = "1.0.103"
+
+# tokio-console build target. hopr-lib forces `tracing/release_max_level_debug`,
+# which compiles out TRACE callsites (incl. tokio's task instrumentation) in
+# release. That cap only fires under `cfg(not(debug_assertions))`, so turning
+# debug-asserts back on makes it inert and STATIC_MAX_LEVEL falls through to
+# TRACE — tokio-console then sees the task spans. Optimizations stay on (release)
+# so the profiled run reflects real timings. Build with:
+#   RUSTFLAGS="--cfg tokio_unstable" cargo build --profile tracer --features prof
+[profile.tracer]
+inherits = "release"
+debug-assertions = true

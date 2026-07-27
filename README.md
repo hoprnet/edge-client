@@ -136,6 +136,8 @@ Key inputs handed to `Edgli::new`:
   the `probe_local_addresses` argument to `Edgli::new`) to probe them (e.g. a
   same-host test cluster).
 - **Profiling.** Build with
-  `RUSTFLAGS="--cfg tokio_unstable" cargo build --features prof` and attach
-  `tokio-console`.
+  `RUSTFLAGS="--cfg tokio_unstable" cargo build --profile tracer --features prof`
+  and attach `tokio-console`. The `tracer` profile re-enables debug-assertions so
+  hopr-lib's `release_max_level_debug` cap stays inert and TRACE-level task spans
+  are compiled in — without it `tokio-console` shows no tasks.
 - **Reporting issues.** <https://github.com/hoprnet/edge-client/issues>
