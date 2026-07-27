@@ -36,6 +36,7 @@ prof = [
 
 [dependencies]
 anyhow = "1.0.103"
+bytesize = "2.4.2"
 smart-default = "0.7.1"
 async-signal = "0.2.14"
 async-trait = "0.1.89"
@@ -72,20 +73,20 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = "2.5.8"
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "118c4951f907bae5ca39083404f88357f2fa3722", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "847d1c65167021367fe5b8a164cb707ccf7317d3", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "118c4951f907bae5ca39083404f88357f2fa3722", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "847d1c65167021367fe5b8a164cb707ccf7317d3", features = [
   "runtime-tokio",
 ] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "118c4951f907bae5ca39083404f88357f2fa3722" }
-hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "118c4951f907bae5ca39083404f88357f2fa3722", features = [
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "847d1c65167021367fe5b8a164cb707ccf7317d3" }
+hopr-strategy = { git = "https://github.com/hoprnet/hoprnet", rev = "847d1c65167021367fe5b8a164cb707ccf7317d3", features = [
   "strategy-channel-lifecycle",
 ] }
-hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "118c4951f907bae5ca39083404f88357f2fa3722" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "118c4951f907bae5ca39083404f88357f2fa3722" }
-hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "118c4951f907bae5ca39083404f88357f2fa3722" }
+hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "847d1c65167021367fe5b8a164cb707ccf7317d3" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "847d1c65167021367fe5b8a164cb707ccf7317d3" }
+hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "847d1c65167021367fe5b8a164cb707ccf7317d3" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -94,7 +95,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "118c4951f907bae5ca39083404f88357f2fa3722", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "847d1c65167021367fe5b8a164cb707ccf7317d3", features = [
   "runtime-tokio",
   "testing",
 ] }
