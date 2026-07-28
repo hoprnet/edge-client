@@ -309,7 +309,12 @@ pub async fn minimum_balance_recommendation(
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
     let costs = incentive_ops.compute_costs_to_start().await?;
-    compute_balance_recommendation(stats.ticket_price, win_prob, cfg.target_open_channels, costs)
+    compute_balance_recommendation(
+        stats.ticket_price,
+        win_prob,
+        cfg.target_open_channels,
+        costs,
+    )
 }
 
 /// Returns the default [`MultiStrategyConfig`] for an edge client reactor.
@@ -416,13 +421,9 @@ mod tests {
 
     #[test]
     fn compute_balance_recommendation_zero_missing_returns_zero_wxhopr() {
-        let rec = compute_balance_recommendation(
-            HoprBalance::new_base(10),
-            1.0,
-            0,
-            no_startup_costs(),
-        )
-        .unwrap();
+        let rec =
+            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 0, no_startup_costs())
+                .unwrap();
         assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
         assert_eq!(rec.xdai_fee_per_tx, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
     }
@@ -474,13 +475,9 @@ mod tests {
     #[test]
     fn compute_balance_recommendation_scales_by_missing_channels() {
         // win_prob=1.0, ticket_price=10, hops=1: stake = 10 × 5 packets; 8 channels
-        let rec = compute_balance_recommendation(
-            HoprBalance::new_base(10),
-            1.0,
-            8,
-            no_startup_costs(),
-        )
-        .unwrap();
+        let rec =
+            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 8, no_startup_costs())
+                .unwrap();
         let per_channel = HoprBalance::new_base(10) * 5u64;
         assert_eq!(rec.channel_stakes, per_channel * 8u64);
         assert_eq!(rec.fee_to_start, HoprBalance::zero());
@@ -492,32 +489,20 @@ mod tests {
     #[test]
     fn compute_balance_recommendation_halved_win_prob_doubles_stake() {
         // face value = ticket_price / win_prob, so halving win_prob doubles the stake
-        let full = compute_balance_recommendation(
-            HoprBalance::new_base(10),
-            1.0,
-            1,
-            no_startup_costs(),
-        )
-        .unwrap();
-        let half = compute_balance_recommendation(
-            HoprBalance::new_base(10),
-            0.5,
-            1,
-            no_startup_costs(),
-        )
-        .unwrap();
+        let full =
+            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 1, no_startup_costs())
+                .unwrap();
+        let half =
+            compute_balance_recommendation(HoprBalance::new_base(10), 0.5, 1, no_startup_costs())
+                .unwrap();
         assert_eq!(half.channel_stakes, full.channel_stakes * 2u64);
     }
 
     #[test]
     fn compute_balance_recommendation_zero_target_yields_zero() {
-        let rec = compute_balance_recommendation(
-            HoprBalance::new_base(10),
-            1.0,
-            0,
-            no_startup_costs(),
-        )
-        .unwrap();
+        let rec =
+            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 0, no_startup_costs())
+                .unwrap();
         assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
     }
 
