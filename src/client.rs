@@ -391,7 +391,7 @@ impl Edgli {
         // verified on-chain rather than assumed.
         // A running node cannot start without a Safe, so it is always deployed here.
         let costs = super::strategy::compute_costs_to_start(chain, Some(source), true).await?;
-        super::strategy::compute_balance_recommendation(ticket_price, win_prob, cfg, missing, costs)
+        super::strategy::compute_balance_recommendation(ticket_price, win_prob, missing, costs)
     }
 
     /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].

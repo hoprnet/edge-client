@@ -12,6 +12,16 @@ pub use hopr_strategy::channel_lifecycle::{
 /// route over a single hop by default, so a channel's tickets pay one relay.
 const ASSUMED_HOPS: u32 = 1;
 
+/// Channel data capacity the initial stake is sized for: 4 outstanding winning
+/// tickets plus a half-ticket buffer, in bytes (`4.5 × SESSION_MTU`).
+///
+/// Only *winning* tickets drain channel balance — each locks one face value
+/// (`ticket_price / win_prob`) until redeemed, and the strategy's
+/// capacity→balance conversion locks one face value per packet-sized capacity
+/// unit. The channel therefore only needs to hold a few face values to cover
+/// winning tickets outstanding between redemptions, not the full traffic volume.
+const INITIAL_CAPACITY_BYTES: u64 = hopr_lib::SESSION_MTU as u64 * 9 / 2;
+
 #[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
 use hopr_lib::api::chain::{AccountSelector, ChainReadAccountOperations, ChainValues};
 
@@ -33,18 +43,6 @@ pub struct MultiStrategyConfig {
 /// to the required relayer addresses; leave it `None` for quality-score-based peer selection.
 #[derive(Debug, Clone, smart_default::SmartDefault)]
 pub struct IncentiveConfiguration {
-    /// Number of forwarded packets the initial channel stake is sized to cover.
-    ///
-    /// Sets `initial_capacity = N × SESSION_MTU` bytes of channel data capacity;
-    /// the strategy resolves this to a wxHOPR stake at the live ticket price and
-    /// winning probability when it opens the channel.
-    ///
-    /// The channel strategy tops up when capacity falls below 25% of
-    /// `initial_capacity`, so the channel can forward more than this many packets
-    /// over its lifetime. Default: 1,000,000.
-    #[default = 1_000_000]
-    pub desired_message_count: u64,
-
     /// Minimum number of open outgoing channels to maintain. Default: 5.
     #[default = 5]
     pub min_open_channels: usize,
@@ -72,33 +70,29 @@ impl IncentiveConfiguration {
     }
 }
 
-/// Compute the capacity-based [`FundingConfig`] for a desired message budget.
+/// Compute the capacity-based [`FundingConfig`] sized for the winning-ticket buffer.
 ///
-/// The strategy now sizes channels by *data capacity*: `initial_capacity` bytes
-/// are resolved to a wxHOPR stake at the live ticket economics when a channel is
-/// opened. We map `desired_message_count` packets to `N × SESSION_MTU` bytes,
-/// matching [`Capacity::byte_capacity`].
+/// The strategy sizes channels by *data capacity*: `initial_capacity` bytes are
+/// resolved to a wxHOPR stake at the live ticket economics when a channel is
+/// opened, locking one ticket face value per packet-sized capacity unit. Since
+/// only winning tickets drain channel balance, [`INITIAL_CAPACITY_BYTES`]
+/// (4.5 × SESSION_MTU) suffices to cover the winning tickets outstanding
+/// between redemptions.
 ///
 /// Derived fields keep the strategy's invariants (`lower < initial`):
 /// - `topup_capacity`            = 75% of `initial_capacity`
-/// - `lower_capacity_threshold`  = 25% of `initial_capacity`
+/// - `lower_capacity_threshold`  = 25% of `initial_capacity` (~1.1 face values,
+///   above the one face value needed to keep minting tickets)
 /// - `min_safe_capacity_required` = `initial_capacity`
-pub fn compute_funding_config(sizing: &IncentiveConfiguration) -> anyhow::Result<FundingConfig> {
-    let initial_bytes = sizing
-        .desired_message_count
-        .saturating_mul(hopr_lib::SESSION_MTU as u64);
-    anyhow::ensure!(
-        initial_bytes > 0,
-        "computed initial_capacity is zero; desired_message_count is zero"
-    );
-    Ok(FundingConfig {
-        initial_capacity: ByteSize::b(initial_bytes),
-        topup_capacity: ByteSize::b(initial_bytes / 4 * 3),
-        lower_capacity_threshold: ByteSize::b(initial_bytes / 4),
-        min_safe_capacity_required: ByteSize::b(initial_bytes),
+pub fn compute_funding_config() -> FundingConfig {
+    FundingConfig {
+        initial_capacity: ByteSize::b(INITIAL_CAPACITY_BYTES),
+        topup_capacity: ByteSize::b(INITIAL_CAPACITY_BYTES / 4 * 3),
+        lower_capacity_threshold: ByteSize::b(INITIAL_CAPACITY_BYTES / 4),
+        min_safe_capacity_required: ByteSize::b(INITIAL_CAPACITY_BYTES),
         assumed_hops: ASSUMED_HOPS,
         stop_when_unfunded: true,
-    })
+    }
 }
 
 /// wxHOPR a single new channel's initial stake locks, mirroring the strategy's
@@ -111,20 +105,17 @@ pub fn compute_funding_config(sizing: &IncentiveConfiguration) -> anyhow::Result
 /// stake divides by `win_prob`: the channel must hold at least one face value
 /// to mint a ticket at all.
 ///
-/// Uses `desired_message_count` directly as the packet count (capacity is
-/// `N × SESSION_MTU`, and `SESSION_MTU < HoprPacket::PAYLOAD_SIZE`, so the
-/// strategy's own `ceil(bytes / PAYLOAD_SIZE)` resolves to ≤ N packets). This
-/// keeps the recommendation on the never-underfund side.
-fn initial_channel_stake(
-    desired_message_count: u64,
-    ticket_price: HoprBalance,
-    win_prob: f64,
-) -> anyhow::Result<HoprBalance> {
+/// Uses `ceil(INITIAL_CAPACITY_BYTES / SESSION_MTU)` as the packet count.
+/// `SESSION_MTU < HoprPacket::PAYLOAD_SIZE`, so this is ≥ the strategy's own
+/// `ceil(bytes / PAYLOAD_SIZE)` packet count, keeping the recommendation on
+/// the never-underfund side.
+fn initial_channel_stake(ticket_price: HoprBalance, win_prob: f64) -> anyhow::Result<HoprBalance> {
     anyhow::ensure!(
         win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
         "win_prob must be in (0, 1]; got {win_prob}"
     );
-    let base = ticket_price * desired_message_count * ASSUMED_HOPS as u64;
+    let packets = INITIAL_CAPACITY_BYTES.div_ceil(hopr_lib::SESSION_MTU as u64);
+    let base = ticket_price * packets * ASSUMED_HOPS as u64;
     Ok(base.div_f64(win_prob)?)
 }
 
@@ -208,19 +199,13 @@ pub struct Capacity {
 pub(crate) fn compute_balance_recommendation(
     ticket_price: HoprBalance,
     win_prob: f64,
-    cfg: &IncentiveConfiguration,
     missing_channels: usize,
     costs: StartupCosts,
 ) -> anyhow::Result<BalanceRecommendation> {
     let stake = if missing_channels == 0 {
         HoprBalance::zero()
     } else {
-        anyhow::ensure!(
-            cfg.desired_message_count > 0,
-            "desired_message_count is zero; cannot size a channel stake"
-        );
-        initial_channel_stake(cfg.desired_message_count, ticket_price, win_prob)?
-            * (missing_channels as u64)
+        initial_channel_stake(ticket_price, win_prob)? * (missing_channels as u64)
     };
     Ok(BalanceRecommendation {
         channel_stakes: stake,
@@ -324,20 +309,14 @@ pub async fn minimum_balance_recommendation(
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
     let costs = incentive_ops.compute_costs_to_start().await?;
-    compute_balance_recommendation(
-        stats.ticket_price,
-        win_prob,
-        cfg,
-        cfg.target_open_channels,
-        costs,
-    )
+    compute_balance_recommendation(stats.ticket_price, win_prob, cfg.target_open_channels, costs)
 }
 
 /// Returns the default [`MultiStrategyConfig`] for an edge client reactor.
 ///
-/// Sizes the channel-lifecycle funding to cover `sizing.desired_message_count`
-/// messages of data capacity per channel; the strategy resolves that capacity
-/// to a wxHOPR stake at the live ticket economics. See [`compute_funding_config`].
+/// Sizes the channel-lifecycle funding to cover the winning-ticket buffer per
+/// channel; the strategy resolves that capacity to a wxHOPR stake at the live
+/// ticket economics. See [`compute_funding_config`].
 #[cfg(feature = "runtime-tokio")]
 pub async fn default_strategy_cfg(
     _node: &crate::client::Edgli,
@@ -345,7 +324,7 @@ pub async fn default_strategy_cfg(
 ) -> anyhow::Result<MultiStrategyConfig> {
     sizing.validate()?;
     let cfg = ChannelLifecycleConfig {
-        funding: compute_funding_config(sizing)?,
+        funding: compute_funding_config(),
         population: PopulationConfig {
             min_open_channels: sizing.min_open_channels,
             target_open_channels: sizing.target_open_channels,
@@ -377,16 +356,12 @@ mod tests {
     }
 
     #[test]
-    fn compute_funding_config_capacity_from_message_count() {
-        // initial_capacity = desired_message_count × SESSION_MTU bytes
-        let cfg = compute_funding_config(&IncentiveConfiguration {
-            desired_message_count: 1,
-            ..Default::default()
-        })
-        .unwrap();
+    fn compute_funding_config_capacity_is_winning_ticket_buffer() {
+        // initial_capacity = 4.5 × SESSION_MTU bytes (4 winning tickets + buffer)
+        let cfg = compute_funding_config();
         let mtu = hopr_lib::SESSION_MTU as u64;
-        assert_eq!(cfg.initial_capacity.as_u64(), mtu);
-        assert_eq!(cfg.min_safe_capacity_required.as_u64(), mtu);
+        assert_eq!(cfg.initial_capacity.as_u64(), mtu * 9 / 2);
+        assert_eq!(cfg.min_safe_capacity_required.as_u64(), mtu * 9 / 2);
         assert!(cfg.lower_capacity_threshold < cfg.initial_capacity);
         assert!(cfg.topup_capacity > cfg.lower_capacity_threshold);
         assert!(cfg.topup_capacity < cfg.initial_capacity);
@@ -397,11 +372,7 @@ mod tests {
     #[test]
     fn compute_funding_config_proportional_fields() {
         // Verify lower < initial, min_safe == initial, topup ∈ (lower, initial)
-        let cfg = compute_funding_config(&IncentiveConfiguration {
-            desired_message_count: 100,
-            ..Default::default()
-        })
-        .unwrap();
+        let cfg = compute_funding_config();
         assert_eq!(cfg.min_safe_capacity_required, cfg.initial_capacity);
         assert!(cfg.lower_capacity_threshold < cfg.initial_capacity);
         assert!(cfg.topup_capacity < cfg.initial_capacity);
@@ -409,24 +380,18 @@ mod tests {
     }
 
     #[test]
-    fn compute_funding_config_rejects_zero_message_count() {
-        assert!(
-            compute_funding_config(&IncentiveConfiguration {
-                desired_message_count: 0,
-                ..Default::default()
-            })
-            .is_err()
-        );
+    fn compute_funding_config_lower_threshold_stays_above_one_face_value() {
+        // The 25% threshold must stay above one SESSION_MTU (≥ one face value),
+        // otherwise the channel could fall below the balance needed to mint tickets
+        // before a top-up triggers.
+        let cfg = compute_funding_config();
+        assert!(cfg.lower_capacity_threshold.as_u64() >= hopr_lib::SESSION_MTU as u64);
     }
 
     #[test]
     fn compute_funding_config_default_sizing_has_one_strategy_shape() {
         // Smoke-test: can build a MultiStrategyConfig from compute_funding_config output
-        let funding = compute_funding_config(&IncentiveConfiguration {
-            desired_message_count: 1,
-            ..Default::default()
-        })
-        .unwrap();
+        let funding = compute_funding_config();
         let lifecycle_cfg = ChannelLifecycleConfig {
             funding,
             ..Default::default()
@@ -454,7 +419,6 @@ mod tests {
         let rec = compute_balance_recommendation(
             HoprBalance::new_base(10),
             1.0,
-            &IncentiveConfiguration::default(),
             0,
             no_startup_costs(),
         )
@@ -471,10 +435,6 @@ mod tests {
         let rec = compute_balance_recommendation(
             HoprBalance::new_base(10),
             1.0,
-            &IncentiveConfiguration {
-                desired_message_count: 1,
-                ..Default::default()
-            },
             8,
             StartupCosts {
                 fee_to_start: fee,
@@ -482,10 +442,12 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(rec.channel_stakes, HoprBalance::new_base(10) * 8u64);
+        // stake per channel = ticket_price × 5 face-value packets
+        let per_channel = HoprBalance::new_base(10) * 5u64;
+        assert_eq!(rec.channel_stakes, per_channel * 8u64);
         assert_eq!(rec.fee_to_start, fee);
         assert_eq!(rec.txs_to_start, 3);
-        assert_eq!(rec.total_wxhopr(), HoprBalance::new_base(10) * 8u64 + fee);
+        assert_eq!(rec.total_wxhopr(), per_channel * 8u64 + fee);
     }
 
     #[test]
@@ -496,7 +458,6 @@ mod tests {
         let rec = compute_balance_recommendation(
             HoprBalance::zero(),
             1.0,
-            &IncentiveConfiguration::default(),
             0,
             StartupCosts {
                 fee_to_start: fee,
@@ -512,36 +473,47 @@ mod tests {
 
     #[test]
     fn compute_balance_recommendation_scales_by_missing_channels() {
-        // win_prob=1.0, ticket_price=10, msg=1, hops=1: stake = 10; 8 channels = 80
+        // win_prob=1.0, ticket_price=10, hops=1: stake = 10 × 5 packets; 8 channels
         let rec = compute_balance_recommendation(
             HoprBalance::new_base(10),
             1.0,
-            &IncentiveConfiguration {
-                desired_message_count: 1,
-                ..Default::default()
-            },
             8,
             no_startup_costs(),
         )
         .unwrap();
-        assert_eq!(rec.channel_stakes, HoprBalance::new_base(10) * 8u64);
+        let per_channel = HoprBalance::new_base(10) * 5u64;
+        assert_eq!(rec.channel_stakes, per_channel * 8u64);
         assert_eq!(rec.fee_to_start, HoprBalance::zero());
         assert_eq!(rec.txs_to_start, 0);
-        assert_eq!(rec.total_wxhopr(), HoprBalance::new_base(10) * 8u64);
+        assert_eq!(rec.total_wxhopr(), per_channel * 8u64);
         assert_eq!(rec.xdai_fee_per_tx, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
     }
 
     #[test]
+    fn compute_balance_recommendation_halved_win_prob_doubles_stake() {
+        // face value = ticket_price / win_prob, so halving win_prob doubles the stake
+        let full = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            1,
+            no_startup_costs(),
+        )
+        .unwrap();
+        let half = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            0.5,
+            1,
+            no_startup_costs(),
+        )
+        .unwrap();
+        assert_eq!(half.channel_stakes, full.channel_stakes * 2u64);
+    }
+
+    #[test]
     fn compute_balance_recommendation_zero_target_yields_zero() {
-        let cfg = IncentiveConfiguration {
-            target_open_channels: 0,
-            min_open_channels: 0,
-            ..Default::default()
-        };
         let rec = compute_balance_recommendation(
             HoprBalance::new_base(10),
             1.0,
-            &cfg,
             0,
             no_startup_costs(),
         )

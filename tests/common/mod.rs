@@ -1136,18 +1136,11 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     await_edgli_peers_connected(&edgli, 2).await?;
 
     // ── 5. Start the channel-lifecycle strategy reactor ──────────────────────
-    // desired_message_count = 1000 × expected session packets (forward + SURB
-    // return). This sets initial_capacity = N × SESSION_MTU bytes, which the
-    // strategy resolves to a wxHOPR stake at open time. It absorbs background
-    // probe traffic and the probabilistic accumulation of winning tickets: at
-    // Rotsee values (price ≈ 1e-16 wxHOPR, win_prob ≈ 0.000125) the expected
-    // drain per packet is tiny, but the channel must hold at least `ticket_price`
-    // per winning ticket. Scaling by 1000× ensures the resolved stake comfortably
-    // exceeds the expected winning-ticket accumulation from both test and probe
-    // traffic.
-    let session_packets = (PAYLOAD_SIZE / SESSION_MTU + 1) * 2; // fwd + SURB return
+    // Channel capacity is sized by the strategy's built-in winning-ticket buffer
+    // (see edgli::strategy::compute_funding_config): only winning tickets drain
+    // channel balance, so a few face values per channel cover both test and
+    // background probe traffic.
     let sizing = IncentiveConfiguration {
-        desired_message_count: (session_packets as u64) * 1_000,
         min_open_channels: 1,
         target_open_channels: CLUSTER_SIZE,
         ..Default::default()
