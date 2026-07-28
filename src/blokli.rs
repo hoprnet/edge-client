@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use hopr_chain_connector::{
-    BlockchainConnectorConfig, HoprBlockchainBasicConnector, HoprBlokliClientConfig,
+    BlockchainConnectorConfig, HoprBlockchainBasicConnector,
     blokli_client::{
         BlokliClient, BlokliQueryClient, BlokliSubscriptionClient, BlokliTransactionClient,
     },
-    create_blokli_client, create_trustful_safeless_hopr_blokli_connector,
+    create_trustful_safeless_hopr_blokli_connector,
 };
 use hopr_lib::{
     api::{
@@ -22,14 +22,12 @@ use hopr_lib::{
 };
 use url::Url;
 
+use crate::endpoint::BlokliEndpoint;
+
 pub use hopr_lib::builder::ChainKeypair;
 
 lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.gnosisvpn.io".parse().unwrap();
-}
-
-fn build_safeless_blokli_client_config(blokli_provider: Option<Url>) -> HoprBlokliClientConfig {
-    HoprBlokliClientConfig::new(blokli_provider.unwrap_or_else(|| DEFAULT_BLOKLI_URL.clone()))
 }
 
 /// Constructs a fully-wired [`IncentiveOperations`] handle backed by a Blokli client.
@@ -37,12 +35,15 @@ fn build_safeless_blokli_client_config(blokli_provider: Option<Url>) -> HoprBlok
 /// This is the only public entry point for obtaining an `IncentiveOperations` impl —
 /// the underlying [`BlokliClient`] and connector are constructed internally and
 /// never exposed to callers.
+///
+/// The endpoint's DNS override is honoured, so on-boarding works in environments
+/// where system DNS cannot resolve the Blokli host.
 pub async fn make_incentive_operations(
-    blokli_url: Option<Url>,
+    blokli_endpoint: BlokliEndpoint,
     chain_key: &ChainKeypair,
     connector_config: Option<BlockchainConnectorConfig>,
 ) -> anyhow::Result<Box<dyn IncentiveOperations>> {
-    let interactor = SafelessInteractor::new(blokli_url, chain_key, connector_config).await?;
+    let interactor = SafelessInteractor::new(blokli_endpoint, chain_key, connector_config).await?;
     Ok(Box::new(interactor))
 }
 
@@ -107,12 +108,11 @@ pub(crate) struct SafelessInteractor<C = BlokliClient> {
 
 impl SafelessInteractor<BlokliClient> {
     pub(crate) async fn new(
-        blokli_provider: Option<Url>,
+        blokli_endpoint: BlokliEndpoint,
         chain_key: &ChainKeypair,
         connector_config: Option<BlockchainConnectorConfig>,
     ) -> anyhow::Result<Self> {
-        let config = build_safeless_blokli_client_config(blokli_provider);
-        Self::new_with_client(create_blokli_client(config), chain_key, connector_config).await
+        Self::new_with_client(blokli_endpoint.build_client(), chain_key, connector_config).await
     }
 }
 
@@ -289,19 +289,6 @@ mod tests {
             DEFAULT_BLOKLI_URL.as_str(),
             "https://blokli.jura.gnosisvpn.io/"
         );
-    }
-
-    #[test]
-    fn build_safeless_blokli_client_config_uses_default_url() {
-        let config = build_safeless_blokli_client_config(None);
-        assert_eq!(config.url, *DEFAULT_BLOKLI_URL);
-    }
-
-    #[test]
-    fn build_safeless_blokli_client_config_uses_custom_url() {
-        let custom_url: Url = "https://custom.blokli.example.com".parse().unwrap();
-        let config = build_safeless_blokli_client_config(Some(custom_url.clone()));
-        assert_eq!(config.url, custom_url);
     }
 
     #[test]

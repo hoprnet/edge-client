@@ -1,12 +1,9 @@
 use std::collections::HashSet;
-use std::net::IpAddr;
 use std::sync::Arc;
 
 use futures::StreamExt;
 use futures::future::{AbortHandle, abortable};
-use hopr_chain_connector::{
-    BlockchainConnectorConfig, create_blokli_client, create_trustful_hopr_blokli_connector,
-};
+use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
 use hopr_ct_full_network::ProberConfig as FullNetworkProberConfig;
 use hopr_lib::api::{
     chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
@@ -28,29 +25,9 @@ use strum::{AsRefStr, Display, EnumString};
 use tracing::info;
 
 #[cfg(feature = "blokli")]
-use crate::DEFAULT_BLOKLI_URL;
-#[cfg(feature = "blokli")]
-use hopr_chain_connector::HoprBlokliClientConfig;
+use crate::endpoint::BlokliEndpoint;
 
 use crate::errors::EdgliError;
-
-#[cfg(feature = "blokli")]
-fn build_blokli_client_config(
-    blokli_url: Option<&str>,
-    blokli_dns_override: Option<(IpAddr, Option<u16>)>,
-) -> Result<HoprBlokliClientConfig, EdgliError> {
-    let url = match blokli_url {
-        Some(url) => url
-            .parse()
-            .map_err(|e| EdgliError::ConfigError(format!("invalid Blokli URL '{url}': {e}")))?,
-        None => DEFAULT_BLOKLI_URL.clone(),
-    };
-
-    Ok(HoprBlokliClientConfig {
-        url,
-        dns_override: blokli_dns_override,
-    })
-}
 
 /// The concrete HOPR edge node type used by this client.
 pub type HoprEdgeClient = hopr_lib::Hopr<
@@ -130,12 +107,10 @@ fn probeable_addresses(addrs: Vec<Multiaddr>, probe_local_addresses: bool) -> Ve
 /// Returns an [`AbortHandle`] that stops the closure task when aborted.
 /// `Edgli` is kept alive for the entire duration of `f` so that background tasks
 /// remain active until `f` completes or the returned [`AbortHandle`] is used to cancel it.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_hopr_edge_node_with<F, T>(
     cfg: HoprLibConfig,
     hopr_keys: HoprKeys,
-    blokli_url: Option<String>,
-    blokli_dns_override: Option<(IpAddr, Option<u16>)>,
+    blokli_endpoint: BlokliEndpoint,
     blokli_connector_config: Option<BlockchainConnectorConfig>,
     probe_local_addresses: bool,
     f: F,
@@ -148,8 +123,7 @@ where
     let edgli = Edgli::new(
         cfg,
         hopr_keys,
-        blokli_url,
-        blokli_dns_override,
+        blokli_endpoint,
         blokli_connector_config,
         probe_local_addresses,
         visitor,
@@ -195,8 +169,8 @@ impl Edgli {
     ///   before calling to control the routing strategy.  Use
     ///   [`crate::latency_path_planner_config`] to obtain a latency-optimised default.
     /// * `hopr_keys` – chain and packet keypairs
-    /// * `blokli_url` – optional Blokli client URL; defaults to the production endpoint
-    /// * `blokli_dns_override` – optional DNS override for the Blokli client
+    /// * `blokli_endpoint` – Blokli service URL and optional DNS override; use
+    ///   [`BlokliEndpoint::default`] for the production endpoint via system DNS
     /// * `blokli_connector_config` – optional connector config overrides
     /// * `probe_local_addresses` – when `true`, probe non-public (private,
     ///   loopback, link-local) peer addresses from announcements; when `false`
@@ -205,8 +179,7 @@ impl Edgli {
     pub async fn new(
         cfg: HoprLibConfig,
         hopr_keys: HoprKeys,
-        blokli_url: Option<String>,
-        blokli_dns_override: Option<(IpAddr, Option<u16>)>,
+        blokli_endpoint: BlokliEndpoint,
         blokli_connector_config: Option<BlockchainConnectorConfig>,
         probe_local_addresses: bool,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
@@ -242,10 +215,7 @@ impl Edgli {
             let mut connector = create_trustful_hopr_blokli_connector(
                 chain_key,
                 blokli_config,
-                create_blokli_client(build_blokli_client_config(
-                    blokli_url.as_deref(),
-                    blokli_dns_override,
-                )?),
+                blokli_endpoint.build_client(),
                 cfg.safe_module.module_address,
             )
             .await?;
@@ -495,7 +465,6 @@ impl Edgli {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
     fn init_state_as_ref_matches_to_string() {
@@ -563,34 +532,6 @@ mod tests {
                 | EdgliInitState::Ready => {}
             }
         }
-    }
-
-    #[cfg(feature = "blokli")]
-    #[test]
-    fn build_blokli_client_config_uses_default_url() {
-        let config = build_blokli_client_config(None, None).unwrap();
-        assert_eq!(config.url, *DEFAULT_BLOKLI_URL);
-        assert_eq!(config.dns_override, None);
-    }
-
-    #[cfg(feature = "blokli")]
-    #[test]
-    fn build_blokli_client_config_keeps_dns_override() {
-        let dns_override = Some((IpAddr::V4(Ipv4Addr::new(10, 1, 2, 1)), Some(3002)));
-        let config =
-            build_blokli_client_config(Some("https://blokli.example.com"), dns_override).unwrap();
-        assert_eq!(config.url.as_str(), "https://blokli.example.com/");
-        assert_eq!(config.dns_override, dns_override);
-    }
-
-    #[cfg(feature = "blokli")]
-    #[test]
-    fn build_blokli_client_config_rejects_invalid_url() {
-        let error = build_blokli_client_config(Some("not a url"), None).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "configuration error: 'invalid Blokli URL 'not a url': relative URL without a base'"
-        );
     }
 
     fn ma(s: &str) -> Multiaddr {
