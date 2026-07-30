@@ -136,10 +136,8 @@ tracing-chrome = "0.7.2"
 
 [profile.flamegraph]
 inherits = "release"
-debug = true
+debug = "line-tables-only"
 strip = false
-lto = false
-codegen-units = 16
 
 [build-dependencies]
 anyhow = "1.0.103"
