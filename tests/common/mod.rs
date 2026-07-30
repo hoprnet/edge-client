@@ -145,8 +145,13 @@ impl EdgliTuning {
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
             pump_timeout: Duration::from_secs(120),
-            min_ack_rate: 0.1, // local cluster probes succeed — use default quality gate
-            path_planner: latency_path_planner_config(0.1),
+            // Use 0.0: Edgli just started and no probes have completed yet when the
+            // 1-hop session is attempted.  With min_ack_rate=0.1 the path planner
+            // finds no eligible relays (ack_rate=0 for all) and session initiation
+            // times out repeatedly.  Routing via channel topology (0.0 floor) is
+            // correct for a full-mesh local cluster where all channels are open.
+            min_ack_rate: 0.0,
+            path_planner: latency_path_planner_config(0.0),
         }
     }
 
@@ -1220,9 +1225,7 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
     await_edgli_peers_connected(&edgli, 2).await?;
 
     // ── 3. Strategy ──────────────────────────────────────────────────────────
-    let session_packets = (PAYLOAD_SIZE / SESSION_MTU + 1) * 2;
     let sizing = IncentiveConfiguration {
-        desired_message_count: (session_packets as u64) * 1_000,
         min_open_channels: 1,
         target_open_channels: CLUSTER_SIZE,
         ..Default::default()
@@ -1236,15 +1239,16 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
     let _reactor_handle = edgli.run_reactor_from_cfg(strat_cfg)?;
     await_edgli_channels_open(&edgli, 1, tuning.channel_open_timeout).await?;
 
-    if let Some(exit) = tuning.exit_node {
-        await_edgli_exit_peer_ready(&edgli, exit).await?;
-    }
-
     let (dest_0h, dest_1h) = if let Some(exit) = tuning.exit_node {
         (exit, exit)
     } else {
         select_session_targets(&edgli).await?
     };
+
+    // Wait for dest_1h to appear in the probe graph before attempting 1-hop
+    // sessions — same reason as in run_one_megabyte_session_test (§6.3).
+    tracing::info!(%dest_1h, "waiting for 1-hop destination to be probed");
+    await_edgli_exit_peer_ready(&edgli, dest_1h).await?;
 
     let mut payload = vec![0u8; PAYLOAD_SIZE];
     rand::rng().fill(&mut payload[..]);
@@ -1416,16 +1420,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     await_edgli_peers_connected(&edgli, 2).await?;
 
     // ── 5. Start the channel-lifecycle strategy reactor ──────────────────────
-    // desired_message_count = 1000 × expected session packets (forward + SURB
-    // return). This absorbs background probe traffic and the probabilistic
-    // accumulation of winning tickets: at Rotsee values (price ≈ 1e-16 wxHOPR,
-    // win_prob ≈ 0.000125) the expected drain per packet is tiny, but the
-    // channel must hold at least `ticket_price` per winning ticket. Scaling by
-    // 1000× ensures the computed initial_balance comfortably exceeds the
-    // expected winning-ticket accumulation from both test and probe traffic.
-    let session_packets = (PAYLOAD_SIZE / SESSION_MTU + 1) * 2; // fwd + SURB return
     let sizing = IncentiveConfiguration {
-        desired_message_count: (session_packets as u64) * 1_000,
         min_open_channels: 1,
         target_open_channels: CLUSTER_SIZE,
         ..Default::default()
@@ -1440,7 +1435,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
 
     let EdgeStrategyKind::ChannelLifecycle(lc0) = &strat_cfg.strategies[0];
     tracing::info!(
-        initial_balance = ?lc0.funding.initial_balance,
+        initial_capacity = ?lc0.funding.initial_capacity,
         target_channels = sizing.target_open_channels,
         "strategy configured; starting reactor"
     );
@@ -1451,23 +1446,23 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     tracing::info!("waiting for strategy to open ≥1 outgoing channel");
     await_edgli_channels_open(&edgli, 1, tuning.channel_open_timeout).await?;
 
-    // ── 7. Wait for exit peer to be connected and probed (when pinned) ───────
-    // `all_network_peers` returns only connected peers with an observed quality
-    // score above the threshold — i.e. at least one successful probe response.
-    // Without this gate the session open can race against the probe subsystem
-    // and fail with "no route to host" on Rotsee.
-    if let Some(exit) = tuning.exit_node {
-        tracing::info!(%exit, "waiting for exit peer to be physically connected and probed");
-        await_edgli_exit_peer_ready(&edgli, exit).await?;
-    }
-
-    // ── 8. Select session targets ─────────────────────────────────────────────
+    // ── 7. Select session targets ─────────────────────────────────────────────
     let (dest_0h, dest_1h) = if let Some(exit) = tuning.exit_node {
         tracing::info!(%exit, "using configured exit node for both 0-hop and 1-hop sessions");
         (exit, exit)
     } else {
         select_session_targets(&edgli).await?
     };
+
+    // ── 8. Wait for dest_1h to appear in the probe graph ─────────────────────
+    // 1-hop path-finding needs at least one probe observation for dest_1h in
+    // the network graph (§6.3). Without any probe data the edge does not exist
+    // as a graph entry and path construction fails with a session timeout even
+    // though channels are open.  `await_edgli_exit_peer_ready` polls
+    // `all_network_peers(0.0)` (any observed quality) until the peer appears.
+    // This applies to both pinned exit nodes (Rotsee) and dynamic targets (local).
+    tracing::info!(%dest_1h, "waiting for 1-hop destination to be probed");
+    await_edgli_exit_peer_ready(&edgli, dest_1h).await?;
 
     // ── 9. Prepare 1 MiB random payload ─────────────────────────────────────
     // Random bytes produce unique HOPR packet ciphertexts on every test run,
