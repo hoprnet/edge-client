@@ -38,7 +38,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 // Constants
 // ────────────────────────────────────────────────────────────────────────────
 
-pub const PAYLOAD_SIZE: usize = 1_024 * 1_024; // 1 MiB
+pub const PAYLOAD_SIZE: usize = 20 * 1_024 * 1_024; // 20 MiB
 /// HOPR session MTU (bytes that fit in a single HOPR packet payload).
 /// Equal to `hopr_transport_session::SESSION_MTU = 1018`.
 pub const SESSION_MTU: usize = 1018;
@@ -1018,16 +1018,12 @@ pub fn sha256_digest(data: &[u8]) -> Vec<u8> {
 }
 
 /// Write `payload` into `session`, read exactly `payload.len()` bytes back from
-/// the echo server, and verify SHA-256 integrity.
+/// the echo server, verify SHA-256 integrity, and log send/recv throughput.
 ///
-/// Writes in `PUMP_BATCH_BYTES`-sized chunks with a 100 ms pause between each
-/// batch.  Without pacing, `write_all(1 MiB)` submits ~1030 HOPR packets to
-/// the Rayon encoding pool simultaneously.  The pool's `PACKET_ENCODING_TIMEOUT`
-/// is 150 ms; with `then_concurrent(8×cpus)` concurrent encoding futures sharing
-/// a pool of only `cpus` Rayon threads, tasks queued near the end wait ≈
-/// 7×encode_time ≥ 150 ms and are silently dropped, causing the echo read to
-/// time out.  Writing 16 packets per batch keeps Rayon queue wait ≈ 1×encode_time
-/// (≤ 30 ms), well inside the timeout window.
+/// Writes in `PUMP_BATCH_BYTES`-sized chunks without artificial pauses.
+/// With `MAXIMUM_MSG_OUTGOING_BUFFER_SIZE = 256`, the CrossfireSink applies
+/// natural backpressure when the encoder queue is full, so `write_all` blocks
+/// until capacity is available — no manual pacing needed.
 ///
 /// Does NOT call `shutdown()` on the write half: HOPR sessions do not support
 /// TCP half-close.
@@ -1041,19 +1037,18 @@ pub async fn pump_and_verify(
     let payload_bytes = payload.to_vec();
     let expected = sha256_digest(payload);
     let n = payload.len();
+    let overall_start = std::time::Instant::now();
 
     let writer = tokio::spawn(async move {
+        let write_start = std::time::Instant::now();
         let mut offset = 0;
         while offset < payload_bytes.len() {
             let end = (offset + PUMP_BATCH_BYTES).min(payload_bytes.len());
             w.write_all(&payload_bytes[offset..end]).await?;
             w.flush().await?;
             offset = end;
-            if offset < payload_bytes.len() {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
         }
-        Ok::<_, std::io::Error>(())
+        Ok::<_, std::io::Error>(write_start.elapsed())
     });
 
     let mut received = vec![0u8; n];
@@ -1066,8 +1061,9 @@ pub async fn pump_and_verify(
         let _ = writer.await;
         return Err(err);
     }
+    let recv_elapsed = overall_start.elapsed();
 
-    tokio::time::timeout(timeout, writer)
+    let write_elapsed = tokio::time::timeout(timeout, writer)
         .await
         .map_err(|_| anyhow::anyhow!("{label}: writer timeout ({timeout:?})"))?
         .map_err(|e| anyhow::anyhow!("{label}: writer panicked: {e}"))?
@@ -1077,7 +1073,13 @@ pub async fn pump_and_verify(
         sha256_digest(&received) == expected,
         "{label}: SHA-256 mismatch — {n} bytes corrupted in transit"
     );
-    tracing::info!("{label}: ✓ {n} B verified (SHA-256 match)");
+
+    let send_mbs = n as f64 / write_elapsed.as_secs_f64() / 1_048_576.0;
+    let recv_mbs = n as f64 / recv_elapsed.as_secs_f64() / 1_048_576.0;
+    tracing::info!(
+        "{label}: ✓ {} B  |  ↑ send {:.3} MB/s ({:.2?})  |  ↓ recv {:.3} MB/s ({:.2?})",
+        n, send_mbs, write_elapsed, recv_mbs, recv_elapsed
+    );
     Ok(())
 }
 
