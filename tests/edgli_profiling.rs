@@ -12,7 +12,7 @@
 //! - SURB balancer and ack-processing tasks are starved → SURB replenishment stalls
 //!   → session blocks on echo return → measured throughput collapses 10×
 //!
-//! # tokio-console setup
+//! # Requirements
 //!
 //! Two requirements must hold together or tokio-console sees nothing:
 //!
@@ -21,126 +21,135 @@
 //!
 //! 2. **`--profile tracer`** — the `tracer` profile inherits `release` (optimised,
 //!    no stack overflow) but sets `debug-assertions = true`, which silences the
-//!    `tracing/release_max_level_debug` static filter. Without this flag the filter
+//!    `tracing/release_max_level_debug` static filter.  Without this flag the filter
 //!    sets `STATIC_MAX_LEVEL = DEBUG`, and every `trace!` callsite — including
-//!    tokio's task spans — is compiled to a no-op. The subscriber directive
-//!    `tokio=trace` added at runtime cannot resurrect callsites that were removed
-//!    at compile time.
+//!    tokio's task spans — is compiled to a no-op.  The runtime directive
+//!    `tokio=trace` cannot resurrect callsites removed at compile time.
 //!
-//! 3. **`--features prof`** — wires `console_subscriber` into the tracing stack.
-//!    The test below calls `console_subscriber::init()` directly; the regular
-//!    `init_logger()` path in `main.rs` does the same for the binary.
+//! 3. **`--features prof`** — pulls in `console-subscriber` and `tracing-chrome`.
 //!
-//! # How to run
+//! # Running
+//!
+//! Use the provided script — it handles env vars, build, and result collection:
 //!
 //! ```text
-//! # Terminal 1 — start the localcluster (external mode example)
-//! hoprd-localcluster --size 3 --extra-identities 1 \
-//!   --api-port-base 13000 --p2p-port-base 19000 \
-//!   --api-token test-token-localcluster \
-//!   --data-dir /tmp/edgli-cluster \
-//!   --chain-image '<bloklid-anvil image>' ...
+//! ./scripts/profile-executor-yield.sh
+//! ```
 //!
-//! # Wait for {"state":"running"}:
-//! hoprd-localcluster status --data-dir /tmp/edgli-cluster
+//! Or manually:
 //!
-//! # Terminal 2 — run profiling tests
+//! ```text
 //! export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd-localcluster
-//! export HOPRD_CLUSTER_DATA_DIR=/tmp/edgli-cluster
+//! export HOPRD_BIN=/path/to/hoprd
+//! export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil:0.10.5-pr.349@sha256:2e6747d9d6c97255474e243b5088d131f01bb67b5d8f17dbac6bb8aafdf1d7b6'
+//! export HOPRD_CONTAINER_RUNTIME=container   # macOS Apple runtime
+//! export EDGLI_TRACE_DIR=./profiling-results
+//! export RUST_LOG=info,edgli=debug,tokio=trace,runtime=trace
 //!
 //! RUSTFLAGS="--cfg tokio_unstable" \
-//! RUST_LOG=info,edgli=debug \
-//! cargo test --test edgli_profiling \
+//! cargo nextest run \
+//!   --test edgli_profiling \
 //!   --profile tracer --features prof \
-//!   -- --ignored --nocapture
-//!
-//! # Terminal 3 — attach tokio-console (install once with: cargo install tokio-console)
-//! tokio-console
+//!   --run-ignored ignored-only --no-capture --test-threads 1
 //! ```
+//!
+//! # Output
+//!
+//! Each test writes a Chrome trace JSON file to `$EDGLI_TRACE_DIR/`:
+//! - `edgli-trace-paced.json`    — baseline (paced 16-packet batches, free task interleaving)
+//! - `edgli-trace-continuous.json` — starvation case (single write_all, writer holds thread)
+//!
+//! Load the files at <https://ui.perfetto.dev>.
 //!
 //! # What to look for
 //!
-//! With executor starvation present:
-//! - **Session write task**: very short poll time (channel always ready → fast) but the
-//!   `poll_copy` loop NEVER returns `Poll::Pending`, so it holds the thread until all
-//!   data is written; show as a single long-running poll of the parent copy task.
-//! - **SURB balancer**: high "idle" time between wakeups — starved.
-//! - **ack processing task**: same — starved.
+//! In `edgli-trace-continuous.json`:
+//! - **Session write task**: one single long-running poll spanning the whole `write_all`
+//! - **SURB balancer task**: long gaps between wakeups (starved — can't run while writer holds thread)
+//! - **Ack-processing task**: same pattern
 //!
-//! With a fix (e.g. `tokio::task::yield_now()` after each `poll_write` batch, or a
-//! tighter channel bound that lets `poll_ready` return `Poll::Pending`):
-//! - All tasks interleave normally.
-//! - SURB replenishment keeps pace with data consumption.
-//! - End-to-end throughput improves toward the in-process test baseline.
+//! In `edgli-trace-paced.json`:
+//! - All tasks interleave freely during the 100 ms inter-batch windows
+//! - SURB balancer wakes up regularly between batches
 
 mod common;
 
-// ─── Profiling tests ────────────────────────────────────────────────────────
-//
-// Gated on `#[cfg(feature = "prof")]` so they are never compiled into the
-// default test binary — they require both `--features prof` and
-// `RUSTFLAGS="--cfg tokio_unstable"`.
+// ─── Subscriber setup ────────────────────────────────────────────────────────
 
-/// Profiling run of the standard 1 MiB session test with tokio-console active.
+/// Initialise tracing with both tokio-console (live TUI) and tracing-chrome
+/// (persistent JSON file).  Returns the chrome flush guard — keep it alive
+/// for the duration of the test.
 ///
-/// This uses the *paced* pump (16 packets per batch, 100 ms sleep) as a
-/// baseline.  Attach `tokio-console` while this runs and observe task
-/// behaviour during the 100 ms idle windows between write batches — those
-/// windows show the "healthy" state where all tasks run freely.
+/// The chrome trace is written to `$EDGLI_TRACE_DIR/<filename>` (or `./<filename>`
+/// if the env var is not set).
 ///
-/// Compare against `edgli_profiling_continuous_pump` to see what changes
-/// when the pacing is removed.
+/// Uses `try_init()` so it is safe if multiple tests share a process (e.g.
+/// with the standard `cargo test` runner).  Subsequent calls are no-ops — the
+/// first test's subscriber stays active.
+#[cfg(feature = "prof")]
+fn init_subscriber(filename: &str) -> tracing_chrome::FlushGuard {
+    use tracing_subscriber::prelude::*;
+
+    let dir = std::env::var("EDGLI_TRACE_DIR").unwrap_or_else(|_| ".".to_string());
+    let path = format!("{dir}/{filename}");
+
+    let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+        .file(&path)
+        .include_args(true)
+        .build();
+
+    // console_subscriber::spawn() starts the gRPC server on the current tokio
+    // runtime and returns a Layer — no separate tokio::spawn needed.
+    tracing_subscriber::registry()
+        .with(console_subscriber::spawn())
+        .with(chrome_layer)
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init()
+        .ok(); // swallow "already set" if multiple tests run in the same process
+
+    eprintln!("Chrome trace → {path}");
+    guard
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+/// Paced-pump baseline with tokio-console + Chrome trace active.
+///
+/// Writes `edgli-trace-paced.json`.  Observe the trace in Perfetto to see what
+/// "healthy" task interleaving looks like during the 100 ms inter-batch gaps.
+/// Compare against `edgli_profiling_continuous_pump`.
 #[cfg(feature = "prof")]
 #[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn edgli_profiling_paced_pump_baseline() -> anyhow::Result<()> {
-    // console_subscriber::init() sets the global tracing subscriber so
-    // tokio-console can connect.  It must be called before any tokio tasks
-    // are spawned (including those in Edgli::new).
-    //
-    // IMPORTANT: this call succeeds only when `STATIC_MAX_LEVEL >= TRACE`,
-    // i.e. when built with `--profile tracer` (debug-assertions = true).
-    // With `--profile release` the `tracing/release_max_level_debug` feature
-    // compiles all `trace!` callsites to no-ops, and tokio-console sees
-    // zero tasks — making the profiling run useless.
-    console_subscriber::init();
-
+    let _guard = init_subscriber("edgli-trace-paced.json");
     common::run_one_megabyte_session_test(common::Network::Local).await
 }
 
-/// Profiling run of the **continuous** (unthrottled) pump.
+/// Continuous-pump starvation case with tokio-console + Chrome trace active.
 ///
-/// Unlike `pump_and_verify`, `pump_continuous` issues a single
-/// `write_all(1 MiB)` without any inter-batch sleep.  This replicates how
-/// production callers use `transfer_session` / `copy_duplex` with a fast
-/// data source: the write loop never blocks because `CrossfireSink` (capacity
-/// 200,000) almost never fills up, so `poll_copy` never returns `Poll::Pending`
-/// and the tokio worker thread is held for the entire write.
+/// Writes `edgli-trace-continuous.json`.  A single `write_all(1 MiB)` without
+/// any inter-batch sleep replicates production `transfer_session`/`copy_duplex`
+/// behaviour.  In the trace you should observe:
 ///
-/// With tokio-console attached you should observe:
-/// - The session write task shows a single very long poll (the whole `write_all`)
-///   instead of many short ones.
-/// - The SURB balancer and ack processing tasks show long gaps between wakeups
-///   (executor starvation) while the write is in progress.
-/// - Effective echo throughput is noticeably lower than the paced baseline.
+/// - Writer task: one very long poll (entire `write_all` without yielding)
+/// - SURB balancer: long idle gaps (starved while writer holds the thread)
+/// - Echo throughput significantly lower than the paced baseline
 #[cfg(feature = "prof")]
 #[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn edgli_profiling_continuous_pump() -> anyhow::Result<()> {
-    console_subscriber::init();
-
+    let _guard = init_subscriber("edgli-trace-continuous.json");
     common::run_throughput_comparison_test(common::Network::Local).await
 }
 
-/// Rotsee variant of the continuous-pump profiling test.
-///
-/// Same as `edgli_profiling_continuous_pump` but against the public Rotsee
-/// testnet.  Requires the `EDGLI_ROTSEE_*` environment variables.
+/// Rotsee variant — same as `edgli_profiling_continuous_pump` against the
+/// public Rotsee testnet.  Requires the `EDGLI_ROTSEE_*` env vars.
+/// Writes `edgli-trace-rotsee.json`.
 #[cfg(feature = "prof")]
 #[ignore]
 #[tokio::test(flavor = "multi_thread")]
 async fn edgli_profiling_continuous_pump_rotsee() -> anyhow::Result<()> {
-    console_subscriber::init();
-
+    let _guard = init_subscriber("edgli-trace-rotsee.json");
     common::run_throughput_comparison_test(common::Network::Rotsee).await
 }
