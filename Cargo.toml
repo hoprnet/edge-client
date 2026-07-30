@@ -129,8 +129,19 @@ anyhow = "1.0.103"
 inherits = "release"
 debug-assertions = true
 
-# Patch hopr-utils with local cooperative-yield fix in poll_copy.
-# The worktree at /tmp/hoprnet-poll-fix is pinned to the same rev (847d1c65)
-# that all other hoprnet crates use, so only poll_copy changes.
+# Patch hopr-utils and hopr-transport from the local worktree at /tmp/hoprnet-poll-fix
+# (pinned to rev 847d1c65 — identical to all other hoprnet crates except for our fixes):
+#
+#  hopr-utils: poll_copy and AsyncWriteSink::poll_write gain poll_proceed cooperative
+#              yield so the tokio worker thread yields to the scheduler after the
+#              default budget (~128 ops) is exhausted.
+#
+#  hopr-transport: MAXIMUM_MSG_OUTGOING_BUFFER_SIZE reduced from 200_000 → 16 to
+#                  create CrossfireSink backpressure.  With only 16 slots, the
+#                  then_concurrent encoding pipeline can never receive a burst larger
+#                  than 16 packets, keeping the Rayon queue depth well below the
+#                  PACKET_ENCODING_TIMEOUT = 150 ms threshold (max wait ≈ 2×encode_time
+#                  ≈ 42 ms for N_cpus=8, encode_time≈21 ms).
 [patch."https://github.com/hoprnet/hoprnet"]
 hopr-utils = { path = "/tmp/hoprnet-poll-fix/utils" }
+hopr-transport = { path = "/tmp/hoprnet-poll-fix/transport/hopr" }

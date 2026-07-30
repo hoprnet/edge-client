@@ -2773,7 +2773,7 @@ dependencies = [
  "hopr-lib",
  "hopr-network-graph",
  "hopr-strategy",
- "hopr-ticket-manager",
+ "hopr-ticket-manager 0.5.0 (git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3)",
  "hopr-transport-p2p",
  "lazy_static",
  "mimalloc",
@@ -3808,7 +3808,6 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-packet"
 version = "1.4.0"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "bimap",
  "const-hex",
@@ -3817,6 +3816,22 @@ dependencies = [
  "hopr-utils",
  "serde",
  "serde_bytes",
+ "strum 0.28.0",
+ "subtle",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "hopr-crypto-packet"
+version = "1.4.0"
+source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
+dependencies = [
+ "bimap",
+ "const-hex",
+ "flagset",
+ "hopr-types",
+ "hopr-utils",
  "strum 0.28.0",
  "subtle",
  "thiserror 2.0.18",
@@ -3859,7 +3874,7 @@ dependencies = [
  "hopr-chain-connector",
  "hopr-ct-full-network",
  "hopr-network-graph",
- "hopr-ticket-manager",
+ "hopr-ticket-manager 0.5.0 (git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3)",
  "hopr-transport",
  "hopr-transport-p2p",
  "hopr-utils",
@@ -3902,9 +3917,8 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-app"
 version = "1.0.1"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
- "hopr-crypto-packet",
+ "hopr-crypto-packet 1.4.0",
  "hopr-types",
  "serde",
  "serde_bytes",
@@ -3915,7 +3929,6 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-hopr"
 version = "4.7.0"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3925,8 +3938,8 @@ dependencies = [
  "cfg_eval",
  "const-hex",
  "hopr-api",
- "hopr-crypto-packet",
- "hopr-ticket-manager",
+ "hopr-crypto-packet 1.4.0",
+ "hopr-ticket-manager 0.5.0",
  "hopr-utils",
  "humantime-serde",
  "lazy_static",
@@ -3945,7 +3958,6 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-session"
 version = "1.2.3"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "aquamarine",
  "asynchronous-codec",
@@ -3957,7 +3969,7 @@ dependencies = [
  "futures-concurrency",
  "futures-time",
  "hashbrown 0.17.1",
- "hopr-crypto-packet",
+ "hopr-crypto-packet 1.4.0",
  "hopr-types",
  "hopr-utils",
  "lazy_static",
@@ -3976,11 +3988,10 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-start"
 version = "1.1.0"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "aquamarine",
  "flagset",
- "hopr-crypto-packet",
+ "hopr-crypto-packet 1.4.0",
  "hopr-protocol-app",
  "serde",
  "serde_cbor_2",
@@ -4001,7 +4012,7 @@ dependencies = [
  "futures-concurrency",
  "futures-time",
  "hopr-api",
- "hopr-crypto-packet",
+ "hopr-crypto-packet 1.4.0 (git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3)",
  "hopr-utils",
  "humantime-serde",
  "lazy_static",
@@ -4014,6 +4025,27 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "validator",
+]
+
+[[package]]
+name = "hopr-ticket-manager"
+version = "0.5.0"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "clap",
+ "dashmap",
+ "futures",
+ "hashbrown 0.17.1",
+ "hopr-api",
+ "hopr-utils",
+ "parking_lot",
+ "postcard",
+ "redb",
+ "strum 0.28.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -4041,7 +4073,6 @@ dependencies = [
 [[package]]
 name = "hopr-transport"
 version = "0.32.0"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "ahash",
  "anyhow",
@@ -4055,7 +4086,7 @@ dependencies = [
  "futures-time",
  "halfbrown",
  "hopr-api",
- "hopr-crypto-packet",
+ "hopr-crypto-packet 1.4.0",
  "hopr-protocol-app",
  "hopr-protocol-hopr",
  "hopr-transport-mixer",
@@ -4082,7 +4113,6 @@ dependencies = [
 [[package]]
 name = "hopr-transport-mixer"
 version = "0.4.1"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "futures",
  "futures-timer",
@@ -4120,7 +4150,6 @@ dependencies = [
 [[package]]
 name = "hopr-transport-probe"
 version = "0.8.0"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4146,7 +4175,6 @@ dependencies = [
 [[package]]
 name = "hopr-transport-session"
 version = "0.23.2"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4155,7 +4183,7 @@ dependencies = [
  "futures",
  "futures-time",
  "hopr-api",
- "hopr-crypto-packet",
+ "hopr-crypto-packet 1.4.0",
  "hopr-protocol-app",
  "hopr-protocol-session",
  "hopr-protocol-start",
@@ -4178,7 +4206,6 @@ dependencies = [
 [[package]]
 name = "hopr-transport-tag-allocator"
 version = "0.1.1"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "hopr-protocol-app",
  "serde",
