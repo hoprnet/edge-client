@@ -38,7 +38,7 @@ mod common;
 ///
 /// Gated behind `#[ignore]` — see module-level docs for required setup.
 #[ignore]
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[tokio::test(flavor = "multi_thread")]
 async fn edgli_sends_one_megabyte_through_rotsee() -> anyhow::Result<()> {
     common::run_one_megabyte_session_test(common::Network::Rotsee).await
 }

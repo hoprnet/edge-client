@@ -8,6 +8,7 @@
 
 use anyhow::Context as _;
 use std::{path::PathBuf, time::Duration};
+use tracing_subscriber::{EnvFilter, Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 use edgli::{
     BlokliEndpoint, Edgli, EdgliInitState, PathPlannerConfig,
@@ -1087,11 +1088,42 @@ pub async fn pump_and_verify(
 // Top-level harness
 // ────────────────────────────────────────────────────────────────────────────
 
+/// Initialise a layered tracing subscriber.
+///
+/// Always installs an `EnvFilter`-gated `fmt` layer for console output.
+/// When `FLAME_OUTPUT` is set, also installs a [`tracing_flame::FlameLayer`]
+/// that writes folded stacks to that path (usable with `inferno-flamegraph`
+/// or `cargo flamegraph --open`).
+///
+/// Returns a guard that must be held for the duration of the test; dropping
+/// it flushes the flame file.
+pub fn init_tracing() -> Option<tracing_flame::FlushGuard<std::io::BufWriter<std::fs::File>>> {
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(true)
+        .with_filter(EnvFilter::from_default_env());
+
+    let flame_path = std::env::var("FLAME_OUTPUT").ok();
+    if let Some(ref path) = flame_path {
+        let (flame_layer, guard) =
+            tracing_flame::FlameLayer::with_file(path).expect("cannot open FLAME_OUTPUT file");
+        tracing_subscriber::registry()
+            .with(fmt_layer)
+            .with(flame_layer)
+            .init();
+        Some(guard)
+    } else {
+        tracing_subscriber::registry().with(fmt_layer).init();
+        None
+    }
+}
+
 /// Run the 1 MiB session pump (0-hop + 1-hop) against the given network.
 ///
 /// Orchestrates: provision → Edgli boot → strategy reactor → channel wait →
 /// target selection → 0-hop pump → 1-hop pump → final assertion.
 pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
+    let _flame_guard = init_tracing();
+
     // ── 1. Provision the network ─────────────────────────────────────────────
     let (summary, _guard, tuning) = provision(net).await?;
 
