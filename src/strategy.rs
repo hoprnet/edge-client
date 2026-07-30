@@ -10,8 +10,6 @@ pub use hopr_strategy::channel_lifecycle::{
 
 #[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
 use hopr_lib::api::chain::{AccountSelector, ChainReadAccountOperations, ChainValues};
-#[cfg(feature = "runtime-tokio")]
-use hopr_lib::api::node::HasChainApi as _;
 
 /// Subset of strategies relevant to an edge node.
 pub enum EdgeStrategyKind {
@@ -326,7 +324,7 @@ pub async fn minimum_balance_recommendation(
 /// See [`compute_funding_config`] for the sizing formula.
 #[cfg(feature = "runtime-tokio")]
 pub async fn default_strategy_cfg(
-    node: &crate::client::Edgli,
+    _node: &crate::client::Edgli,
     sizing: &IncentiveConfiguration,
 ) -> anyhow::Result<MultiStrategyConfig> {
     sizing.validate()?;
