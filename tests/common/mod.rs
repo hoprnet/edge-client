@@ -1091,30 +1091,51 @@ pub async fn pump_and_verify(
 /// Initialise a layered tracing subscriber.
 ///
 /// Always installs an `EnvFilter`-gated `fmt` layer for console output.
+/// When `CHROME_TRACE_OUTPUT` is set, also installs a
+/// [`tracing_chrome::ChromeLayer`] that writes a Perfetto/Chrome-DevTools
+/// trace JSON to that path (open in `chrome://tracing` or
+/// <https://ui.perfetto.dev>).
 /// When `FLAME_OUTPUT` is set, also installs a [`tracing_flame::FlameLayer`]
-/// that writes folded stacks to that path (usable with `inferno-flamegraph`
-/// or `cargo flamegraph --open`).
+/// that writes folded stacks to that path (usable with `inferno-flamegraph`).
 ///
-/// Returns a guard that must be held for the duration of the test; dropping
-/// it flushes the flame file.
-pub fn init_tracing() -> Option<tracing_flame::FlushGuard<std::io::BufWriter<std::fs::File>>> {
+/// Returns guards that must be held for the duration of the test; dropping
+/// them flushes the trace files.
+pub fn init_tracing() -> (
+    Option<tracing_chrome::FlushGuard>,
+    Option<tracing_flame::FlushGuard<std::io::BufWriter<std::fs::File>>>,
+) {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_ansi(true)
         .with_filter(EnvFilter::from_default_env());
 
+    let chrome_path = std::env::var("CHROME_TRACE_OUTPUT").ok();
     let flame_path = std::env::var("FLAME_OUTPUT").ok();
-    if let Some(ref path) = flame_path {
-        let (flame_layer, guard) =
-            tracing_flame::FlameLayer::with_file(path).expect("cannot open FLAME_OUTPUT file");
-        tracing_subscriber::registry()
-            .with(fmt_layer)
-            .with(flame_layer)
-            .init();
-        Some(guard)
+
+    let (chrome_layer, chrome_guard) = if let Some(ref path) = chrome_path {
+        let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+            .file(path)
+            .include_args(true)
+            .build();
+        (Some(layer), Some(guard))
     } else {
-        tracing_subscriber::registry().with(fmt_layer).init();
-        None
-    }
+        (None, None)
+    };
+
+    let (flame_layer, flame_guard) = if let Some(ref path) = flame_path {
+        let (layer, guard) =
+            tracing_flame::FlameLayer::with_file(path).expect("cannot open FLAME_OUTPUT file");
+        (Some(layer), Some(guard))
+    } else {
+        (None, None)
+    };
+
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(chrome_layer)
+        .with(flame_layer)
+        .init();
+
+    (chrome_guard, flame_guard)
 }
 
 /// Run the 1 MiB session pump (0-hop + 1-hop) against the given network.
@@ -1122,7 +1143,7 @@ pub fn init_tracing() -> Option<tracing_flame::FlushGuard<std::io::BufWriter<std
 /// Orchestrates: provision → Edgli boot → strategy reactor → channel wait →
 /// target selection → 0-hop pump → 1-hop pump → final assertion.
 pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
-    let _flame_guard = init_tracing();
+    let (_chrome_guard, _flame_guard) = init_tracing();
 
     // ── 1. Provision the network ─────────────────────────────────────────────
     let (summary, _guard, tuning) = provision(net).await?;
