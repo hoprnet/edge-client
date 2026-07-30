@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Run the executor-yield profiling tests and collect Chrome trace files.
 #
-# Each test starts a 3-node localcluster, runs paced vs continuous session
-# pumps, and writes a Chrome trace JSON to EDGLI_TRACE_DIR.  Load results
-# at https://ui.perfetto.dev.
+# Starts one shared 3-node localcluster, runs both profiling tests against it
+# (paced baseline + continuous pump), then stops the cluster.  This avoids
+# the 3–4 min cluster startup cost being charged to each test individually.
 #
 # Usage:
-#   ./scripts/profile-executor-yield.sh [--local-only] [--rotsee-only]
+#   ./scripts/profile-executor-yield.sh [--local-only] [--rotsee-only] [--all]
 #
 # Options:
 #   --local-only     Run only the local-cluster tests (default)
@@ -17,10 +17,12 @@
 #   HOPRD_RELEASE_DIR        default: ~/Fun/hoprnet.org/hoprd/target/release
 #   HOPRD_LOCALCLUSTER_BIN   default: $HOPRD_RELEASE_DIR/hoprd-localcluster
 #   HOPRD_BIN                default: $HOPRD_RELEASE_DIR/hoprd
-#   HOPRD_CHAIN_IMAGE        default: bloklid-anvil image from localcluster/docker-compose.yml
-#   HOPRD_CONTAINER_RUNTIME  default: container  (macOS Apple runtime)
+#   HOPRD_CHAIN_IMAGE        default: bloklid-anvil:latest from GCR
+#   HOPRD_CONTAINER_RUNTIME  default: container  (macOS Apple native runtime)
 #   EDGLI_TRACE_DIR          default: ./profiling-results
 #   RUST_LOG                 default: info,edgli=debug,tokio=trace,runtime=trace
+#
+# Cluster startup timeout: 10 minutes (CLUSTER_START_TIMEOUT below).
 
 set -euo pipefail
 
@@ -43,11 +45,13 @@ done
 HOPRD_RELEASE_DIR="${HOPRD_RELEASE_DIR:-$HOME/Fun/hoprnet.org/hoprd/target/release}"
 export HOPRD_LOCALCLUSTER_BIN="${HOPRD_LOCALCLUSTER_BIN:-$HOPRD_RELEASE_DIR/hoprd-localcluster}"
 export HOPRD_BIN="${HOPRD_BIN:-$HOPRD_RELEASE_DIR/hoprd}"
-export HOPRD_CHAIN_IMAGE="${HOPRD_CHAIN_IMAGE:-europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil:0.10.5-pr.349@sha256:2e6747d9d6c97255474e243b5088d131f01bb67b5d8f17dbac6bb8aafdf1d7b6}"
+export HOPRD_CHAIN_IMAGE="${HOPRD_CHAIN_IMAGE:-europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil:latest}"
 export HOPRD_CONTAINER_RUNTIME="${HOPRD_CONTAINER_RUNTIME:-container}"
 export EDGLI_TRACE_DIR="${EDGLI_TRACE_DIR:-$REPO_ROOT/profiling-results}"
 export RUST_LOG="${RUST_LOG:-info,edgli=debug,tokio=trace,runtime=trace}"
 export RUSTFLAGS="--cfg tokio_unstable"
+
+CLUSTER_START_TIMEOUT=600  # seconds to wait for cluster to reach "running"
 
 # ── Validate binaries ────────────────────────────────────────────────────────
 missing=()
@@ -67,10 +71,24 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
-# The test manages cluster lifetime via ClusterHandle (Drop sends SIGINT).
-# If the test process is force-killed (SIGKILL), orphaned hoprd processes may
-# linger.  This trap warns and lists them.
+CLUSTER_PID=""
+CLUSTER_DATA_DIR=""
+
 cleanup() {
+    # Stop the managed cluster if we started one.
+    if [[ -n "$CLUSTER_PID" ]] && kill -0 "$CLUSTER_PID" 2>/dev/null; then
+        echo ""
+        echo "Stopping localcluster (PID $CLUSTER_PID)..."
+        kill -INT "$CLUSTER_PID" 2>/dev/null || true
+        # Wait up to 30 s for graceful exit.
+        local deadline=$(( $(date +%s) + 30 ))
+        while kill -0 "$CLUSTER_PID" 2>/dev/null && [[ $(date +%s) -lt $deadline ]]; do
+            sleep 1
+        done
+        kill -KILL "$CLUSTER_PID" 2>/dev/null || true
+    fi
+
+    # Warn about any remaining hoprd orphans.
     local orphans
     orphans="$(pgrep -f "hoprd-localcluster\|hoprd --" 2>/dev/null || true)"
     if [[ -n "$orphans" ]]; then
@@ -98,15 +116,69 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # ── Build ────────────────────────────────────────────────────────────────────
 cd "$REPO_ROOT"
 echo ""
-echo "[1/2] Building profiling test binary..."
+echo "[1/3] Building profiling test binary..."
 cargo build --test edgli_profiling --profile tracer --features prof
+
+# ── Start cluster (local tests only) ─────────────────────────────────────────
+if [[ "$RUN_LOCAL" == "true" ]]; then
+    CLUSTER_DATA_DIR="$(mktemp -d /tmp/edgli-prof-cluster.XXXXXX)"
+    echo ""
+    echo "[2/3] Starting 3-node localcluster in background..."
+    echo "      data dir: $CLUSTER_DATA_DIR"
+
+    "$HOPRD_LOCALCLUSTER_BIN" \
+        --hoprd-bin "$HOPRD_BIN" \
+        --size 3 \
+        --extra-identities 1 \
+        --data-dir "$CLUSTER_DATA_DIR" \
+        --api-host "127.0.0.1" \
+        --api-port-base 13000 \
+        --p2p-port-base 19000 \
+        --api-token "test-token-localcluster" \
+        --chain-image "$HOPRD_CHAIN_IMAGE" \
+        --container-runtime "$HOPRD_CONTAINER_RUNTIME" \
+        &
+    CLUSTER_PID=$!
+    echo "      PID: $CLUSTER_PID"
+
+    # Poll hoprd-localcluster status until "running" or timeout.
+    echo ""
+    echo "      Waiting for cluster to reach 'running' state (timeout: ${CLUSTER_START_TIMEOUT}s)..."
+    deadline=$(( $(date +%s) + CLUSTER_START_TIMEOUT ))
+    cluster_ready=false
+    while [[ $(date +%s) -lt $deadline ]]; do
+        if ! kill -0 "$CLUSTER_PID" 2>/dev/null; then
+            echo "ERROR: localcluster process exited prematurely"
+            exit 1
+        fi
+        state=$("$HOPRD_LOCALCLUSTER_BIN" status --data-dir "$CLUSTER_DATA_DIR" 2>/dev/null \
+                | jq -r '.state' 2>/dev/null || true)
+        if [[ "$state" == "running" ]]; then
+            cluster_ready=true
+            break
+        fi
+        printf "      cluster state: %-20s\r" "${state:-waiting...}"
+        sleep 5
+    done
+
+    if [[ "$cluster_ready" != "true" ]]; then
+        echo ""
+        echo "ERROR: cluster did not reach 'running' within ${CLUSTER_START_TIMEOUT}s"
+        exit 1
+    fi
+    echo ""
+    echo "      ✓ cluster is running"
+
+    # Export data dir so tests use external (already-running) cluster mode.
+    export HOPRD_CLUSTER_DATA_DIR="$CLUSTER_DATA_DIR"
+fi
 
 # ── Run tests ────────────────────────────────────────────────────────────────
 echo ""
-echo "[2/2] Running profiling tests..."
+echo "[3/3] Running profiling tests..."
 
-# Select which tests to run.
-# Each test gets its own process (nextest), so console_subscriber::init() is safe.
+# Local tests share the already-running cluster via HOPRD_CLUSTER_DATA_DIR.
+# Rotsee test manages its own external network via env vars.
 run_tests=()
 if [[ "$RUN_LOCAL" == "true" ]]; then
     run_tests+=(
@@ -123,7 +195,7 @@ for test in "${run_tests[@]}"; do
     echo "── $test ──"
     cargo nextest run \
         --test edgli_profiling \
-        --profile tracer \
+        --cargo-profile tracer \
         --features prof \
         --run-ignored ignored-only \
         --no-capture \

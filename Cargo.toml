@@ -128,3 +128,9 @@ anyhow = "1.0.103"
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
+
+# Patch hopr-utils with local cooperative-yield fix in poll_copy.
+# The worktree at /tmp/hoprnet-poll-fix is pinned to the same rev (847d1c65)
+# that all other hoprnet crates use, so only poll_copy changes.
+[patch."https://github.com/hoprnet/hoprnet"]
+hopr-utils = { path = "/tmp/hoprnet-poll-fix/utils" }

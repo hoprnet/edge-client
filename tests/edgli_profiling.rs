@@ -41,7 +41,7 @@
 //! ```text
 //! export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd-localcluster
 //! export HOPRD_BIN=/path/to/hoprd
-//! export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil:0.10.5-pr.349@sha256:2e6747d9d6c97255474e243b5088d131f01bb67b5d8f17dbac6bb8aafdf1d7b6'
+//! export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil:latest'
 //! export HOPRD_CONTAINER_RUNTIME=container   # macOS Apple runtime
 //! export EDGLI_TRACE_DIR=./profiling-results
 //! export RUST_LOG=info,edgli=debug,tokio=trace,runtime=trace

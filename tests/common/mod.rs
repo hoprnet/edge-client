@@ -38,7 +38,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 // Constants
 // ────────────────────────────────────────────────────────────────────────────
 
-pub const PAYLOAD_SIZE: usize = 1_024 * 1_024; // 1 MiB
+pub const PAYLOAD_SIZE: usize = 2 * 1_024 * 1_024; // 2 MiB
 /// HOPR session MTU (bytes that fit in a single HOPR packet payload).
 /// Equal to `hopr_transport_session::SESSION_MTU = 1018`.
 pub const SESSION_MTU: usize = 1018;
@@ -1185,6 +1185,80 @@ pub async fn pump_continuous(
     Ok(())
 }
 
+/// Write `payload` into `session` in MTU-sized chunks with a cooperative
+/// `yield_now()` between each chunk — no inter-batch sleep.
+///
+/// This models what `poll_copy` should do once it calls
+/// `tokio::task::coop::poll_proceed(cx)` at the top of each write iteration.
+/// The yield hands the tokio worker thread back to the executor between every
+/// batch so the SURB balancer and ack tasks can schedule without starvation,
+/// while still driving the data as fast as the network allows.
+///
+/// Expected result: frame-discard count ≈ 0 (same as `pump_and_verify`),
+/// throughput higher than paced (no 100 ms inter-batch sleep).
+pub async fn pump_yielding(
+    session: HoprSession,
+    payload: &[u8],
+    label: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let (mut r, mut w) = tokio::io::split(session);
+    let payload_bytes = payload.to_vec();
+    let expected = sha256_digest(payload);
+    let n = payload.len();
+    let start = std::time::Instant::now();
+
+    let writer = tokio::spawn(async move {
+        let mut offset = 0;
+        while offset < payload_bytes.len() {
+            let end = (offset + PUMP_BATCH_BYTES).min(payload_bytes.len());
+            w.write_all(&payload_bytes[offset..end]).await?;
+            offset = end;
+            // Cooperative yield — no sleep, immediate re-schedule.
+            tokio::task::yield_now().await;
+        }
+        w.flush().await?;
+        Ok::<_, std::io::Error>(())
+    });
+
+    let mut received = vec![0u8; n];
+    let read_result = tokio::time::timeout(timeout, r.read_exact(&mut received)).await;
+
+    let elapsed = start.elapsed();
+    let throughput_kbps = (n as f64 / 1024.0) / elapsed.as_secs_f64();
+
+    match read_result {
+        Ok(Ok(_)) => {
+            tracing::info!(
+                "{label}: ✓ {n} B in {elapsed:.2?} ({throughput_kbps:.0} KB/s) — yielding"
+            );
+            writer
+                .await
+                .map_err(|e| anyhow::anyhow!("{label}: writer panicked: {e}"))?
+                .map_err(|e| anyhow::anyhow!("{label}: write error: {e}"))?;
+            anyhow::ensure!(
+                sha256_digest(&received) == expected,
+                "{label}: SHA-256 mismatch — {n} bytes corrupted in transit"
+            );
+        }
+        Ok(Err(e)) => {
+            writer.abort();
+            let _ = writer.await;
+            anyhow::bail!("{label}: read error: {e}");
+        }
+        Err(_timeout) => {
+            writer.abort();
+            let _ = writer.await;
+            tracing::warn!(
+                "{label}: read timeout ({timeout:?}) after {elapsed:.2?} \
+                 ({throughput_kbps:.0} KB/s before stall)"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Throughput comparison: run 0-hop and 1-hop sessions twice — once with
 /// pacing (`pump_and_verify`) and once without (`pump_continuous`) — and log
 /// throughput for both.
@@ -1310,6 +1384,29 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
     )
     .await?;
 
+    // ── 5b. 0-hop yielding variant (cooperative yield, no sleep) ─────────────
+    tracing::info!("=== YIELDING (COOPERATIVE): opening 0-hop session ===");
+    let (session_0h_yield, _) = edgli
+        .connect_to(
+            dest_0h,
+            loopback_target(),
+            HoprSessionClientConfig {
+                forward_path: HopRouting::try_from(0_usize)?,
+                return_path: HopRouting::try_from(0_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                surb_management: surb_cfg.clone(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    pump_yielding(
+        session_0h_yield,
+        &payload,
+        "yielding 0-hop",
+        tuning.pump_timeout,
+    )
+    .await?;
+
     // ── 6. 1-hop paced baseline ───────────────────────────────────────────────
     tracing::info!("=== PACED BASELINE: opening 1-hop session ===");
     let (session_1h_paced, _) = edgli
@@ -1357,6 +1454,29 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
         session_1h_cont,
         &payload,
         "continuous 1-hop",
+        tuning.pump_timeout,
+    )
+    .await?;
+
+    // ── 7b. 1-hop yielding variant ────────────────────────────────────────────
+    tracing::info!("=== YIELDING (COOPERATIVE): opening 1-hop session ===");
+    let (session_1h_yield, _) = edgli
+        .connect_to(
+            dest_1h,
+            loopback_target(),
+            HoprSessionClientConfig {
+                forward_path: HopRouting::try_from(1_usize)?,
+                return_path: HopRouting::try_from(1_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                surb_management: surb_cfg.clone(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    pump_yielding(
+        session_1h_yield,
+        &payload,
+        "yielding 1-hop",
         tuning.pump_timeout,
     )
     .await?;

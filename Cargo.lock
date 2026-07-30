@@ -4250,7 +4250,6 @@ dependencies = [
 [[package]]
 name = "hopr-utils"
 version = "0.3.0"
-source = "git+https://github.com/hoprnet/hoprnet?rev=847d1c65167021367fe5b8a164cb707ccf7317d3#847d1c65167021367fe5b8a164cb707ccf7317d3"
 dependencies = [
  "arrayvec",
  "auto_impl",
