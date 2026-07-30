@@ -338,7 +338,6 @@ impl Edgli {
     ) -> anyhow::Result<super::strategy::BalanceRecommendation> {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
-        let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
 
         let source = HasChainApi::identity(&*self.hopr).node_address;
         let all_channels = IncentiveChannelOperations::channels_from(&*self.hopr, source)
@@ -361,7 +360,7 @@ impl Edgli {
         // verified on-chain rather than assumed.
         // A running node cannot start without a Safe, so it is always deployed here.
         let costs = super::strategy::compute_costs_to_start(chain, Some(source), true).await?;
-        super::strategy::compute_balance_recommendation(ticket_price, win_prob, missing, costs)
+        super::strategy::compute_balance_recommendation(ticket_price, missing, costs)
     }
 
     /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].
@@ -378,7 +377,6 @@ impl Edgli {
     > {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
-        let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
 
         let node_address = HasChainApi::identity(&*self.hopr).node_address;
         let channels = IncentiveChannelOperations::channels_from(&*self.hopr, node_address)
@@ -404,7 +402,7 @@ impl Edgli {
             .into_iter()
             .filter(|c| c.status == ChannelStatus::Open)
         {
-            let capacity = super::strategy::compute_capacity(c.balance, ticket_price, win_prob)?;
+            let capacity = super::strategy::compute_capacity(c.balance, ticket_price)?;
             map.insert(
                 super::strategy::CapacityAllocator::Peer(c.destination),
                 capacity,
@@ -412,7 +410,7 @@ impl Edgli {
         }
         map.insert(
             super::strategy::CapacityAllocator::Safe,
-            super::strategy::compute_capacity(safe_balance, ticket_price, win_prob)?,
+            super::strategy::compute_capacity(safe_balance, ticket_price)?,
         );
 
         Ok(map)
