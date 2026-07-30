@@ -5,7 +5,8 @@ use hopr_lib::api::types::primitive::prelude::{
     Address, HoprBalance, UnitaryFloatOps as _, XDaiBalance,
 };
 pub use hopr_strategy::channel_lifecycle::{
-    ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig, SelectorProfile,
+    CapacitySizingMode, ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig,
+    SelectorProfile,
 };
 
 /// Paid downstream relay hops assumed when sizing a channel's stake. Edge nodes
@@ -92,6 +93,9 @@ pub fn compute_funding_config() -> FundingConfig {
         min_safe_capacity_required: ByteSize::b(INITIAL_CAPACITY_BYTES),
         assumed_hops: ASSUMED_HOPS,
         stop_when_unfunded: true,
+        sizing_mode: CapacitySizingMode::Probabilistic {
+            success_probability: 0.999,
+        },
     }
 }
 
@@ -391,6 +395,20 @@ mod tests {
         // before a top-up triggers.
         let cfg = compute_funding_config();
         assert!(cfg.lower_capacity_threshold.as_u64() >= hopr_lib::SESSION_MTU as u64);
+    }
+
+    #[test]
+    fn compute_funding_config_uses_probabilistic_sizing() {
+        let cfg = compute_funding_config();
+        assert!(
+            matches!(
+                cfg.sizing_mode,
+                CapacitySizingMode::Probabilistic { success_probability }
+                if (success_probability - 0.999).abs() < f64::EPSILON
+            ),
+            "expected Probabilistic(0.999), got {:?}",
+            cfg.sizing_mode
+        );
     }
 
     #[test]
