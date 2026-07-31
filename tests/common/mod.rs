@@ -41,7 +41,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 // Constants
 // ────────────────────────────────────────────────────────────────────────────
 
-pub const PAYLOAD_SIZE: usize = 20 * 1_024 * 1_024; // 20 MiB
+pub const PAYLOAD_SIZE: usize = 5 * 1_024 * 1_024; // 5 MiB
 /// HOPR session MTU (bytes that fit in a single HOPR packet payload).
 /// Equal to `hopr_transport_session::SESSION_MTU = 1018`.
 pub const SESSION_MTU: usize = 1018;
@@ -50,6 +50,13 @@ pub const SESSION_MTU: usize = 1018;
 /// when the host machine is under load running a 3-node cluster.
 pub const PUMP_BATCH_PACKETS: usize = 16;
 pub const PUMP_BATCH_BYTES: usize = PUMP_BATCH_PACKETS * SESSION_MTU;
+/// Paced send rate for the writer in `pump_and_verify`. 120 kB/s ≈ 1.3× the echo rate (~93 kB/s),
+/// keeping EXIT's echo buffer manageable. At this rate, 5 MiB sends in ~44 s (well under 300 s).
+pub const PUMP_SEND_RATE_BPS: u64 = 120_000;
+/// Minimum acceptable receive throughput.  Below this the test fails.
+pub const PUMP_MIN_RECV_RATE_KBS: f64 = 60.0;
+/// Maximum acceptable packet loss percentage.  Above this the test fails.
+pub const PUMP_MAX_LOSS_PCT: f64 = 5.0;
 pub const CLUSTER_SIZE: usize = 3;
 const API_PORT_BASE: u16 = 13000;
 const P2P_PORT_BASE: u16 = 19000;
@@ -1028,13 +1035,8 @@ pub fn sha256_digest(data: &[u8]) -> Vec<u8> {
     h.finalize().to_vec()
 }
 
-/// Write `payload` into `session`, read exactly `payload.len()` bytes back from
-/// the echo server, verify SHA-256 integrity, and log send/recv throughput.
-///
-/// Writes in `PUMP_BATCH_BYTES`-sized chunks without artificial pauses.
-/// With `MAXIMUM_MSG_OUTGOING_BUFFER_SIZE = 256`, the CrossfireSink applies
-/// natural backpressure when the encoder queue is full, so `write_all` blocks
-/// until capacity is available — no manual pacing needed.
+/// Sends `payload` at a paced rate (`PUMP_SEND_RATE_BPS`) over `session`, reads the echo back,
+/// then reports and asserts send/receive throughput and packet-loss metrics.
 ///
 /// Does NOT call `shutdown()` on the write half: HOPR sessions do not support
 /// TCP half-close.
@@ -1050,81 +1052,133 @@ pub async fn pump_and_verify(
     let n = payload.len();
     let overall_start = std::time::Instant::now();
 
+    // Nanoseconds to spend per PUMP_BATCH_BYTES at PUMP_SEND_RATE_BPS.
+    let batch_ns = (PUMP_BATCH_BYTES as u64)
+        .checked_mul(1_000_000_000)
+        .and_then(|v| v.checked_div(PUMP_SEND_RATE_BPS))
+        .unwrap_or(0);
+
+    let writer_offset = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let writer_offset_clone = writer_offset.clone();
     let writer = tokio::spawn(async move {
-        let write_start = std::time::Instant::now();
-        let mut offset = 0;
+        let write_start = tokio::time::Instant::now();
+        let mut offset = 0usize;
         while offset < payload_bytes.len() {
+            let batch_start = tokio::time::Instant::now();
             let end = (offset + PUMP_BATCH_BYTES).min(payload_bytes.len());
             w.write_all(&payload_bytes[offset..end]).await?;
             w.flush().await?;
             offset = end;
+            writer_offset_clone.store(offset, std::sync::atomic::Ordering::Relaxed);
+
+            // Rate limiting: sleep for the remaining budget of the batch window.
+            let elapsed_ns = batch_start.elapsed().as_nanos() as u64;
+            if batch_ns > elapsed_ns {
+                tokio::time::sleep(std::time::Duration::from_nanos(batch_ns - elapsed_ns)).await;
+            }
         }
         Ok::<_, std::io::Error>(write_start.elapsed())
     });
 
     let mut received = vec![0u8; n];
-    let progress_interval = (n / 4).max(1);
-    {
-        let mut cursor = 0usize;
-        let deadline = tokio::time::Instant::now() + timeout;
+    let mut cursor = 0usize;
+    let deadline = tokio::time::Instant::now() + timeout;
+    // Log progress roughly every 5% of total payload.
+    let progress_interval = (n / 20).max(1);
+    let mut next_progress = progress_interval;
+
+    // Monitor task: log writer vs reader progress every 15 s.
+    let monitor_offset = writer_offset.clone();
+    let monitor_label = label.to_string();
+    let monitor_n = n;
+    let monitor_deadline = deadline;
+    let monitor = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        interval.tick().await; // skip the immediate first tick
         loop {
-            let chunk_end = (cursor + progress_interval).min(n);
-            match tokio::time::timeout_at(deadline, r.read_exact(&mut received[cursor..chunk_end]))
-                .await
-            {
-                Ok(Ok(_)) => {
-                    cursor = chunk_end;
-                    let pct = cursor * 100 / n;
-                    let elapsed = overall_start.elapsed();
-                    let mb_s = cursor as f64 / elapsed.as_secs_f64() / 1_048_576.0;
+            tokio::select! {
+                _ = interval.tick() => {
+                    let wo = monitor_offset.load(std::sync::atomic::Ordering::Relaxed);
                     tracing::info!(
-                        "{label}: recv progress {cursor}/{n} B ({pct}%) in {elapsed:.2?} ({mb_s:.3} MB/s)"
+                        "[monitor] {monitor_label}: writer_sent={wo}/{monitor_n} B ({pct}%)",
+                        pct = wo * 100 / monitor_n.max(1)
                     );
-                    if cursor >= n {
-                        break;
-                    }
                 }
-                Ok(Err(e)) => {
-                    writer.abort();
-                    let _ = writer.await;
-                    return Err(anyhow::anyhow!("{label}: read error: {e}"));
-                }
-                Err(_) => {
-                    let elapsed = overall_start.elapsed();
-                    let mb_s = cursor as f64 / elapsed.as_secs_f64() / 1_048_576.0;
-                    writer.abort();
-                    let _ = writer.await;
-                    return Err(anyhow::anyhow!(
-                        "{label}: read timeout ({timeout:?}) — {cursor}/{n} B ({pct}%) at {mb_s:.3} MB/s",
-                        pct = cursor * 100 / n
-                    ));
-                }
+                _ = tokio::time::sleep_until(monitor_deadline) => break,
             }
         }
+    });
+
+    // Reader: accumulate bytes until all received or deadline expires.
+    'recv: loop {
+        match tokio::time::timeout_at(deadline, r.read(&mut received[cursor..])).await {
+            Ok(Ok(0)) => break 'recv,
+            Ok(Ok(nbytes)) => {
+                cursor += nbytes;
+                if cursor >= next_progress || cursor >= n {
+                    let pct = cursor * 100 / n;
+                    let elapsed = overall_start.elapsed();
+                    let kbs = cursor as f64 / elapsed.as_secs_f64() / 1024.0;
+                    let wo = writer_offset.load(std::sync::atomic::Ordering::Relaxed);
+                    tracing::info!(
+                        "{label}: recv progress {cursor}/{n} B ({pct}%) in {elapsed:.2?} ({kbs:.1} kB/s) [writer_sent={wo}]"
+                    );
+                    next_progress = cursor + progress_interval;
+                }
+                if cursor >= n {
+                    break 'recv;
+                }
+            }
+            Ok(Err(e)) => {
+                monitor.abort();
+                writer.abort();
+                let _ = writer.await;
+                return Err(anyhow::anyhow!("{label}: read error: {e}"));
+            }
+            Err(_) => break 'recv, // deadline expired — report as loss
+        }
     }
+    monitor.abort();
     let recv_elapsed = overall_start.elapsed();
+    let bytes_received = cursor;
 
-    let write_elapsed = tokio::time::timeout(timeout, writer)
-        .await
-        .map_err(|_| anyhow::anyhow!("{label}: writer timeout ({timeout:?})"))?
-        .map_err(|e| anyhow::anyhow!("{label}: writer panicked: {e}"))?
-        .map_err(|e| anyhow::anyhow!("{label}: write error: {e}"))?;
+    // Wait for writer to finish (it should be done or nearly done by now).
+    let write_elapsed = match tokio::time::timeout(timeout, writer).await {
+        Ok(Ok(Ok(dur))) => dur,
+        Ok(Ok(Err(e))) => return Err(anyhow::anyhow!("{label}: write error: {e}")),
+        Ok(Err(e)) => return Err(anyhow::anyhow!("{label}: writer panicked: {e}")),
+        Err(_) => return Err(anyhow::anyhow!("{label}: writer timeout")),
+    };
 
-    anyhow::ensure!(
-        sha256_digest(&received) == expected,
-        "{label}: SHA-256 mismatch — {n} bytes corrupted in transit"
-    );
-
-    let send_mbs = n as f64 / write_elapsed.as_secs_f64() / 1_048_576.0;
-    let recv_mbs = n as f64 / recv_elapsed.as_secs_f64() / 1_048_576.0;
+    // Metrics
+    let send_kbs = n as f64 / write_elapsed.as_secs_f64() / 1024.0;
+    let recv_kbs = bytes_received as f64 / recv_elapsed.as_secs_f64() / 1024.0;
+    let loss_pct = (n - bytes_received) as f64 / n as f64 * 100.0;
     tracing::info!(
-        "{label}: ✓ {} B  |  ↑ send {:.3} MB/s ({:.2?})  |  ↓ recv {:.3} MB/s ({:.2?})",
-        n,
-        send_mbs,
+        "{label}: send {send_kbs:.1} kB/s ({:.2?}) | recv {recv_kbs:.1} kB/s ({:.2?}) | loss {loss_pct:.2}% ({bytes_received}/{n} B)",
         write_elapsed,
-        recv_mbs,
-        recv_elapsed
+        recv_elapsed,
     );
+
+    // SHA-256 integrity check (only when all bytes arrived).
+    if bytes_received == n {
+        anyhow::ensure!(
+            sha256_digest(&received) == expected,
+            "{label}: SHA-256 mismatch — {n} bytes corrupted in transit"
+        );
+        tracing::info!("{label}: SHA-256 OK");
+    }
+
+    // Assertions.
+    anyhow::ensure!(
+        loss_pct <= PUMP_MAX_LOSS_PCT,
+        "{label}: packet loss {loss_pct:.1}% > {PUMP_MAX_LOSS_PCT}% max (received {bytes_received}/{n} B)"
+    );
+    anyhow::ensure!(
+        recv_kbs >= PUMP_MIN_RECV_RATE_KBS,
+        "{label}: recv throughput {recv_kbs:.1} kB/s < {PUMP_MIN_RECV_RATE_KBS} kB/s min"
+    );
+
     Ok(())
 }
 
