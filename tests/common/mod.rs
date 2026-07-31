@@ -1357,11 +1357,21 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
                 // which blocks ENTRY's keep-alive stream — SURB pool stays empty for >3 s,
                 // triggering sequencer timeouts and session EOF.
                 capabilities: SessionCapability::Segmentation.into(),
-                // Keep the SURB pre-fill burst below the per-peer send-channel capacity
-                // (1000 slots). The default target of 7000 SURBs saturates the channel,
-                // causing session data to time out and be dropped silently with no
-                // reconnect (hoprnet eb21c1354c removed cache invalidation on timeout).
-                // 600 SURBs fit in one burst; the balancer replenishes as they are consumed.
+                // HOPR_SESSION_FRAME_SIZE=SESSION_MTU (set in test env) makes each session
+                // frame exactly one HOPR packet (one segment).  With frame_mtu=1500 (default),
+                // each frame spans 2 HOPR packets; EXIT consumes 2 SURBs per echo frame, so
+                // the SURB pool at target=600 holds only 6.25 s of supply.  A 6-second
+                // crossfire_sink stall at ENTRY (outgoing buffer full → KeepAlive blocked)
+                // depletes the pool to zero → segment-2 of a frame is never echoed →
+                // reassembler timeout → session EOF.  With frame_mtu=SESSION_MTU the pool
+                // holds 8.5 s of supply at the same byte throughput, safely covering the
+                // stall.  Frame size also aligns exactly with PUMP_BATCH_BYTES (16 frames).
+                //
+                // target=600 limits exit echo throughput via SURB pacing, preventing the
+                // bounded application-layer receive buffer at ENTRY from overflowing.
+                // Higher targets (e.g. 2000) unlocked 325+ frames/s which saturated the
+                // application channel and caused post_sequencing discards with 0 bytes
+                // delivered to the reader.
                 surb_management: Some(SurbBalancerConfig {
                     target_surb_buffer_size: 600,
                     max_surbs_per_sec: 1000,
@@ -1372,12 +1382,10 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         )
         .await?;
     // Allow SURBs to accumulate before pumping data.  When pump starts
-    // immediately after session-ready, EXIT's pool contains only the
-    // ~320 SURBs built up during the handshake.  Each echo frame consumes
-    // 2 SURBs, so the pool empties within ~160 frames and the outbound
-    // path planner silently drops packets (no SURB → no packet → data loss).
-    // 5 s at max_surbs_per_sec=1000 adds up to 10000 SURBs (capped at target=600),
-    // giving EXIT a comfortable buffer that the PID controller can maintain.
+    // immediately after session-ready, EXIT's pool contains only the SURBs
+    // built up during the handshake.  With frame_mtu=SESSION_MTU, each echo
+    // frame consumes 1 SURB.  5 s at max_surbs_per_sec=1000 fills the pool to
+    // the target=600 cap, giving EXIT a comfortable buffer.
     tokio::time::sleep(Duration::from_secs(5)).await;
     pump_and_verify(session_0h, &payload, "0-hop", tuning.pump_timeout).await?;
 
