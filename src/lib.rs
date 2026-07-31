@@ -20,7 +20,7 @@ pub use blokli::*;
 #[cfg(feature = "blokli")]
 pub use endpoint::*;
 #[cfg(feature = "blokli")]
-pub use hopr_chain_connector::BlockchainConnectorConfig;
+pub use hopr_chain_connector::{BlockchainConnectorConfig, DEFAULT_REQUEST_TIMEOUT};
 pub use hopr_lib::exports::transport::path::PathPlannerConfig;
 // Re-exported so consumers constructing a `BlokliEndpoint` do not need their own
 // `url` dependency, which would have to match this crate's version to unify.
