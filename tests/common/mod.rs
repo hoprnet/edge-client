@@ -39,9 +39,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 // ────────────────────────────────────────────────────────────────────────────
 
 pub const PAYLOAD_SIZE: usize = 1_024 * 1_024; // 1 MiB
-/// HOPR session MTU (bytes that fit in a single HOPR packet payload).
-/// Equal to `hopr_transport_session::SESSION_MTU = 1018`.
-pub const SESSION_MTU: usize = 1018;
+/// Bytes that fit in a single HOPR packet payload. Re-exported rather than
+/// hardcoded so it cannot drift from the pinned transport.
+pub use edgli::hopr_lib::SESSION_MTU;
 /// Packets per write-batch in `pump_and_verify`.  Keeps the Rayon encoding
 /// queue well below the `PACKET_ENCODING_TIMEOUT = 150 ms` threshold even
 /// when the host machine is under load running a 3-node cluster.
@@ -61,7 +61,6 @@ const READYZ_TIMEOUT: Duration = Duration::from_secs(120);
 const PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const INTRACLUSTER_CHANNEL_TIMEOUT: Duration = Duration::from_secs(120);
 const EDGLI_PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
-const CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
 const EXIT_PEER_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ────────────────────────────────────────────────────────────────────────────
