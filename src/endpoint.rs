@@ -10,7 +10,8 @@ use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use hopr_chain_connector::{
-    HoprBlokliClientConfig, blokli_client::BlokliClient, create_blokli_client,
+    DEFAULT_REQUEST_TIMEOUT, HoprBlokliClientConfig, blokli_client::BlokliClient,
+    create_blokli_client,
 };
 use url::Url;
 
@@ -80,15 +81,20 @@ impl fmt::Display for BlokliDnsOverride {
     }
 }
 
-/// The Blokli service endpoint: a URL plus an optional DNS-resolution override.
+/// The Blokli service endpoint: a URL, an optional DNS-resolution override, and how long a
+/// single request to it may take.
 ///
-/// [`Default`] yields [`DEFAULT_BLOKLI_URL`] resolved through system DNS.
+/// [`Default`] yields [`DEFAULT_BLOKLI_URL`] resolved through system DNS, with the connector's
+/// [`DEFAULT_REQUEST_TIMEOUT`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlokliEndpoint {
     /// URL of the Blokli service.
     pub url: Url,
     /// When set, bypasses system DNS for [`Self::url`]'s host.
     pub dns_override: Option<BlokliDnsOverride>,
+    /// Timeout for a single request to this endpoint, covering DNS, TCP, TLS, request and
+    /// response. Raise it for endpoints reached over a high-latency link.
+    pub request_timeout: std::time::Duration,
 }
 
 impl Default for BlokliEndpoint {
@@ -96,6 +102,7 @@ impl Default for BlokliEndpoint {
         Self {
             url: DEFAULT_BLOKLI_URL.clone(),
             dns_override: None,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 }
@@ -106,12 +113,19 @@ impl BlokliEndpoint {
         Self {
             url,
             dns_override: None,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 
     /// Sets the DNS override, replacing any previously configured one.
     pub fn with_dns_override(mut self, dns_override: BlokliDnsOverride) -> Self {
         self.dns_override = Some(dns_override);
+        self
+    }
+
+    /// Sets the request timeout, replacing any previously configured one.
+    pub fn with_request_timeout(mut self, request_timeout: std::time::Duration) -> Self {
+        self.request_timeout = request_timeout;
         self
     }
 
@@ -129,6 +143,7 @@ impl BlokliEndpoint {
         Ok(Self {
             url,
             dns_override: None,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         })
     }
 
@@ -140,6 +155,7 @@ impl BlokliEndpoint {
         HoprBlokliClientConfig {
             url: self.url.clone(),
             dns_override: self.dns_override.map(|o| (o.ip, o.port)),
+            request_timeout: self.request_timeout,
         }
     }
 
@@ -209,6 +225,47 @@ mod tests {
     fn to_client_config_without_override_uses_system_dns() {
         let config = BlokliEndpoint::default().to_client_config();
         assert_eq!(config.dns_override, None);
+    }
+
+    #[test]
+    fn endpoints_default_to_the_connector_request_timeout() {
+        assert_eq!(
+            BlokliEndpoint::default().request_timeout,
+            DEFAULT_REQUEST_TIMEOUT
+        );
+        assert_eq!(
+            BlokliEndpoint::new(DEFAULT_BLOKLI_URL.clone()).request_timeout,
+            DEFAULT_REQUEST_TIMEOUT
+        );
+        assert_eq!(
+            BlokliEndpoint::from_optional_url(None)
+                .unwrap()
+                .request_timeout,
+            DEFAULT_REQUEST_TIMEOUT
+        );
+    }
+
+    /// Same seam as [`to_client_config_propagates_dns_override`]: a caller-supplied request
+    /// timeout must survive the hop into the connector's client config.
+    #[test]
+    fn to_client_config_propagates_request_timeout() {
+        let endpoint =
+            BlokliEndpoint::default().with_request_timeout(std::time::Duration::from_secs(10));
+
+        let config = endpoint.to_client_config();
+        assert_eq!(config.request_timeout, std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn with_request_timeout_keeps_the_dns_override() {
+        let dns_override = BlokliDnsOverride::new(v4(10, 1, 2, 1), Some(3002));
+        let endpoint = BlokliEndpoint::default()
+            .with_dns_override(dns_override)
+            .with_request_timeout(std::time::Duration::from_secs(10));
+
+        let config = endpoint.to_client_config();
+        assert_eq!(config.dns_override, Some((v4(10, 1, 2, 1), Some(3002))));
+        assert_eq!(config.request_timeout, std::time::Duration::from_secs(10));
     }
 
     #[test]
