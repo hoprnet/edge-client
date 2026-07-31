@@ -79,7 +79,7 @@ pub trait EdgeNodeApi: Send + Sync {
     async fn connected_peer_addresses(&self) -> std::result::Result<Vec<Address>, HoprLibError>;
 }
 
-#[cfg(feature = "runtime-tokio")]
+#[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
 mod impl_edgli {
     use super::*;
     use crate::client::Edgli;

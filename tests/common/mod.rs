@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use std::{path::PathBuf, time::Duration};
 
 use edgli::{
-    Edgli, EdgliInitState, PathPlannerConfig,
+    BlokliEndpoint, Edgli, EdgliInitState, PathPlannerConfig,
     hopr_lib::{
         HopRouting, HoprKeys, HoprSessionClientConfig, IdentityRetrievalModes,
         api::{
@@ -39,9 +39,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 // ────────────────────────────────────────────────────────────────────────────
 
 pub const PAYLOAD_SIZE: usize = 1_024 * 1_024; // 1 MiB
-/// HOPR session MTU (bytes that fit in a single HOPR packet payload).
-/// Equal to `hopr_transport_session::SESSION_MTU = 1018`.
-pub const SESSION_MTU: usize = 1018;
+/// Bytes that fit in a single HOPR packet payload. Re-exported rather than
+/// hardcoded so it cannot drift from the pinned transport.
+pub use edgli::hopr_lib::SESSION_MTU;
 /// Packets per write-batch in `pump_and_verify`.  Keeps the Rayon encoding
 /// queue well below the `PACKET_ENCODING_TIMEOUT = 150 ms` threshold even
 /// when the host machine is under load running a 3-node cluster.
@@ -61,7 +61,6 @@ const READYZ_TIMEOUT: Duration = Duration::from_secs(120);
 const PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const INTRACLUSTER_CHANNEL_TIMEOUT: Duration = Duration::from_secs(120);
 const EDGLI_PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
-const CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
 const EXIT_PEER_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1121,8 +1120,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     let edgli = Edgli::new(
         build_edgli_config(extra, &tuning),
         hopr_keys,
-        Some(summary.blokli_url.clone()),
-        None,
+        BlokliEndpoint::from_optional_url(Some(&summary.blokli_url))?,
         Some(tuning.connector_cfg),
         tuning.probe_local,
         |s: EdgliInitState| tracing::info!(?s, "edgli init"),
@@ -1136,16 +1134,10 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     await_edgli_peers_connected(&edgli, 2).await?;
 
     // ── 5. Start the channel-lifecycle strategy reactor ──────────────────────
-    // desired_message_count = 1000 × expected session packets (forward + SURB
-    // return). This absorbs background probe traffic and the probabilistic
-    // accumulation of winning tickets: at Rotsee values (price ≈ 1e-16 wxHOPR,
-    // win_prob ≈ 0.000125) the expected drain per packet is tiny, but the
-    // channel must hold at least `ticket_price` per winning ticket. Scaling by
-    // 1000× ensures the computed initial_balance comfortably exceeds the
-    // expected winning-ticket accumulation from both test and probe traffic.
-    let session_packets = (PAYLOAD_SIZE / SESSION_MTU + 1) * 2; // fwd + SURB return
+    // Channel capacities are derived from the live winning probability (see
+    // edgli::strategy::compute_funding_config) so each channel's stake covers a
+    // fixed number of ticket face values.
     let sizing = IncentiveConfiguration {
-        desired_message_count: (session_packets as u64) * 1_000,
         min_open_channels: 1,
         target_open_channels: CLUSTER_SIZE,
         ..Default::default()
@@ -1160,7 +1152,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
 
     let EdgeStrategyKind::ChannelLifecycle(lc0) = &strat_cfg.strategies[0];
     tracing::info!(
-        initial_balance = ?lc0.funding.initial_balance,
+        initial_capacity = ?lc0.funding.initial_capacity,
         target_channels = sizing.target_open_channels,
         "strategy configured; starting reactor"
     );

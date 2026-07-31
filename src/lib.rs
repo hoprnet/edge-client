@@ -1,9 +1,14 @@
-#[cfg(feature = "runtime-tokio")]
+// The concrete client needs both an async runtime and a blockchain connector;
+// `blokli` is currently the only supported connector.
+#[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
 pub mod client;
 pub mod errors;
 
 #[cfg(feature = "blokli")]
 pub mod blokli;
+
+#[cfg(feature = "blokli")]
+pub mod endpoint;
 
 pub mod strategy;
 pub mod traits;
@@ -12,8 +17,15 @@ pub use hopr_lib;
 
 #[cfg(feature = "blokli")]
 pub use blokli::*;
-pub use hopr_chain_connector::BlockchainConnectorConfig;
+#[cfg(feature = "blokli")]
+pub use endpoint::*;
+#[cfg(feature = "blokli")]
+pub use hopr_chain_connector::{BlockchainConnectorConfig, DEFAULT_REQUEST_TIMEOUT};
 pub use hopr_lib::exports::transport::path::PathPlannerConfig;
+// Re-exported so consumers constructing a `BlokliEndpoint` do not need their own
+// `url` dependency, which would have to match this crate's version to unify.
+#[cfg(feature = "blokli")]
+pub use url::Url;
 
 /// Returns a [`PathPlannerConfig`] optimised for low-latency path selection.
 ///
@@ -25,8 +37,9 @@ pub use hopr_lib::exports::transport::path::PathPlannerConfig;
 /// `min_ack_rate` controls the minimum message-acknowledgement rate an edge
 /// must exhibit before it is eligible for path inclusion.
 ///
-/// Pass the result as the `path_planner` argument of [`Edgli::new`] or
-/// [`run_hopr_edge_node_with`] to activate latency-optimised routing.
+/// Pass the result as the `path_planner` configuration when constructing an
+/// edge client to activate latency-optimised routing. The concrete client is
+/// available when both the `runtime-tokio` and `blokli` features are enabled.
 pub fn latency_path_planner_config(min_ack_rate: f64) -> PathPlannerConfig {
     PathPlannerConfig {
         min_ack_rate,
@@ -36,7 +49,7 @@ pub fn latency_path_planner_config(min_ack_rate: f64) -> PathPlannerConfig {
     }
 }
 
-#[cfg(feature = "runtime-tokio")]
+#[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
 pub use client::*;
 pub use traits::{EdgeNodeApi, NodeBalances};
 
@@ -47,7 +60,7 @@ pub use hopr_lib::api::types::{
     primitive::prelude::{Balance, XDai},
 };
 
-pub use strategy::{BalanceRecommendation, Capacity, CapacityAllocator};
+pub use strategy::{BalanceRecommendation, Capacity, CapacityAllocator, StartupCosts};
 
 #[cfg(feature = "blokli")]
 pub use strategy::minimum_balance_recommendation;

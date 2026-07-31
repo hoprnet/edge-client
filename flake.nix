@@ -2,7 +2,7 @@
   description = "HOPR Edge client";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/release-26.05";
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-utils.url = "github:numtide/flake-utils";
 
@@ -185,6 +185,14 @@
                 language = "system";
                 pass_filenames = false;
               };
+              dependabot-validator = {
+                enable = true;
+                name = "Dependabot config validator";
+                entry = "${pkgs.check-jsonschema}/bin/check-jsonschema --builtin-schema vendor.dependabot";
+                files = "\\.github/dependabot\\.yml$";
+                language = "system";
+                pass_filenames = true;
+              };
             };
             tools = pkgs;
             excludes = [
@@ -254,6 +262,34 @@
               commonArgs
               // {
                 inherit cargoArtifacts;
+              }
+            );
+
+            # Append to (not replace) any cargoExtraArgs set in commonArgs so
+            # shared flags keep applying to the feature-matrix checks.
+            feature-minimal = craneLib.cargoBuild (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features";
+              }
+            );
+
+            feature-runtime-tokio = craneLib.cargoBuild (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoExtraArgs =
+                  (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features runtime-tokio";
+              }
+            );
+
+            feature-blokli = craneLib.cargoBuild (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoExtraArgs =
+                  (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features blokli";
               }
             );
 
