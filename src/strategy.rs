@@ -99,9 +99,8 @@ pub fn compute_funding_config() -> FundingConfig {
     }
 }
 
-/// wxHOPR a single new channel's initial stake locks, mirroring the strategy's
-/// capacity→balance conversion of `initial_capacity`
-/// (`ticket_price × packets × ASSUMED_HOPS / win_prob`).
+/// wxHOPR a single new channel's initial stake locks, using conservative
+/// face-value sizing regardless of [`CapacitySizingMode`].
 ///
 /// **Semantics:** `ticket_price` is the *expected* per-hop value
 /// (= `face_value × win_prob`), not the face value. The ticket face value
@@ -113,6 +112,12 @@ pub fn compute_funding_config() -> FundingConfig {
 /// `SESSION_MTU < HoprPacket::PAYLOAD_SIZE`, so this is ≥ the strategy's own
 /// `ceil(bytes / PAYLOAD_SIZE)` packet count, keeping the recommendation on
 /// the never-underfund side.
+///
+/// **Conservative by design:** the capacity threshold values in [`FundingConfig`]
+/// are sizing-mode agnostic (bytes). [`CapacitySizingMode`] controls how the
+/// strategy converts those thresholds to wxHOPR at runtime; recommendations
+/// intentionally use face-value sizing as a safe upper bound so that users are
+/// never told to fund less than the strategy will actually lock.
 fn initial_channel_stake(ticket_price: HoprBalance, win_prob: f64) -> anyhow::Result<HoprBalance> {
     anyhow::ensure!(
         win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
