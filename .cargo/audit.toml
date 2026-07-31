@@ -7,6 +7,13 @@ ignore = [
   "RUSTSEC-2025-0134", # `rustls-pemfile` [unmaintained], blokli-client needs to avoid rust-tls, see https://github.com/hoprnet/blokli/issues/107
   "RUSTSEC-2025-0137", # `alloy` - held back until removed, see https://github.com/hoprnet/hoprnet/issues/7707
   "RUSTSEC-2026-0049", # `rustls-webpki` - needs alloy removal
+  "RUSTSEC-2026-0118", # `hickory-proto` 0.25.2 - no fix available yet, transitive from hoprnet
+  "RUSTSEC-2026-0119", # `hickory-proto` CPU exhaustion, needs >=0.26.1, transitive from hoprnet
+  "RUSTSEC-2026-0120", # `hickory-net` NSEC3 loop, needs >=0.26.1, transitive from hoprnet
+  "RUSTSEC-2026-0173", # `proc-macro-error2` [unmaintained], transitive dep via validator_derive
+  "RUSTSEC-2026-0185", # `quinn-proto` memory exhaustion, needs >=0.11.15, transitive from hoprnet
+  "RUSTSEC-2026-0204", # `crossbeam-epoch` pointer deref, needs >=0.9.20, transitive from hoprnet
+  "RUSTSEC-2026-0220", # `ruint` shift overflow, needs >=1.20.0, transitive from hoprnet
 ]
 informational_warnings = ["unmaintained"]
 severity_threshold = "low"
