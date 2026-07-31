@@ -81,13 +81,26 @@ fn packet_payload_size() -> u64 {
 /// Data capacity whose resolved stake covers `face_values` ticket face values.
 ///
 /// An exact packet multiple, so the strategy's `ceil` reproduces the packet count.
+/// Errors rather than clamping when a tiny `win_prob` overflows the byte count:
+/// clamped capacities compare equal, breaking `lower < topup < initial`.
 fn capacity_for_face_values(face_values: u64, win_prob: f64) -> anyhow::Result<ByteSize> {
     anyhow::ensure!(
         win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
         "win_prob must be in (0, 1]; got {win_prob}"
     );
-    let packets = (face_values as f64 / win_prob).ceil() as u64;
-    Ok(ByteSize::b(packets.saturating_mul(packet_payload_size())))
+    let packets = (face_values as f64 / win_prob).ceil();
+    anyhow::ensure!(
+        packets <= u64::MAX as f64,
+        "win_prob {win_prob} needs more than u64::MAX packets for {face_values} face values"
+    );
+    let bytes = (packets as u64)
+        .checked_mul(packet_payload_size())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "capacity for {face_values} face values at win_prob {win_prob} overflows u64 bytes"
+            )
+        })?;
+    Ok(ByteSize::b(bytes))
 }
 
 /// wxHOPR the strategy locks for a channel funded to `capacity`.
@@ -351,8 +364,15 @@ pub async fn default_strategy_cfg(
         .minimum_incoming_ticket_win_prob()
         .await?
         .as_f64();
+    let funding = compute_funding_config(win_prob)?;
+    tracing::info!(
+        win_prob,
+        initial_capacity = %funding.initial_capacity,
+        topup_capacity = %funding.topup_capacity,
+        "channel-lifecycle funding sized from live winning probability"
+    );
     let cfg = ChannelLifecycleConfig {
-        funding: compute_funding_config(win_prob)?,
+        funding,
         population: PopulationConfig {
             min_open_channels: sizing.min_open_channels,
             target_open_channels: sizing.target_open_channels,
@@ -527,6 +547,24 @@ mod tests {
         assert!(compute_funding_config(1.1).is_err());
         assert!(compute_funding_config(f64::NAN).is_err());
         assert!(compute_funding_config(f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn compute_funding_config_rejects_capacity_overflow() {
+        // `WinningProbability` encodes into 7 bytes and `as_f64` yields `k × 2⁻⁵²`,
+        // so 2⁻⁵² is the smallest value the chain can report. Its capacity exceeds
+        // `u64::MAX` bytes and must be rejected rather than clamped — clamping makes
+        // `lower < topup < initial` false and `min_safe` unfundable.
+        assert!(compute_funding_config(2f64.powi(-52)).is_err());
+        assert!(compute_funding_config(f64::MIN_POSITIVE).is_err());
+    }
+
+    #[test]
+    fn compute_funding_config_smallest_usable_win_prob_keeps_ordering() {
+        // One encoding step above the rejected value the config is still well formed.
+        let cfg = compute_funding_config(2f64.powi(-51)).unwrap();
+        assert!(cfg.lower_capacity_threshold < cfg.topup_capacity);
+        assert!(cfg.topup_capacity < cfg.initial_capacity);
     }
 
     #[test]

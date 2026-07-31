@@ -1137,8 +1137,7 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     // ── 5. Start the channel-lifecycle strategy reactor ──────────────────────
     // Channel capacities are derived from the live winning probability (see
     // edgli::strategy::compute_funding_config) so each channel's stake covers a
-    // fixed number of ticket face values — enough for both test and background
-    // probe traffic.
+    // fixed number of ticket face values.
     let sizing = IncentiveConfiguration {
         min_open_channels: 1,
         target_open_channels: CLUSTER_SIZE,
