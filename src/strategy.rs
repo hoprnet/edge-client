@@ -82,9 +82,11 @@ impl IncentiveConfiguration {
 pub fn compute_funding_config(sizing: &IncentiveConfiguration) -> anyhow::Result<FundingConfig> {
     let initial_bytes = sizing
         .desired_message_count
-        .checked_mul(hopr_lib::SESSION_MTU as u64)
-        .unwrap_or(u64::MAX);
-    anyhow::ensure!(initial_bytes > 0, "computed initial_capacity is zero; desired_message_count is zero");
+        .saturating_mul(hopr_lib::SESSION_MTU as u64);
+    anyhow::ensure!(
+        initial_bytes > 0,
+        "computed initial_capacity is zero; desired_message_count is zero"
+    );
     let initial = ByteSize::b(initial_bytes);
     let topup = ByteSize::b((initial_bytes as f64 * 0.75) as u64);
     let lower = ByteSize::b((initial_bytes as f64 * 0.25) as u64);

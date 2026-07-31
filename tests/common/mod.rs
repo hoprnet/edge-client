@@ -8,7 +8,9 @@
 
 use anyhow::Context as _;
 use std::{path::PathBuf, time::Duration};
-use tracing_subscriber::{EnvFilter, Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _};
+use tracing_subscriber::{
+    EnvFilter, Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _,
+};
 
 use edgli::{
     BlokliEndpoint, Edgli, EdgliInitState, PathPlannerConfig,
@@ -145,7 +147,7 @@ impl EdgliTuning {
             selector: SelectorProfile::LowLatency,
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
-            pump_timeout: Duration::from_secs(120),
+            pump_timeout: Duration::from_secs(300),
             min_ack_rate: 0.1, // local cluster probes succeed — use default quality gate
             path_planner: latency_path_planner_config(0.1),
         }
@@ -869,14 +871,16 @@ pub async fn await_edgli_channels_open(
         Duration::from_secs(5),
         || {
             format!(
-                "timeout ({timeout:?}) waiting for Edgli strategy to open {min_open} channel(s)"
+                "timeout ({timeout:?}) waiting for Edgli strategy to open {min_open} channel(s) to connected peers"
             )
         },
         || async {
+            let peers = edgli.connected_peer_addresses().await?;
+            let peer_set: std::collections::HashSet<Address> = peers.into_iter().collect();
             let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
             let open = channels
                 .iter()
-                .filter(|ch| ch.status == ChannelStatus::Open)
+                .filter(|ch| ch.status == ChannelStatus::Open && peer_set.contains(&ch.destination))
                 .count();
             if open >= min_open {
                 tracing::info!(
@@ -886,7 +890,7 @@ pub async fn await_edgli_channels_open(
                 return Ok(true);
             }
             tracing::debug!(
-                "Edgli: {open}/{min_open} outgoing channels Open (waiting for strategy)"
+                "Edgli: {open}/{min_open} outgoing channels to peers Open (waiting for strategy)"
             );
             Ok(false)
         },
@@ -937,8 +941,10 @@ async fn await_edgli_exit_peer_ready(edgli: &Edgli, target: Address) -> anyhow::
 
 /// Select session destinations that work for both 0-hop and 1-hop.
 ///
-/// 0-hop target: the first open outgoing channel counterparty (Edgli has a
-/// direct channel to it, so a 0-hop session is routable).
+/// 0-hop target: the first open outgoing channel whose destination is also a
+/// connected peer (Edgli has a direct channel to it, so a 0-hop session is
+/// routable).  Pre-existing genesis channels to non-running accounts are
+/// excluded by intersecting with the connected-peer set.
 ///
 /// 1-hop target: any connected peer that is different from the 0-hop target
 /// (the 0-hop target acts as the relay, with its intranetwork channels
@@ -948,11 +954,15 @@ async fn select_session_targets(edgli: &Edgli) -> anyhow::Result<(Address, Addre
         edgli.my_outgoing_channels(),
         edgli.connected_peer_addresses()
     )?;
+    let peer_set: std::collections::HashSet<Address> = peers.iter().copied().collect();
     let channels: Vec<ChannelEntry> = raw_channels
         .into_iter()
-        .filter(|c| c.status == ChannelStatus::Open)
+        .filter(|c| c.status == ChannelStatus::Open && peer_set.contains(&c.destination))
         .collect();
-    anyhow::ensure!(!channels.is_empty(), "no open outgoing channels");
+    anyhow::ensure!(
+        !channels.is_empty(),
+        "no open outgoing channels to connected peers"
+    );
     let zero_hop = channels[0].destination;
 
     let one_hop = peers
@@ -1053,14 +1063,44 @@ pub async fn pump_and_verify(
     });
 
     let mut received = vec![0u8; n];
-    if let Err(err) = tokio::time::timeout(timeout, r.read_exact(&mut received))
-        .await
-        .map_err(|_| anyhow::anyhow!("{label}: read timeout ({timeout:?}) after {n} B"))
-        .and_then(|r| r.map_err(|e| anyhow::anyhow!("{label}: read error: {e}")))
+    let progress_interval = (n / 4).max(1);
     {
-        writer.abort();
-        let _ = writer.await;
-        return Err(err);
+        let mut cursor = 0usize;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let chunk_end = (cursor + progress_interval).min(n);
+            match tokio::time::timeout_at(deadline, r.read_exact(&mut received[cursor..chunk_end]))
+                .await
+            {
+                Ok(Ok(_)) => {
+                    cursor = chunk_end;
+                    let pct = cursor * 100 / n;
+                    let elapsed = overall_start.elapsed();
+                    let mb_s = cursor as f64 / elapsed.as_secs_f64() / 1_048_576.0;
+                    tracing::info!(
+                        "{label}: recv progress {cursor}/{n} B ({pct}%) in {elapsed:.2?} ({mb_s:.3} MB/s)"
+                    );
+                    if cursor >= n {
+                        break;
+                    }
+                }
+                Ok(Err(e)) => {
+                    writer.abort();
+                    let _ = writer.await;
+                    return Err(anyhow::anyhow!("{label}: read error: {e}"));
+                }
+                Err(_) => {
+                    let elapsed = overall_start.elapsed();
+                    let mb_s = cursor as f64 / elapsed.as_secs_f64() / 1_048_576.0;
+                    writer.abort();
+                    let _ = writer.await;
+                    return Err(anyhow::anyhow!(
+                        "{label}: read timeout ({timeout:?}) — {cursor}/{n} B ({pct}%) at {mb_s:.3} MB/s",
+                        pct = cursor * 100 / n
+                    ));
+                }
+            }
+        }
     }
     let recv_elapsed = overall_start.elapsed();
 
@@ -1079,7 +1119,11 @@ pub async fn pump_and_verify(
     let recv_mbs = n as f64 / recv_elapsed.as_secs_f64() / 1_048_576.0;
     tracing::info!(
         "{label}: ✓ {} B  |  ↑ send {:.3} MB/s ({:.2?})  |  ↓ recv {:.3} MB/s ({:.2?})",
-        n, send_mbs, write_elapsed, recv_mbs, recv_elapsed
+        n,
+        send_mbs,
+        write_elapsed,
+        recv_mbs,
+        recv_elapsed
     );
     Ok(())
 }
@@ -1104,19 +1148,45 @@ pub fn init_tracing() -> (
     Option<tracing_chrome::FlushGuard>,
     Option<tracing_flame::FlushGuard<std::io::BufWriter<std::fs::File>>>,
 ) {
+    // Strip high-volume tokio/runtime targets from the fmt filter: formatting
+    // and writing thousands of tokio poll events to stdout per second consumes
+    // CPU on every tokio worker thread, starving the session drive task.
+    // Those targets are still captured by the Chrome layer (async writer).
+    let stdout_filter = {
+        let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
+        let stripped: String = rust_log
+            .split(',')
+            .filter(|d| {
+                let target = d.split('=').next().unwrap_or("").trim();
+                target != "tokio" && target != "runtime"
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        EnvFilter::new(if stripped.is_empty() {
+            "info".to_string()
+        } else {
+            stripped
+        })
+    };
+
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_ansi(true)
-        .with_filter(EnvFilter::from_default_env());
+        .with_filter(stdout_filter);
 
     let chrome_path = std::env::var("CHROME_TRACE_OUTPUT").ok();
     let flame_path = std::env::var("FLAME_OUTPUT").ok();
 
+    // Chrome layer keeps the full RUST_LOG filter (including tokio=trace).
+    // The writer runs on a background thread and does not block tokio.
     let (chrome_layer, chrome_guard) = if let Some(ref path) = chrome_path {
         let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
             .file(path)
             .include_args(true)
             .build();
-        (Some(layer), Some(guard))
+        (
+            Some(layer.with_filter(EnvFilter::from_default_env())),
+            Some(guard),
+        )
     } else {
         (None, None)
     };
@@ -1194,9 +1264,31 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     // (see edgli::strategy::compute_funding_config): only winning tickets drain
     // channel balance, so a few face values per channel cover both test and
     // background probe traffic.
+    //
+    // The hardcoded extra identity (EXTRA_KEYS[0]) may have pre-existing Open
+    // channels to genesis accounts that are not running hoprd nodes.  The
+    // channel-lifecycle strategy counts ALL open channels, so those genesis
+    // channels reduce the deficit.  We count them upfront and add them to the
+    // target so the strategy still opens CLUSTER_SIZE channels to the actual
+    // running cluster nodes.
+    let connected_at_start = edgli.connected_peer_addresses().await?;
+    let peer_set_at_start: std::collections::HashSet<Address> =
+        connected_at_start.into_iter().collect();
+    let genesis_channel_count = edgli
+        .my_outgoing_channels()
+        .await?
+        .into_iter()
+        .filter(|c| c.status == ChannelStatus::Open && !peer_set_at_start.contains(&c.destination))
+        .count();
+    if genesis_channel_count > 0 {
+        tracing::info!(
+            genesis_channel_count,
+            "compensating for pre-existing genesis channels in target"
+        );
+    }
     let sizing = IncentiveConfiguration {
         min_open_channels: 1,
-        target_open_channels: CLUSTER_SIZE,
+        target_open_channels: CLUSTER_SIZE + genesis_channel_count,
         ..Default::default()
     };
     let mut strat_cfg = default_strategy_cfg(&edgli, &sizing).await?;
@@ -1205,6 +1297,9 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         let EdgeStrategyKind::ChannelLifecycle(lc) = kind;
         lc.selector = tuning.selector.clone();
         lc.tick_interval = tuning.strategy_tick;
+        // Disable the peer-quality gate in tests so the strategy opens channels
+        // to cluster nodes even before the first probe response arrives.
+        lc.eligibility.min_peer_quality_score = 0.0;
     }
 
     let EdgeStrategyKind::ChannelLifecycle(lc0) = &strat_cfg.strategies[0];
@@ -1247,10 +1342,6 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     rand::rng().fill(&mut payload[..]);
 
     // ── 10. 0-hop session — direct path, no relay ────────────────────────────
-    // NoRateControl disables the exit node's egress rate limiter (default: 10
-    // pkt/s initial rate).  Without it, returning 1 MiB (~1030 packets) at
-    // 10 pkt/s takes ~103 s, nearly exhausting the pump timeout before the
-    // rate-adaptive controller has time to ramp up.
     tracing::info!("opening 0-hop session (loopback)");
     let (session_0h, _) = edgli
         .connect_to(
@@ -1259,7 +1350,13 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
             HoprSessionClientConfig {
                 forward_path: HopRouting::try_from(0_usize)?,
                 return_path: HopRouting::try_from(0_usize)?,
-                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                // NoRateControl is intentionally omitted: EXIT's native SURB-based egress
+                // rate control paces the echo to SURB availability, preventing the pool from
+                // depleting.  With NoRateControl enabled, EXIT's routing buffer fills with
+                // SURB-retrying futures (buffered(N)) and stops consuming new HOPR packets,
+                // which blocks ENTRY's keep-alive stream — SURB pool stays empty for >3 s,
+                // triggering sequencer timeouts and session EOF.
+                capabilities: SessionCapability::Segmentation.into(),
                 // Keep the SURB pre-fill burst below the per-peer send-channel capacity
                 // (1000 slots). The default target of 7000 SURBs saturates the channel,
                 // causing session data to time out and be dropped silently with no
@@ -1267,13 +1364,21 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
                 // 600 SURBs fit in one burst; the balancer replenishes as they are consumed.
                 surb_management: Some(SurbBalancerConfig {
                     target_surb_buffer_size: 600,
-                    max_surbs_per_sec: 300,
+                    max_surbs_per_sec: 1000,
                     ..SurbBalancerConfig::default()
                 }),
                 ..Default::default()
             },
         )
         .await?;
+    // Allow SURBs to accumulate before pumping data.  When pump starts
+    // immediately after session-ready, EXIT's pool contains only the
+    // ~320 SURBs built up during the handshake.  Each echo frame consumes
+    // 2 SURBs, so the pool empties within ~160 frames and the outbound
+    // path planner silently drops packets (no SURB → no packet → data loss).
+    // 5 s at max_surbs_per_sec=1000 adds up to 10000 SURBs (capped at target=600),
+    // giving EXIT a comfortable buffer that the PID controller can maintain.
+    tokio::time::sleep(Duration::from_secs(5)).await;
     pump_and_verify(session_0h, &payload, "0-hop", tuning.pump_timeout).await?;
 
     // ── 11. 1-hop session — full relay path ──────────────────────────────────
@@ -1285,16 +1390,18 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
             HoprSessionClientConfig {
                 forward_path: HopRouting::try_from(1_usize)?,
                 return_path: HopRouting::try_from(1_usize)?,
-                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                capabilities: SessionCapability::Segmentation.into(),
                 surb_management: Some(SurbBalancerConfig {
                     target_surb_buffer_size: 600,
-                    max_surbs_per_sec: 300,
+                    max_surbs_per_sec: 1000,
                     ..SurbBalancerConfig::default()
                 }),
                 ..Default::default()
             },
         )
         .await?;
+    // Same SURB pre-fill delay as for the 0-hop session above.
+    tokio::time::sleep(Duration::from_secs(5)).await;
     pump_and_verify(session_1h, &payload, "1-hop", tuning.pump_timeout).await?;
 
     // ── 12. Final state assertion ─────────────────────────────────────────────
