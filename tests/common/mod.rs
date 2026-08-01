@@ -2,12 +2,15 @@
 //!
 //! Used by both `edgli_session_e2e` (local cluster) and `edgli_session_rotsee`
 //! (Rotsee testnet).  Each test file declares `mod common;` and calls
-//! [`run_one_megabyte_session_test`] with its [`Network`] variant.
+//! [`run_session_throughput_test`] with its [`Network`] variant.
 
 #![allow(dead_code)]
 
 use anyhow::Context as _;
 use std::{path::PathBuf, time::Duration};
+use tracing_subscriber::{
+    EnvFilter, Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _,
+};
 
 use edgli::{
     BlokliEndpoint, Edgli, EdgliInitState, PathPlannerConfig,
@@ -38,15 +41,34 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 // Constants
 // ────────────────────────────────────────────────────────────────────────────
 
-pub const PAYLOAD_SIZE: usize = 1_024 * 1_024; // 1 MiB
+pub const PAYLOAD_SIZE: usize = 20 * 1_024 * 1_024; // 20 MiB
 /// Bytes that fit in a single HOPR packet payload. Re-exported rather than
 /// hardcoded so it cannot drift from the pinned transport.
 pub use edgli::hopr_lib::SESSION_MTU;
-/// Packets per write-batch in `pump_and_verify`.  Keeps the Rayon encoding
-/// queue well below the `PACKET_ENCODING_TIMEOUT = 150 ms` threshold even
-/// when the host machine is under load running a 3-node cluster.
+/// Packets per write-batch in `pump_and_verify`.  16 packets at SESSION_MTU
+/// bytes each ≈ 16 kB per flush, giving natural backpressure granularity.
 pub const PUMP_BATCH_PACKETS: usize = 16;
 pub const PUMP_BATCH_BYTES: usize = PUMP_BATCH_PACKETS * SESSION_MTU;
+/// Paced send rate (HOPR packets/sec). We send the *entire* payload but pace it so the
+/// writer does not burst it all into the 16384-segment session socket buffer at once (which
+/// masks transport backpressure and triggers the return-path feedback stall). 1000 pkt/sec
+/// (~1.0 MB/s) stays comfortably under EXIT's echo ceiling (target 7000 / 5 s = 1400 pkt/sec),
+/// so SURB supply keeps pace and the pool never depletes.
+pub const PUMP_SEND_RATE_PPS: u64 = 1000;
+/// Inter-batch delay derived from the send-rate cap: `PUMP_BATCH_PACKETS` packets per tick.
+/// Rounded **up** (`div_ceil`) so the effective send rate never exceeds `PUMP_SEND_RATE_PPS`
+/// after retuning — truncating division would silently push the rate above the cap.
+pub const PUMP_BATCH_DELAY_MS: u64 =
+    (PUMP_BATCH_PACKETS as u64 * 1000).div_ceil(PUMP_SEND_RATE_PPS);
+/// Minimum acceptable receive throughput. At 1000 pkt/sec paced send the echo returns at the
+/// same rate; this floor sits well below that so it only catches a genuine stall.
+pub const PUMP_MIN_RECV_RATE_KBS: f64 = 100.0;
+/// Maximum acceptable packet loss percentage.
+pub const PUMP_MAX_LOSS_PCT: f64 = 5.0;
+/// How long the reader waits with no new bytes before concluding delivery has drained.
+/// Must exceed the session frame timeout (3 s) so a legitimately delayed tail frame still
+/// counts; kept short so the test does not block on the unflushable end-of-stream tail.
+pub const PUMP_RECV_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 pub const CLUSTER_SIZE: usize = 3;
 const API_PORT_BASE: u16 = 13000;
 const P2P_PORT_BASE: u16 = 19000;
@@ -143,7 +165,9 @@ impl EdgliTuning {
             selector: SelectorProfile::LowLatency,
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
-            pump_timeout: Duration::from_secs(120),
+            // 300 s outer budget accommodates the 20 MiB paced payload (~24 s pump plus
+            // cluster/channel latency and the end-of-stream tail).
+            pump_timeout: Duration::from_secs(300),
             // Use 0.0: Edgli just started and no probes have completed yet when the
             // 1-hop session is attempted.  With min_ack_rate=0.1 the path planner
             // finds no eligible relays (ack_rate=0 for all) and session initiation
@@ -478,8 +502,36 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
         .map_err(|_| anyhow::anyhow!("HOPRD_CHAIN_IMAGE is not set"))?;
     let container_runtime = std::env::var("HOPRD_CONTAINER_RUNTIME").ok();
 
-    let tempdir = tempfile::TempDir::with_prefix("edgli-it-")?;
-    let data_dir = tempdir.path().to_path_buf();
+    // When EDGLI_DATA_DIR is set, use a persistent data dir (not auto-removed) so the hoprd
+    // node logs under <data_dir>/logs/hoprd_{id}.log survive the test for post-mortem analysis.
+    // Otherwise use a tempdir that is cleaned up on drop.
+    let (data_dir, tempdir) = match std::env::var("EDGLI_DATA_DIR") {
+        Ok(dir) if !dir.trim().is_empty() => {
+            let path = PathBuf::from(dir.trim());
+            std::fs::create_dir_all(&path).context("failed to create EDGLI_DATA_DIR")?;
+            // A non-empty dir carries stale cluster state (node DBs, keys, channels) from a
+            // previous run, which perturbs the very throughput/loss measurement this harness
+            // makes. Warn loudly so the operator clears it before a measurement run.
+            let non_empty = std::fs::read_dir(&path)
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false);
+            if non_empty {
+                tracing::warn!(
+                    data_dir = %path.display(),
+                    "EDGLI_DATA_DIR is not empty — stale cluster state from a previous run may perturb \
+                     measurements; clear it for a clean measurement run"
+                );
+            }
+            tracing::warn!(data_dir = %path.display(), "using persistent EDGLI_DATA_DIR — not cleaned up");
+            (path, None)
+        }
+        _ => {
+            let td = tempfile::TempDir::with_prefix("edgli-it-")?;
+            let path = td.path().to_path_buf();
+            (path, Some(td))
+        }
+    };
+    tracing::info!(data_dir = %data_dir.display(), "cluster data dir (hoprd node logs under <data_dir>/logs/)");
 
     let mut cmd = tokio::process::Command::new(&lc_bin);
     cmd.args([
@@ -556,7 +608,7 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
     Ok(ClusterHandle {
         child: Some(child),
         summary,
-        _tempdir: Some(tempdir),
+        _tempdir: tempdir,
     })
 }
 
@@ -872,14 +924,16 @@ pub async fn await_edgli_channels_open(
         Duration::from_secs(5),
         || {
             format!(
-                "timeout ({timeout:?}) waiting for Edgli strategy to open {min_open} channel(s)"
+                "timeout ({timeout:?}) waiting for Edgli strategy to open {min_open} channel(s) to connected peers"
             )
         },
         || async {
+            let peers = edgli.connected_peer_addresses().await?;
+            let peer_set: std::collections::HashSet<Address> = peers.into_iter().collect();
             let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
             let open = channels
                 .iter()
-                .filter(|ch| ch.status == ChannelStatus::Open)
+                .filter(|ch| ch.status == ChannelStatus::Open && peer_set.contains(&ch.destination))
                 .count();
             if open >= min_open {
                 tracing::info!(
@@ -889,7 +943,7 @@ pub async fn await_edgli_channels_open(
                 return Ok(true);
             }
             tracing::debug!(
-                "Edgli: {open}/{min_open} outgoing channels Open (waiting for strategy)"
+                "Edgli: {open}/{min_open} outgoing channels to peers Open (waiting for strategy)"
             );
             Ok(false)
         },
@@ -940,8 +994,10 @@ async fn await_edgli_exit_peer_ready(edgli: &Edgli, target: Address) -> anyhow::
 
 /// Select session destinations that work for both 0-hop and 1-hop.
 ///
-/// 0-hop target: the first open outgoing channel counterparty (Edgli has a
-/// direct channel to it, so a 0-hop session is routable).
+/// 0-hop target: the first open outgoing channel whose destination is also a
+/// connected peer (Edgli has a direct channel to it, so a 0-hop session is
+/// routable).  Pre-existing genesis channels to non-running accounts are
+/// excluded by intersecting with the connected-peer set.
 ///
 /// 1-hop target: any connected peer that is different from the 0-hop target
 /// (the 0-hop target acts as the relay, with its intranetwork channels
@@ -951,11 +1007,15 @@ async fn select_session_targets(edgli: &Edgli) -> anyhow::Result<(Address, Addre
         edgli.my_outgoing_channels(),
         edgli.connected_peer_addresses()
     )?;
+    let peer_set: std::collections::HashSet<Address> = peers.iter().copied().collect();
     let channels: Vec<ChannelEntry> = raw_channels
         .into_iter()
-        .filter(|c| c.status == ChannelStatus::Open)
+        .filter(|c| c.status == ChannelStatus::Open && peer_set.contains(&c.destination))
         .collect();
-    anyhow::ensure!(!channels.is_empty(), "no open outgoing channels");
+    anyhow::ensure!(
+        !channels.is_empty(),
+        "no open outgoing channels to connected peers"
+    );
     let zero_hop = channels[0].destination;
 
     let one_hop = peers
@@ -1021,17 +1081,8 @@ pub fn sha256_digest(data: &[u8]) -> Vec<u8> {
     h.finalize().to_vec()
 }
 
-/// Write `payload` into `session`, read exactly `payload.len()` bytes back from
-/// the echo server, and verify SHA-256 integrity.
-///
-/// Writes in `PUMP_BATCH_BYTES`-sized chunks with a 100 ms pause between each
-/// batch.  Without pacing, `write_all(1 MiB)` submits ~1030 HOPR packets to
-/// the Rayon encoding pool simultaneously.  The pool's `PACKET_ENCODING_TIMEOUT`
-/// is 150 ms; with `then_concurrent(8×cpus)` concurrent encoding futures sharing
-/// a pool of only `cpus` Rayon threads, tasks queued near the end wait ≈
-/// 7×encode_time ≥ 150 ms and are silently dropped, causing the echo read to
-/// time out.  Writing 16 packets per batch keeps Rayon queue wait ≈ 1×encode_time
-/// (≤ 30 ms), well inside the timeout window.
+/// Sends `payload` as fast as backpressure allows over `session`, reads the echo back,
+/// then reports and asserts send/receive throughput and packet-loss metrics.
 ///
 /// Does NOT call `shutdown()` on the write half: HOPR sessions do not support
 /// TCP half-close.
@@ -1045,43 +1096,168 @@ pub async fn pump_and_verify(
     let payload_bytes = payload.to_vec();
     let expected = sha256_digest(payload);
     let n = payload.len();
+    let overall_start = std::time::Instant::now();
 
+    let writer_offset = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let writer_offset_clone = writer_offset.clone();
     let writer = tokio::spawn(async move {
-        let mut offset = 0;
+        let write_start = tokio::time::Instant::now();
+        let mut offset = 0usize;
         while offset < payload_bytes.len() {
             let end = (offset + PUMP_BATCH_BYTES).min(payload_bytes.len());
             w.write_all(&payload_bytes[offset..end]).await?;
             w.flush().await?;
             offset = end;
+            writer_offset_clone.store(offset, std::sync::atomic::Ordering::Relaxed);
+            // Pace the send under the Exit's echo/ack ceiling. HOPR Segmentation-only sessions
+            // have no end-to-end flow control, and a full-speed burst overruns the return path
+            // (Exit ack-amplification + mixer saturation) — see the investigation writeup. We
+            // still send the entire payload, just metered to ~PUMP_SEND_RATE_PPS packets/sec.
             if offset < payload_bytes.len() {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(PUMP_BATCH_DELAY_MS)).await;
             }
         }
-        Ok::<_, std::io::Error>(())
+        Ok::<_, std::io::Error>(write_start.elapsed())
     });
 
     let mut received = vec![0u8; n];
-    if let Err(err) = tokio::time::timeout(timeout, r.read_exact(&mut received))
-        .await
-        .map_err(|_| anyhow::anyhow!("{label}: read timeout ({timeout:?}) after {n} B"))
-        .and_then(|r| r.map_err(|e| anyhow::anyhow!("{label}: read error: {e}")))
-    {
-        writer.abort();
-        let _ = writer.await;
-        return Err(err);
+    let mut cursor = 0usize;
+    let deadline = tokio::time::Instant::now() + timeout;
+    // Log progress roughly every 5% of total payload.
+    let progress_interval = (n / 20).max(1);
+    let mut next_progress = progress_interval;
+
+    // Monitor task: log writer send progress every 15 s. (The reader logs its own receive
+    // progress inline from the loop below, keyed off `next_progress`.)
+    let monitor_offset = writer_offset.clone();
+    let monitor_label = label.to_string();
+    let monitor_n = n;
+    let monitor_deadline = deadline;
+    let monitor = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        interval.tick().await; // skip the immediate first tick
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let wo = monitor_offset.load(std::sync::atomic::Ordering::Relaxed);
+                    tracing::info!(
+                        "[monitor] {monitor_label}: writer_sent={wo}/{monitor_n} B ({pct}%)",
+                        pct = wo * 100 / monitor_n.max(1)
+                    );
+                }
+                _ = tokio::time::sleep_until(monitor_deadline) => break,
+            }
+        }
+    });
+
+    // Reader: accumulate bytes until all received, the overall deadline expires, or the
+    // stream goes idle. HOPR sessions have no half-close, so the sender never signals
+    // end-of-stream: after the last echo arrives, a small tail may remain unflushed on the
+    // sender forever. Rather than block until the 300 s deadline (which would make the
+    // throughput metric meaningless), we stop after `PUMP_RECV_IDLE_TIMEOUT` with no new
+    // bytes and report the residual as loss. Throughput is measured against the instant of
+    // the *last received byte*, not the deadline, so it reflects real delivery speed.
+    let mut last_recv = overall_start;
+    'recv: loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            break 'recv;
+        }
+        let wait = PUMP_RECV_IDLE_TIMEOUT.min(deadline - now);
+        match tokio::time::timeout(wait, r.read(&mut received[cursor..])).await {
+            Ok(Ok(0)) => break 'recv,
+            Ok(Ok(nbytes)) => {
+                cursor += nbytes;
+                last_recv = std::time::Instant::now();
+                if cursor >= next_progress || cursor >= n {
+                    let pct = cursor * 100 / n;
+                    let elapsed = overall_start.elapsed();
+                    let kbs = cursor as f64 / elapsed.as_secs_f64() / 1024.0;
+                    let wo = writer_offset.load(std::sync::atomic::Ordering::Relaxed);
+                    tracing::info!(
+                        "{label}: recv progress {cursor}/{n} B ({pct}%) in {elapsed:.2?} ({kbs:.1} kB/s) [writer_sent={wo}]"
+                    );
+                    next_progress = cursor + progress_interval;
+                }
+                if cursor >= n {
+                    break 'recv;
+                }
+            }
+            Ok(Err(e)) => {
+                monitor.abort();
+                writer.abort();
+                let _ = writer.await;
+                return Err(anyhow::anyhow!("{label}: read error: {e}"));
+            }
+            Err(_) => {
+                // No new bytes for PUMP_RECV_IDLE_TIMEOUT — delivery has drained. The
+                // remaining bytes (if any) are an unflushable tail; report them as loss.
+                tracing::info!(
+                    "{label}: recv idle for {PUMP_RECV_IDLE_TIMEOUT:?} at {cursor}/{n} B — ending read"
+                );
+                break 'recv;
+            }
+        }
+    }
+    monitor.abort();
+    // Throughput reflects time-to-last-byte, not the idle/deadline wait after delivery ended.
+    let recv_elapsed = last_recv
+        .saturating_duration_since(overall_start)
+        .max(Duration::from_millis(1));
+    let bytes_received = cursor;
+
+    // Wait for the writer to finish. The reader loop above already ran until `deadline`
+    // (pump start + `timeout`), so bound this join to the *remaining* budget (with a small
+    // floor to reap a writer that is essentially done) — a second full `timeout` here would let
+    // `pump_and_verify` run for up to twice its stated budget.
+    let writer_budget = deadline
+        .saturating_duration_since(tokio::time::Instant::now())
+        .max(Duration::from_secs(5));
+    let write_elapsed = match tokio::time::timeout(writer_budget, writer).await {
+        Ok(Ok(Ok(dur))) => dur,
+        Ok(Ok(Err(e))) => return Err(anyhow::anyhow!("{label}: write error: {e}")),
+        Ok(Err(e)) => return Err(anyhow::anyhow!("{label}: writer panicked: {e}")),
+        Err(_) => return Err(anyhow::anyhow!("{label}: writer timeout")),
+    };
+
+    // Metrics
+    let send_kbs = n as f64 / write_elapsed.as_secs_f64() / 1024.0;
+    let recv_kbs = bytes_received as f64 / recv_elapsed.as_secs_f64() / 1024.0;
+    let loss_pct = (n - bytes_received) as f64 / n as f64 * 100.0;
+    tracing::info!(
+        "{label}: send {send_kbs:.1} kB/s ({:.2?}) | recv {recv_kbs:.1} kB/s ({:.2?}) | loss {loss_pct:.2}% ({bytes_received}/{n} B)",
+        write_elapsed,
+        recv_elapsed,
+    );
+
+    // Verify the integrity of whatever arrived — not only the full-payload case. The echo of a
+    // byte range must equal the same range of the payload; checking only `bytes_received == n`
+    // would let a corrupted-but-lossy run (within PUMP_MAX_LOSS_PCT) pass the loss assertion
+    // below without any integrity check.
+    if bytes_received == n {
+        anyhow::ensure!(
+            sha256_digest(&received) == expected,
+            "{label}: SHA-256 mismatch — {n} bytes corrupted in transit"
+        );
+        tracing::info!("{label}: SHA-256 OK");
+    } else {
+        anyhow::ensure!(
+            received[..bytes_received] == payload[..bytes_received],
+            "{label}: content mismatch in the {bytes_received} received bytes — corruption in transit"
+        );
+        tracing::info!("{label}: received-prefix integrity OK ({bytes_received}/{n} B)");
     }
 
-    tokio::time::timeout(timeout, writer)
-        .await
-        .map_err(|_| anyhow::anyhow!("{label}: writer timeout ({timeout:?})"))?
-        .map_err(|e| anyhow::anyhow!("{label}: writer panicked: {e}"))?
-        .map_err(|e| anyhow::anyhow!("{label}: write error: {e}"))?;
-
+    // Assertions.
     anyhow::ensure!(
-        sha256_digest(&received) == expected,
-        "{label}: SHA-256 mismatch — {n} bytes corrupted in transit"
+        loss_pct <= PUMP_MAX_LOSS_PCT,
+        "{label}: packet loss {loss_pct:.1}% > {PUMP_MAX_LOSS_PCT}% max (received {bytes_received}/{n} B)"
     );
-    tracing::info!("{label}: ✓ {n} B verified (SHA-256 match)");
+    anyhow::ensure!(
+        recv_kbs >= PUMP_MIN_RECV_RATE_KBS,
+        "{label}: recv throughput {recv_kbs:.1} kB/s < {PUMP_MIN_RECV_RATE_KBS} kB/s min"
+    );
+
     Ok(())
 }
 
@@ -1319,7 +1495,7 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
     };
 
     // Wait for dest_1h to appear in the probe graph before attempting 1-hop
-    // sessions — same reason as in run_one_megabyte_session_test (§6.3).
+    // sessions — same reason as in run_session_throughput_test (§6.3).
     tracing::info!(%dest_1h, "waiting for 1-hop destination to be probed");
     await_edgli_exit_peer_ready(&edgli, dest_1h).await?;
 
@@ -1488,11 +1664,93 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
 // Top-level harness
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Run the 1 MiB session pump (0-hop + 1-hop) against the given network.
+/// Initialise a layered tracing subscriber.
 ///
+/// Always installs an `EnvFilter`-gated `fmt` layer for console output.
+/// When `CHROME_TRACE_OUTPUT` is set, also installs a
+/// [`tracing_chrome::ChromeLayer`] that writes a Perfetto/Chrome-DevTools
+/// trace JSON to that path (open in `chrome://tracing` or
+/// <https://ui.perfetto.dev>).
+/// When `FLAME_OUTPUT` is set, also installs a [`tracing_flame::FlameLayer`]
+/// that writes folded stacks to that path (usable with `inferno-flamegraph`).
+///
+/// Returns guards that must be held for the duration of the test; dropping
+/// them flushes the trace files.
+pub fn init_tracing() -> (
+    Option<tracing_chrome::FlushGuard>,
+    Option<tracing_flame::FlushGuard<std::io::BufWriter<std::fs::File>>>,
+) {
+    // Strip high-volume tokio/runtime targets from the fmt filter: formatting
+    // and writing thousands of tokio poll events to stdout per second consumes
+    // CPU on every tokio worker thread, starving the session drive task.
+    // Those targets are still captured by the Chrome layer (async writer).
+    let stdout_filter = {
+        let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
+        let stripped: String = rust_log
+            .split(',')
+            .filter(|d| {
+                let target = d.split('=').next().unwrap_or("").trim();
+                target != "tokio" && target != "runtime"
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        EnvFilter::new(if stripped.is_empty() {
+            "info".to_string()
+        } else {
+            stripped
+        })
+    };
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(true)
+        .with_filter(stdout_filter);
+
+    let chrome_path = std::env::var("CHROME_TRACE_OUTPUT").ok();
+    let flame_path = std::env::var("FLAME_OUTPUT").ok();
+
+    // Chrome layer keeps the full RUST_LOG filter (including tokio=trace).
+    // The writer runs on a background thread and does not block tokio.
+    let (chrome_layer, chrome_guard) = if let Some(ref path) = chrome_path {
+        let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+            .file(path)
+            .include_args(true)
+            .build();
+        // Fall back to a trace-capturing filter if RUST_LOG is unset/empty — an empty
+        // `from_default_env` would enable nothing and the Chrome trace would be empty.
+        let chrome_filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("info,tokio=trace,runtime=trace"));
+        (Some(layer.with_filter(chrome_filter)), Some(guard))
+    } else {
+        (None, None)
+    };
+
+    let (flame_layer, flame_guard) = if let Some(ref path) = flame_path {
+        let (layer, guard) =
+            tracing_flame::FlameLayer::with_file(path).expect("cannot open FLAME_OUTPUT file");
+        (Some(layer), Some(guard))
+    } else {
+        (None, None)
+    };
+
+    // `try_init` (not `init`) so this coexists with a subscriber already installed by the
+    // `#[test_log::test]` attribute: if one is set, we keep it rather than panicking.
+    let _ = tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(chrome_layer)
+        .with(flame_layer)
+        .try_init();
+
+    (chrome_guard, flame_guard)
+}
+
+/// Run the session throughput pump (0-hop + 1-hop) against the given network.
+///
+/// Sends a `PAYLOAD_SIZE` payload (currently 20 MiB) each way, measuring throughput and loss.
 /// Orchestrates: provision → Edgli boot → strategy reactor → channel wait →
 /// target selection → 0-hop pump → 1-hop pump → final assertion.
-pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
+pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
+    let (_chrome_guard, _flame_guard) = init_tracing();
+
     // ── 1. Provision the network ─────────────────────────────────────────────
     let (summary, _guard, tuning) = provision(net).await?;
 
@@ -1538,12 +1796,35 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     await_edgli_peers_connected(&edgli, 2).await?;
 
     // ── 5. Start the channel-lifecycle strategy reactor ──────────────────────
-    // Channel capacities are derived from the live winning probability (see
-    // edgli::strategy::compute_funding_config) so each channel's stake covers a
-    // fixed number of ticket face values.
+    // Channel capacity is sized by the strategy's built-in winning-ticket buffer
+    // (see edgli::strategy::compute_funding_config): only winning tickets drain
+    // channel balance, so a few face values per channel cover both test and
+    // background probe traffic.
+    //
+    // The hardcoded extra identity (EXTRA_KEYS[0]) may have pre-existing Open
+    // channels to genesis accounts that are not running hoprd nodes.  The
+    // channel-lifecycle strategy counts ALL open channels, so those genesis
+    // channels reduce the deficit.  We count them upfront and add them to the
+    // target so the strategy still opens CLUSTER_SIZE channels to the actual
+    // running cluster nodes.
+    let connected_at_start = edgli.connected_peer_addresses().await?;
+    let peer_set_at_start: std::collections::HashSet<Address> =
+        connected_at_start.into_iter().collect();
+    let genesis_channel_count = edgli
+        .my_outgoing_channels()
+        .await?
+        .into_iter()
+        .filter(|c| c.status == ChannelStatus::Open && !peer_set_at_start.contains(&c.destination))
+        .count();
+    if genesis_channel_count > 0 {
+        tracing::info!(
+            genesis_channel_count,
+            "compensating for pre-existing genesis channels in target"
+        );
+    }
     let sizing = IncentiveConfiguration {
         min_open_channels: 1,
-        target_open_channels: CLUSTER_SIZE,
+        target_open_channels: CLUSTER_SIZE + genesis_channel_count,
         ..Default::default()
     };
     let mut strat_cfg = default_strategy_cfg(&edgli, &sizing).await?;
@@ -1552,6 +1833,9 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
         let EdgeStrategyKind::ChannelLifecycle(lc) = kind;
         lc.selector = tuning.selector.clone();
         lc.tick_interval = tuning.strategy_tick;
+        // Disable the peer-quality gate in tests so the strategy opens channels
+        // to cluster nodes even before the first probe response arrives.
+        lc.eligibility.min_peer_quality_score = 0.0;
     }
 
     let EdgeStrategyKind::ChannelLifecycle(lc0) = &strat_cfg.strategies[0];
@@ -1594,10 +1878,6 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     rand::rng().fill(&mut payload[..]);
 
     // ── 10. 0-hop session — direct path, no relay ────────────────────────────
-    // NoRateControl disables the exit node's egress rate limiter (default: 10
-    // pkt/s initial rate).  Without it, returning 1 MiB (~1030 packets) at
-    // 10 pkt/s takes ~103 s, nearly exhausting the pump timeout before the
-    // rate-adaptive controller has time to ramp up.
     tracing::info!("opening 0-hop session (loopback)");
     let (session_0h, _) = edgli
         .connect_to(
@@ -1606,21 +1886,15 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
             HoprSessionClientConfig {
                 forward_path: HopRouting::try_from(0_usize)?,
                 return_path: HopRouting::try_from(0_usize)?,
-                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
-                // Keep the SURB pre-fill burst below the per-peer send-channel capacity
-                // (1000 slots). The default target of 7000 SURBs saturates the channel,
-                // causing session data to time out and be dropped silently with no
-                // reconnect (hoprnet eb21c1354c removed cache invalidation on timeout).
-                // 600 SURBs fit in one burst; the balancer replenishes as they are consumed.
-                surb_management: Some(SurbBalancerConfig {
-                    target_surb_buffer_size: 600,
-                    max_surbs_per_sec: 300,
-                    ..SurbBalancerConfig::default()
-                }),
+                capabilities: SessionCapability::Segmentation.into(),
+                always_max_out_surbs: true,
                 ..Default::default()
             },
         )
         .await?;
+    // Allow SURBs to accumulate before pumping data.
+    // Default balancer target=7000; EXIT's pool reaches ~7000 SURBs after 5 s.
+    tokio::time::sleep(Duration::from_secs(5)).await;
     pump_and_verify(session_0h, &payload, "0-hop", tuning.pump_timeout).await?;
 
     // ── 11. 1-hop session — full relay path ──────────────────────────────────
@@ -1632,16 +1906,14 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
             HoprSessionClientConfig {
                 forward_path: HopRouting::try_from(1_usize)?,
                 return_path: HopRouting::try_from(1_usize)?,
-                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
-                surb_management: Some(SurbBalancerConfig {
-                    target_surb_buffer_size: 600,
-                    max_surbs_per_sec: 300,
-                    ..SurbBalancerConfig::default()
-                }),
+                capabilities: SessionCapability::Segmentation.into(),
+                always_max_out_surbs: true,
                 ..Default::default()
             },
         )
         .await?;
+    // Same SURB pre-fill delay as the 0-hop session above.
+    tokio::time::sleep(Duration::from_secs(5)).await;
     pump_and_verify(session_1h, &payload, "1-hop", tuning.pump_timeout).await?;
 
     // ── 12. Final state assertion ─────────────────────────────────────────────

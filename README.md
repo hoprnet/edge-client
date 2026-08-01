@@ -117,6 +117,52 @@ Coverage (lcov at `coverage.lcov`):
 nix run .#coverage-unit
 ```
 
+### End-to-end session tests (`#[ignore]`, not run in CI)
+
+`tests/edgli_session_e2e.rs` spins up a real 3-node HOPR cluster via
+`hoprd-localcluster`, boots Edgli against it, and pumps a payload through 0-hop
+and 1-hop sessions (measuring throughput and packet loss, verifying SHA-256
+integrity). It is gated behind `#[ignore]` — it needs external binaries and a
+container runtime, so it is **not** part of `cargo nextest run` /
+`nix flake check`.
+
+Prerequisites:
+
+- `hoprd` and `hoprd-localcluster` binaries, built from the
+  [`hoprnet/hoprd`](https://github.com/hoprnet/hoprd) repo:
+  ```bash
+  cargo build --release -p hoprd -p hoprd-localcluster
+  ```
+- A container runtime for the chain image. On macOS use Apple's native
+  `container` (`container system start`); elsewhere Docker/Podman.
+- The `bloklid-anvil` chain image pulled (see below).
+
+Run (managed mode — the test starts and tears down its own cluster):
+
+```bash
+export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd/target/release/hoprd-localcluster
+export HOPRD_BIN=/path/to/hoprd/target/release/hoprd
+# Use the `latest` tag — the tag pinned in hoprd's docker-compose can lag the contract
+# schema the hoprd binaries expect (fails with `missing field 'xhopr_token'`).
+export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil:latest'
+export HOPRD_CONTAINER_RUNTIME=container   # macOS Apple runtime; default is docker
+
+# `--release` is required: HOPR's async future chains overflow the default debug stack.
+RUST_LOG=info,edgli=debug \
+  cargo test --test edgli_session_e2e --release -- --ignored --nocapture
+```
+
+The run reports, per hop count:
+
+```text
+0-hop: send … kB/s | recv … kB/s | loss …% (bytes)
+1-hop: send … kB/s | recv … kB/s | loss …% (bytes)
+```
+
+See the module docs at the top of `tests/edgli_session_e2e.rs` for the full
+env-var table and the "external mode" (attach to an already-running cluster)
+variant.
+
 ## Architecture
 
 ```

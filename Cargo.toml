@@ -92,20 +92,20 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "837f8d933c1ba78cda1ffe42bd37d13e7a9f0929", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "8b59fb4f66337d783414e1b188f509dbb3c32098", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "837f8d933c1ba78cda1ffe42bd37d13e7a9f0929", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "8b59fb4f66337d783414e1b188f509dbb3c32098", features = [
   "runtime-tokio",
 ] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "837f8d933c1ba78cda1ffe42bd37d13e7a9f0929" }
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "8b59fb4f66337d783414e1b188f509dbb3c32098" }
 hopr-strategy = { version = "0.22.0", features = [
   "strategy-channel-lifecycle",
 ] }
-hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "837f8d933c1ba78cda1ffe42bd37d13e7a9f0929" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "837f8d933c1ba78cda1ffe42bd37d13e7a9f0929" }
-hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "837f8d933c1ba78cda1ffe42bd37d13e7a9f0929" }
+hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "8b59fb4f66337d783414e1b188f509dbb3c32098" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "8b59fb4f66337d783414e1b188f509dbb3c32098" }
+hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "8b59fb4f66337d783414e1b188f509dbb3c32098" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -114,11 +114,14 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "837f8d933c1ba78cda1ffe42bd37d13e7a9f0929", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "8b59fb4f66337d783414e1b188f509dbb3c32098", features = [
   "runtime-tokio",
   "testing",
 ] }
 tokio = { version = "1.52.3", features = ["full", "process", "tracing"] }
+# Optional flamegraph layer for the session e2e harness (env-gated: FLAME_OUTPUT).
+# `tracing-chrome` (Chrome/Perfetto layer) is already declared below.
+tracing-flame = "0.2.0"
 reqwest = { version = "0.13.4", default-features = false, features = [
   "rustls",
   "json",
