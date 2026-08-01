@@ -1038,13 +1038,29 @@ pub fn loopback_target() -> SessionTarget {
     SessionTarget::ExitNode(0)
 }
 
-/// Segmentation-only loopback session config with symmetric `hops`-hop forward/return
-/// paths and SURBs maxed out (so the pump isn't SURB-starved).
+/// Whether the client-side flow-control window is enabled for this run (mirrors the hoprnet-side
+/// `HOPR_SESSION_FLOW_CONTROL` opt-in). When set, the loopback session runs in **reliable** mode
+/// (so the honest ack clock exists) and the pump sends **unpaced** — the window replaces manual
+/// pacing. When unset, the harness keeps its original paced Segmentation-only behaviour.
+pub fn flow_control_enabled() -> bool {
+    std::env::var("HOPR_SESSION_FLOW_CONTROL")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Loopback session config with symmetric `hops`-hop forward/return paths and SURBs maxed out (so
+/// the pump isn't SURB-starved). Reliable (`RetransmissionAck`) when flow control is enabled so the
+/// window has an honest delivery clock; Segmentation-only otherwise.
 fn loopback_session_config(hops: usize) -> anyhow::Result<HoprSessionClientConfig> {
+    let capabilities = if flow_control_enabled() {
+        (SessionCapability::Segmentation | SessionCapability::RetransmissionAck).into()
+    } else {
+        SessionCapability::Segmentation.into()
+    };
     Ok(HoprSessionClientConfig {
         forward_path: HopRouting::try_from(hops)?,
         return_path: HopRouting::try_from(hops)?,
-        capabilities: SessionCapability::Segmentation.into(),
+        capabilities,
         always_max_out_surbs: true,
         ..Default::default()
     })
@@ -1129,7 +1145,10 @@ pub async fn pump_and_verify(
             // have no end-to-end flow control, and a full-speed burst overruns the return path
             // (Exit ack-amplification + mixer saturation) — see the investigation writeup. We
             // still send the entire payload, just metered to ~PUMP_SEND_RATE_PPS packets/sec.
-            if offset < payload_bytes.len() {
+            //
+            // When client-side flow control is enabled the adaptive send window replaces this
+            // manual pacing, so we send unpaced and let the window self-size against the drain rate.
+            if offset < payload_bytes.len() && !flow_control_enabled() {
                 tokio::time::sleep(Duration::from_millis(PUMP_BATCH_DELAY_MS)).await;
             }
         }
