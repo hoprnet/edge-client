@@ -144,8 +144,13 @@ impl EdgliTuning {
             channel_open_timeout: Duration::from_secs(120),
             exit_node: None,
             pump_timeout: Duration::from_secs(120),
-            min_ack_rate: 0.1, // local cluster probes succeed — use default quality gate
-            path_planner: latency_path_planner_config(0.1),
+            // Use 0.0: Edgli just started and no probes have completed yet when the
+            // 1-hop session is attempted.  With min_ack_rate=0.1 the path planner
+            // finds no eligible relays (ack_rate=0 for all) and session initiation
+            // times out repeatedly.  Routing via channel topology (0.0 floor) is
+            // correct for a full-mesh local cluster where all channels are open.
+            min_ack_rate: 0.0,
+            path_planner: latency_path_planner_config(0.0),
         }
     }
 
@@ -1080,6 +1085,405 @@ pub async fn pump_and_verify(
     Ok(())
 }
 
+/// Write `payload` into `session` in a single un-paced `write_all`, read back
+/// the echo, verify integrity, and report wall-clock throughput.
+///
+/// ## Why this matters
+///
+/// Production callers typically copy data into a session via
+/// `transfer_session` / `copy_duplex`.  The underlying `poll_copy` loop reads
+/// from the application's source and calls `poll_write` on the HOPR session in
+/// a tight loop.  Because `CrossfireSink` (the outgoing packet channel) has a
+/// capacity of **200,000 slots**, `AsyncWriteSink::poll_write` almost always
+/// returns `Poll::Ready` without ever issuing a `Poll::Pending`, so the loop
+/// never yields a tokio worker thread back to the executor.
+///
+/// Consequences:
+///
+/// 1. **Executor starvation**: one tokio thread is monopolised for the entire
+///    write.  On machines with few workers (e.g. 2 threads on CI), this leaves
+///    no thread for the SURB balancer or ack-processing tasks.
+/// 2. **SURB drought**: the SURB balancer can't run → SURB replenishment stalls
+///    → the echo return path blocks waiting for SURBs.
+/// 3. **Throughput collapse**: the echo arrives much more slowly than the paced
+///    baseline, reproducing the production "10× slower" phenomenon.
+///
+/// Use this function together with the `--features prof --profile tracer`
+/// build (see `tests/edgli_profiling.rs`) and `tokio-console` to observe:
+/// - A single long-poll of the writer task (the entire `write_all`).
+/// - High idle time on the SURB balancer and ack tasks.
+///
+/// ## Note
+///
+/// Unlike `pump_and_verify`, this function does **not** assert SHA-256
+/// integrity on read timeout — it logs the throughput and returns `Ok` even if
+/// the read times out, so the comparison test can complete both variants and
+/// report both numbers.
+pub async fn pump_continuous(
+    session: HoprSession,
+    payload: &[u8],
+    label: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let (mut r, mut w) = tokio::io::split(session);
+    let payload_bytes = payload.to_vec();
+    let expected = sha256_digest(payload);
+    let n = payload.len();
+    let start = std::time::Instant::now();
+
+    // Single write_all — no inter-batch sleep, no explicit yield_now.
+    // The write task submits all ~1030 packets to the channel without ever
+    // returning Poll::Pending to the executor.  This is the production
+    // anti-pattern we want tokio-console to make visible.
+    let writer = tokio::spawn(async move {
+        w.write_all(&payload_bytes).await?;
+        w.flush().await?;
+        Ok::<_, std::io::Error>(())
+    });
+
+    let mut received = vec![0u8; n];
+    let read_result = tokio::time::timeout(timeout, r.read_exact(&mut received)).await;
+
+    let elapsed = start.elapsed();
+    let throughput_kbps = (n as f64 / 1024.0) / elapsed.as_secs_f64();
+
+    match read_result {
+        Ok(Ok(_)) => {
+            tracing::info!(
+                "{label}: ✓ {n} B in {elapsed:.2?} ({throughput_kbps:.0} KB/s) — continuous"
+            );
+            writer
+                .await
+                .map_err(|e| anyhow::anyhow!("{label}: writer panicked: {e}"))?
+                .map_err(|e| anyhow::anyhow!("{label}: write error: {e}"))?;
+            anyhow::ensure!(
+                sha256_digest(&received) == expected,
+                "{label}: SHA-256 mismatch — {n} bytes corrupted in transit"
+            );
+        }
+        Ok(Err(e)) => {
+            writer.abort();
+            let _ = writer.await;
+            anyhow::bail!("{label}: read error: {e}");
+        }
+        Err(_timeout) => {
+            writer.abort();
+            let _ = writer.await;
+            // Not a hard error — log the stall so the comparison test can report both
+            // variants and still complete. `read_exact` reports no partial-byte count on
+            // timeout, so we deliberately do NOT print a received-throughput figure here — it
+            // would be fabricated from the full payload size that never fully arrived.
+            tracing::warn!(
+                "{label}: read timeout ({timeout:?}) after {elapsed:.2?} — the {n} B payload did \
+                 not fully arrive. This likely indicates SURB starvation from executor yielding \
+                 issues: the write_all held a tokio worker thread without yielding, starving the \
+                 SURB balancer. See tests/edgli_profiling.rs."
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Write `payload` into `session` in MTU-sized chunks with a cooperative
+/// `yield_now()` between each chunk — no inter-batch sleep.
+///
+/// This models what `poll_copy` should do once it calls
+/// `tokio::task::coop::poll_proceed(cx)` at the top of each write iteration.
+/// The yield hands the tokio worker thread back to the executor between every
+/// batch so the SURB balancer and ack tasks can schedule without starvation,
+/// while still driving the data as fast as the network allows.
+///
+/// Expected result: frame-discard count ≈ 0 (same as `pump_and_verify`),
+/// throughput higher than paced (no 100 ms inter-batch sleep).
+pub async fn pump_yielding(
+    session: HoprSession,
+    payload: &[u8],
+    label: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let (mut r, mut w) = tokio::io::split(session);
+    let payload_bytes = payload.to_vec();
+    let expected = sha256_digest(payload);
+    let n = payload.len();
+    let start = std::time::Instant::now();
+
+    let writer = tokio::spawn(async move {
+        let mut offset = 0;
+        while offset < payload_bytes.len() {
+            let end = (offset + PUMP_BATCH_BYTES).min(payload_bytes.len());
+            w.write_all(&payload_bytes[offset..end]).await?;
+            offset = end;
+            // Cooperative yield — no sleep, immediate re-schedule.
+            tokio::task::yield_now().await;
+        }
+        w.flush().await?;
+        Ok::<_, std::io::Error>(())
+    });
+
+    let mut received = vec![0u8; n];
+    let read_result = tokio::time::timeout(timeout, r.read_exact(&mut received)).await;
+
+    let elapsed = start.elapsed();
+    let throughput_kbps = (n as f64 / 1024.0) / elapsed.as_secs_f64();
+
+    match read_result {
+        Ok(Ok(_)) => {
+            tracing::info!(
+                "{label}: ✓ {n} B in {elapsed:.2?} ({throughput_kbps:.0} KB/s) — yielding"
+            );
+            writer
+                .await
+                .map_err(|e| anyhow::anyhow!("{label}: writer panicked: {e}"))?
+                .map_err(|e| anyhow::anyhow!("{label}: write error: {e}"))?;
+            anyhow::ensure!(
+                sha256_digest(&received) == expected,
+                "{label}: SHA-256 mismatch — {n} bytes corrupted in transit"
+            );
+        }
+        Ok(Err(e)) => {
+            writer.abort();
+            let _ = writer.await;
+            anyhow::bail!("{label}: read error: {e}");
+        }
+        Err(_timeout) => {
+            writer.abort();
+            let _ = writer.await;
+            tracing::warn!(
+                "{label}: read timeout ({timeout:?}) after {elapsed:.2?} \
+                 ({throughput_kbps:.0} KB/s before stall)"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Throughput comparison: run 0-hop and 1-hop sessions twice — once with
+/// pacing (`pump_and_verify`) and once without (`pump_continuous`) — and log
+/// throughput for both.
+///
+/// This is the primary entry point for the profiling tests in
+/// `tests/edgli_profiling.rs`.  Run with `--features prof --profile tracer`
+/// and attach `tokio-console` to observe executor starvation in the continuous
+/// variant.
+pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> {
+    // ── 1. Provision ─────────────────────────────────────────────────────────
+    let (summary, _guard, tuning) = provision(net).await?;
+
+    if matches!(net, Network::Local) {
+        await_nodes_ready().await?;
+        await_cluster_peers_discovered().await?;
+        await_intracluster_channels_open().await?;
+    }
+
+    // ── 2. Boot Edgli ────────────────────────────────────────────────────────
+    let extra = &summary.extras[0];
+    let hopr_keys: HoprKeys = IdentityRetrievalModes::FromFile {
+        password: &extra.password,
+        id_path: extra.keystore_path.to_str().unwrap(),
+    }
+    .try_into()?;
+
+    let edgli = Edgli::new(
+        build_edgli_config(extra, &tuning),
+        hopr_keys,
+        BlokliEndpoint::from_optional_url(Some(&summary.blokli_url))?,
+        Some(tuning.connector_cfg),
+        tuning.probe_local,
+        |s: EdgliInitState| tracing::info!(?s, "edgli init"),
+    )
+    .await?;
+
+    await_edgli_peers_connected(&edgli, 2).await?;
+
+    // ── 3. Strategy ──────────────────────────────────────────────────────────
+    let sizing = IncentiveConfiguration {
+        min_open_channels: 1,
+        target_open_channels: CLUSTER_SIZE,
+        ..Default::default()
+    };
+    let mut strat_cfg = default_strategy_cfg(&edgli, &sizing).await?;
+    for kind in &mut strat_cfg.strategies {
+        let EdgeStrategyKind::ChannelLifecycle(lc) = kind;
+        lc.selector = tuning.selector.clone();
+        lc.tick_interval = tuning.strategy_tick;
+    }
+    let _reactor_handle = edgli.run_reactor_from_cfg(strat_cfg)?;
+    await_edgli_channels_open(&edgli, 1, tuning.channel_open_timeout).await?;
+
+    let (dest_0h, dest_1h) = if let Some(exit) = tuning.exit_node {
+        (exit, exit)
+    } else {
+        select_session_targets(&edgli).await?
+    };
+
+    // Wait for dest_1h to appear in the probe graph before attempting 1-hop
+    // sessions — same reason as in run_one_megabyte_session_test (§6.3).
+    tracing::info!(%dest_1h, "waiting for 1-hop destination to be probed");
+    await_edgli_exit_peer_ready(&edgli, dest_1h).await?;
+
+    let mut payload = vec![0u8; PAYLOAD_SIZE];
+    rand::rng().fill(&mut payload[..]);
+
+    let surb_cfg = Some(SurbBalancerConfig {
+        target_surb_buffer_size: 600,
+        max_surbs_per_sec: 300,
+        ..SurbBalancerConfig::default()
+    });
+
+    // ── 4. Paced baseline (pump_and_verify) ──────────────────────────────────
+    tracing::info!("=== PACED BASELINE: opening 0-hop session ===");
+    let (session_0h_paced, _) = edgli
+        .connect_to(
+            dest_0h,
+            loopback_target(),
+            HoprSessionClientConfig {
+                forward_path: HopRouting::try_from(0_usize)?,
+                return_path: HopRouting::try_from(0_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                surb_management: surb_cfg,
+                ..Default::default()
+            },
+        )
+        .await?;
+    let t0 = std::time::Instant::now();
+    pump_and_verify(
+        session_0h_paced,
+        &payload,
+        "paced 0-hop",
+        tuning.pump_timeout,
+    )
+    .await?;
+    tracing::info!(
+        "paced 0-hop: {:.0} KB/s",
+        (PAYLOAD_SIZE as f64 / 1024.0) / t0.elapsed().as_secs_f64()
+    );
+
+    // ── 5. Continuous variant (pump_continuous) ───────────────────────────────
+    tracing::info!("=== CONTINUOUS (NO PACING): opening 0-hop session ===");
+    let (session_0h_cont, _) = edgli
+        .connect_to(
+            dest_0h,
+            loopback_target(),
+            HoprSessionClientConfig {
+                forward_path: HopRouting::try_from(0_usize)?,
+                return_path: HopRouting::try_from(0_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                surb_management: surb_cfg,
+                ..Default::default()
+            },
+        )
+        .await?;
+    pump_continuous(
+        session_0h_cont,
+        &payload,
+        "continuous 0-hop",
+        tuning.pump_timeout,
+    )
+    .await?;
+
+    // ── 5b. 0-hop yielding variant (cooperative yield, no sleep) ─────────────
+    tracing::info!("=== YIELDING (COOPERATIVE): opening 0-hop session ===");
+    let (session_0h_yield, _) = edgli
+        .connect_to(
+            dest_0h,
+            loopback_target(),
+            HoprSessionClientConfig {
+                forward_path: HopRouting::try_from(0_usize)?,
+                return_path: HopRouting::try_from(0_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                surb_management: surb_cfg,
+                ..Default::default()
+            },
+        )
+        .await?;
+    pump_yielding(
+        session_0h_yield,
+        &payload,
+        "yielding 0-hop",
+        tuning.pump_timeout,
+    )
+    .await?;
+
+    // ── 6. 1-hop paced baseline ───────────────────────────────────────────────
+    tracing::info!("=== PACED BASELINE: opening 1-hop session ===");
+    let (session_1h_paced, _) = edgli
+        .connect_to(
+            dest_1h,
+            loopback_target(),
+            HoprSessionClientConfig {
+                forward_path: HopRouting::try_from(1_usize)?,
+                return_path: HopRouting::try_from(1_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                surb_management: surb_cfg,
+                ..Default::default()
+            },
+        )
+        .await?;
+    let t1 = std::time::Instant::now();
+    pump_and_verify(
+        session_1h_paced,
+        &payload,
+        "paced 1-hop",
+        tuning.pump_timeout,
+    )
+    .await?;
+    tracing::info!(
+        "paced 1-hop: {:.0} KB/s",
+        (PAYLOAD_SIZE as f64 / 1024.0) / t1.elapsed().as_secs_f64()
+    );
+
+    // ── 7. 1-hop continuous variant ───────────────────────────────────────────
+    tracing::info!("=== CONTINUOUS (NO PACING): opening 1-hop session ===");
+    let (session_1h_cont, _) = edgli
+        .connect_to(
+            dest_1h,
+            loopback_target(),
+            HoprSessionClientConfig {
+                forward_path: HopRouting::try_from(1_usize)?,
+                return_path: HopRouting::try_from(1_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                surb_management: surb_cfg,
+                ..Default::default()
+            },
+        )
+        .await?;
+    pump_continuous(
+        session_1h_cont,
+        &payload,
+        "continuous 1-hop",
+        tuning.pump_timeout,
+    )
+    .await?;
+
+    // ── 7b. 1-hop yielding variant ────────────────────────────────────────────
+    tracing::info!("=== YIELDING (COOPERATIVE): opening 1-hop session ===");
+    let (session_1h_yield, _) = edgli
+        .connect_to(
+            dest_1h,
+            loopback_target(),
+            HoprSessionClientConfig {
+                forward_path: HopRouting::try_from(1_usize)?,
+                return_path: HopRouting::try_from(1_usize)?,
+                capabilities: (SessionCapability::Segmentation | SessionCapability::NoRateControl),
+                surb_management: surb_cfg,
+                ..Default::default()
+            },
+        )
+        .await?;
+    pump_yielding(
+        session_1h_yield,
+        &payload,
+        "yielding 1-hop",
+        tuning.pump_timeout,
+    )
+    .await?;
+
+    drop(edgli);
+    Ok(())
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Top-level harness
 // ────────────────────────────────────────────────────────────────────────────
@@ -1163,23 +1567,23 @@ pub async fn run_one_megabyte_session_test(net: Network) -> anyhow::Result<()> {
     tracing::info!("waiting for strategy to open ≥1 outgoing channel");
     await_edgli_channels_open(&edgli, 1, tuning.channel_open_timeout).await?;
 
-    // ── 7. Wait for exit peer to be connected and probed (when pinned) ───────
-    // `all_network_peers` returns only connected peers with an observed quality
-    // score above the threshold — i.e. at least one successful probe response.
-    // Without this gate the session open can race against the probe subsystem
-    // and fail with "no route to host" on Rotsee.
-    if let Some(exit) = tuning.exit_node {
-        tracing::info!(%exit, "waiting for exit peer to be physically connected and probed");
-        await_edgli_exit_peer_ready(&edgli, exit).await?;
-    }
-
-    // ── 8. Select session targets ─────────────────────────────────────────────
+    // ── 7. Select session targets ─────────────────────────────────────────────
     let (dest_0h, dest_1h) = if let Some(exit) = tuning.exit_node {
         tracing::info!(%exit, "using configured exit node for both 0-hop and 1-hop sessions");
         (exit, exit)
     } else {
         select_session_targets(&edgli).await?
     };
+
+    // ── 8. Wait for dest_1h to appear in the probe graph ─────────────────────
+    // 1-hop path-finding needs at least one probe observation for dest_1h in
+    // the network graph (§6.3). Without any probe data the edge does not exist
+    // as a graph entry and path construction fails with a session timeout even
+    // though channels are open.  `await_edgli_exit_peer_ready` polls
+    // `all_network_peers(0.0)` (any observed quality) until the peer appears.
+    // This applies to both pinned exit nodes (Rotsee) and dynamic targets (local).
+    tracing::info!(%dest_1h, "waiting for 1-hop destination to be probed");
+    await_edgli_exit_peer_ready(&edgli, dest_1h).await?;
 
     // ── 9. Prepare 1 MiB random payload ─────────────────────────────────────
     // Random bytes produce unique HOPR packet ciphertexts on every test run,
