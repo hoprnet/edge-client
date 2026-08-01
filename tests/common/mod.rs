@@ -1038,6 +1038,18 @@ pub fn loopback_target() -> SessionTarget {
     SessionTarget::ExitNode(0)
 }
 
+/// Segmentation-only loopback session config with symmetric `hops`-hop forward/return
+/// paths and SURBs maxed out (so the pump isn't SURB-starved).
+fn loopback_session_config(hops: usize) -> anyhow::Result<HoprSessionClientConfig> {
+    Ok(HoprSessionClientConfig {
+        forward_path: HopRouting::try_from(hops)?,
+        return_path: HopRouting::try_from(hops)?,
+        capabilities: SessionCapability::Segmentation.into(),
+        always_max_out_surbs: true,
+        ..Default::default()
+    })
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Edgli config builder
 // ────────────────────────────────────────────────────────────────────────────
@@ -1081,6 +1093,11 @@ pub fn sha256_digest(data: &[u8]) -> Vec<u8> {
     h.finalize().to_vec()
 }
 
+/// Throughput of `bytes` transferred over `elapsed`, expressed in kB/s (1 kB = 1024 B).
+fn throughput_kbs(bytes: usize, elapsed: Duration) -> f64 {
+    bytes as f64 / elapsed.as_secs_f64() / 1024.0
+}
+
 /// Sends `payload` as fast as backpressure allows over `session`, reads the echo back,
 /// then reports and asserts send/receive throughput and packet-loss metrics.
 ///
@@ -1094,7 +1111,6 @@ pub async fn pump_and_verify(
 ) -> anyhow::Result<()> {
     let (mut r, mut w) = tokio::io::split(session);
     let payload_bytes = payload.to_vec();
-    let expected = sha256_digest(payload);
     let n = payload.len();
     let overall_start = std::time::Instant::now();
 
@@ -1172,7 +1188,7 @@ pub async fn pump_and_verify(
                 if cursor >= next_progress || cursor >= n {
                     let pct = cursor * 100 / n;
                     let elapsed = overall_start.elapsed();
-                    let kbs = cursor as f64 / elapsed.as_secs_f64() / 1024.0;
+                    let kbs = throughput_kbs(cursor, elapsed);
                     let wo = writer_offset.load(std::sync::atomic::Ordering::Relaxed);
                     tracing::info!(
                         "{label}: recv progress {cursor}/{n} B ({pct}%) in {elapsed:.2?} ({kbs:.1} kB/s) [writer_sent={wo}]"
@@ -1221,8 +1237,8 @@ pub async fn pump_and_verify(
     };
 
     // Metrics
-    let send_kbs = n as f64 / write_elapsed.as_secs_f64() / 1024.0;
-    let recv_kbs = bytes_received as f64 / recv_elapsed.as_secs_f64() / 1024.0;
+    let send_kbs = throughput_kbs(n, write_elapsed);
+    let recv_kbs = throughput_kbs(bytes_received, recv_elapsed);
     let loss_pct = (n - bytes_received) as f64 / n as f64 * 100.0;
     tracing::info!(
         "{label}: send {send_kbs:.1} kB/s ({:.2?}) | recv {recv_kbs:.1} kB/s ({:.2?}) | loss {loss_pct:.2}% ({bytes_received}/{n} B)",
@@ -1235,8 +1251,10 @@ pub async fn pump_and_verify(
     // would let a corrupted-but-lossy run (within PUMP_MAX_LOSS_PCT) pass the loss assertion
     // below without any integrity check.
     if bytes_received == n {
+        // Only hash the payload here — on a lossy run we take the prefix-compare branch
+        // below and never need the full-payload digest.
         anyhow::ensure!(
-            sha256_digest(&received) == expected,
+            sha256_digest(&received) == sha256_digest(payload),
             "{label}: SHA-256 mismatch — {n} bytes corrupted in transit"
         );
         tracing::info!("{label}: SHA-256 OK");
@@ -1880,17 +1898,7 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
     // ── 10. 0-hop session — direct path, no relay ────────────────────────────
     tracing::info!("opening 0-hop session (loopback)");
     let (session_0h, _) = edgli
-        .connect_to(
-            dest_0h,
-            loopback_target(),
-            HoprSessionClientConfig {
-                forward_path: HopRouting::try_from(0_usize)?,
-                return_path: HopRouting::try_from(0_usize)?,
-                capabilities: SessionCapability::Segmentation.into(),
-                always_max_out_surbs: true,
-                ..Default::default()
-            },
-        )
+        .connect_to(dest_0h, loopback_target(), loopback_session_config(0)?)
         .await?;
     // Allow SURBs to accumulate before pumping data.
     // Default balancer target=7000; EXIT's pool reaches ~7000 SURBs after 5 s.
@@ -1900,17 +1908,7 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
     // ── 11. 1-hop session — full relay path ──────────────────────────────────
     tracing::info!("opening 1-hop session (loopback)");
     let (session_1h, _) = edgli
-        .connect_to(
-            dest_1h,
-            loopback_target(),
-            HoprSessionClientConfig {
-                forward_path: HopRouting::try_from(1_usize)?,
-                return_path: HopRouting::try_from(1_usize)?,
-                capabilities: SessionCapability::Segmentation.into(),
-                always_max_out_surbs: true,
-                ..Default::default()
-            },
-        )
+        .connect_to(dest_1h, loopback_target(), loopback_session_config(1)?)
         .await?;
     // Same SURB pre-fill delay as the 0-hop session above.
     tokio::time::sleep(Duration::from_secs(5)).await;
