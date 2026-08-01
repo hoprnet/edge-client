@@ -1051,19 +1051,33 @@ pub fn flow_control_enabled() -> bool {
 /// Loopback session config with symmetric `hops`-hop forward/return paths and SURBs maxed out (so
 /// the pump isn't SURB-starved). Reliable (`RetransmissionAck`) when flow control is enabled so the
 /// window has an honest delivery clock; Segmentation-only otherwise.
+///
+/// `HOPR_SESSION_MAX_SURBS_PER_SEC`, when set, overrides the SURB balancer's `max_surbs_per_sec`
+/// (raising the return-path drain ceiling) so the flow-control window's scaling can be swept without
+/// code changes between points.
 fn loopback_session_config(hops: usize) -> anyhow::Result<HoprSessionClientConfig> {
     let capabilities = if flow_control_enabled() {
         (SessionCapability::Segmentation | SessionCapability::RetransmissionAck).into()
     } else {
         SessionCapability::Segmentation.into()
     };
-    Ok(HoprSessionClientConfig {
+    let mut cfg = HoprSessionClientConfig {
         forward_path: HopRouting::try_from(hops)?,
         return_path: HopRouting::try_from(hops)?,
         capabilities,
         always_max_out_surbs: true,
         ..Default::default()
-    })
+    };
+    if let Some(max_surbs_per_sec) = std::env::var("HOPR_SESSION_MAX_SURBS_PER_SEC")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        cfg.surb_management = Some(SurbBalancerConfig {
+            max_surbs_per_sec,
+            ..cfg.surb_management.unwrap_or_default()
+        });
+    }
+    Ok(cfg)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
