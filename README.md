@@ -117,14 +117,36 @@ Coverage (lcov at `coverage.lcov`):
 nix run .#coverage-unit
 ```
 
-### End-to-end session tests (`#[ignore]`, not run in CI)
+### Tests excluded from CI (`#[ignore]` / feature-gated)
 
-`tests/edgli_session_e2e.rs` spins up a real 3-node HOPR cluster via
-`hoprd-localcluster`, boots Edgli against it, and pumps a payload through 0-hop
-and 1-hop sessions (measuring throughput and packet loss, verifying SHA-256
-integrity). It is gated behind `#[ignore]` — it needs external binaries and a
-container runtime, so it is **not** part of `cargo nextest run` /
-`nix flake check`.
+Some integration tests are **not** part of `cargo nextest run --lib` or
+`nix flake check`: they need external binaries, a container runtime, a funded
+testnet identity, or a non-default build profile. They are marked `#[ignore]`
+(and some are additionally gated behind a Cargo feature), so a normal test run
+skips them and CI never invokes them. Run them explicitly with `--ignored`.
+
+To list what exists without running anything:
+
+```bash
+# every ignored test, with its module path
+cargo test --no-default-features --features runtime-tokio,blokli \
+  --tests -- --ignored --list
+```
+
+| Test file                       | Test(s)                                     | What it needs                                 |
+| ------------------------------- | ------------------------------------------- | --------------------------------------------- |
+| `tests/edgli_session_e2e.rs`    | `edgli_sends_payload_through_local_cluster` | `hoprd*` binaries + container runtime         |
+| `tests/edgli_session_rotsee.rs` | `edgli_sends_payload_through_rotsee`        | funded Rotsee identity (`EDGLI_ROTSEE_*` env) |
+| `tests/edgli_profiling.rs`      | 3 executor-yield profiling tests            | `--features prof` + `--cfg tokio_unstable`    |
+
+The authoritative setup for each lives in the module docs at the top of the
+corresponding test file; the summaries below are the fast path.
+
+#### 1. Local-cluster session throughput (`edgli_session_e2e.rs`)
+
+Spins up a real 3-node HOPR cluster via `hoprd-localcluster`, boots Edgli
+against it, and pumps a 20 MiB payload through 0-hop and 1-hop sessions
+(measuring throughput and packet loss, verifying SHA-256 integrity).
 
 Prerequisites:
 
@@ -162,6 +184,63 @@ The run reports, per hop count:
 See the module docs at the top of `tests/edgli_session_e2e.rs` for the full
 env-var table and the "external mode" (attach to an already-running cluster)
 variant.
+
+#### 2. Rotsee public-testnet session (`edgli_session_rotsee.rs`)
+
+Same pump/verify flow as the local-cluster test, but against the **Rotsee**
+public testnet instead of a managed cluster. Needs a HOPR identity that is
+already funded and registered with a Safe + HOPR module on Gnosis Chain — there
+is no cluster to boot, so all configuration comes from `EDGLI_ROTSEE_*` env
+vars:
+
+```bash
+export EDGLI_ROTSEE_BLOKLI_URL=https://blokli.rotsee.gnosisvpn.io
+export EDGLI_ROTSEE_IDENTITY_FILE=/path/to/identity.json
+export EDGLI_ROTSEE_IDENTITY_PASSWORD=my-password
+export EDGLI_ROTSEE_SAFE_ADDRESS=0x...
+export EDGLI_ROTSEE_MODULE_ADDRESS=0x...
+
+# --release is required for the same stack-depth reason as above.
+RUST_LOG=info,edgli=debug \
+  cargo test --test edgli_session_rotsee --release -- --ignored --nocapture
+```
+
+#### 3. Executor-yield profiling (`edgli_profiling.rs`)
+
+Runs the session pump under a `tokio-console` + `tracing-chrome` subscriber to
+capture executor-starvation traces (a fast writer monopolising a worker thread
+and starving the SURB balancer). These tests are **doubly gated**: `#[ignore]`
+_and_ `#[cfg(feature = "prof")]`, and they only see tokio's task spans when
+built with `--cfg tokio_unstable` under the `tracer` profile (which re-enables
+the TRACE callsites `hopr-lib`'s `release_max_level_debug` would otherwise
+compile out). They reuse the same local-cluster / Rotsee prerequisites as the
+tests above.
+
+The simplest way to run them is the wrapper script, which wires up the env vars,
+build flags, and result collection:
+
+```bash
+./scripts/profile-executor-yield.sh
+```
+
+Or manually (writes Chrome traces to `$EDGLI_TRACE_DIR`, load them at
+<https://ui.perfetto.dev>):
+
+```bash
+export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd/target/release/hoprd-localcluster
+export HOPRD_BIN=/path/to/hoprd/target/release/hoprd
+export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil:latest'
+export HOPRD_CONTAINER_RUNTIME=container
+export EDGLI_TRACE_DIR=./profiling-results
+export RUST_LOG=info,edgli=debug,tokio=trace,runtime=trace
+
+RUSTFLAGS="--cfg tokio_unstable" cargo nextest run \
+  --test edgli_profiling --profile tracer --features prof \
+  --run-ignored ignored-only --no-capture --test-threads 1
+```
+
+See the module docs at the top of `tests/edgli_profiling.rs` for what each trace
+should show and why all three build flags are required together.
 
 ## Architecture
 
