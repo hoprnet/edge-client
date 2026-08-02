@@ -1048,6 +1048,31 @@ pub fn flow_control_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the opt-in **robust** flow-control profile is active (mirrors hoprnet-side
+/// `HOPR_SESSION_FLOW_CONTROL_ROBUST`): persist probe + larger retransmission budget, for
+/// deliberately SURB-throttled / high-latency paths. Off by default (the verified clean profile).
+pub fn flow_control_robust() -> bool {
+    std::env::var("HOPR_SESSION_FLOW_CONTROL_ROBUST")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Human-readable label of the active flow-control profile, for self-documenting run logs.
+///
+/// The verification matrix this parameterizes:
+/// * **`paced` × any config** — flow control off: the original hand-paced Segmentation harness.
+/// * **`fc:clean` × unthrottled/max-out SURBs** — default profile, the production path: expect full
+///   20 MiB, 0% loss, both hops (the ship gate).
+/// * **`fc:robust` × throttled SURBs** — opt-in tail-tolerance bundle: best-effort slow-but-correct
+///   on a deliberately under-provisioned return path.
+pub fn flow_control_profile() -> &'static str {
+    match (flow_control_enabled(), flow_control_robust()) {
+        (false, _) => "paced",
+        (true, false) => "fc:clean",
+        (true, true) => "fc:robust",
+    }
+}
+
 /// Loopback session config with symmetric `hops`-hop forward/return paths and SURBs maxed out (so
 /// the pump isn't SURB-starved). Reliable (`RetransmissionAck`) when flow control is enabled so the
 /// window has an honest delivery clock; Segmentation-only otherwise.
@@ -1143,6 +1168,11 @@ pub async fn pump_and_verify(
     let payload_bytes = payload.to_vec();
     let n = payload.len();
     let overall_start = std::time::Instant::now();
+    tracing::info!(
+        "{label}: starting pump [profile={}, {} B]",
+        flow_control_profile(),
+        n
+    );
 
     let writer_offset = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let writer_offset_clone = writer_offset.clone();
