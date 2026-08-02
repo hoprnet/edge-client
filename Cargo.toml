@@ -92,20 +92,20 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "e28310bff7730caf263bd4c4356522581aec3a09", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "cae50aaa8b8c0069a5924ba5c93cda3bec10c5ef", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "e28310bff7730caf263bd4c4356522581aec3a09", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "cae50aaa8b8c0069a5924ba5c93cda3bec10c5ef", features = [
   "runtime-tokio",
 ] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "e28310bff7730caf263bd4c4356522581aec3a09" }
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hoprnet", rev = "cae50aaa8b8c0069a5924ba5c93cda3bec10c5ef" }
 hopr-strategy = { version = "0.22.0", features = [
   "strategy-channel-lifecycle",
 ] }
-hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "e28310bff7730caf263bd4c4356522581aec3a09" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "e28310bff7730caf263bd4c4356522581aec3a09" }
-hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "e28310bff7730caf263bd4c4356522581aec3a09" }
+hopr-ticket-manager = { git = "https://github.com/hoprnet/hoprnet", rev = "cae50aaa8b8c0069a5924ba5c93cda3bec10c5ef" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hoprnet", rev = "cae50aaa8b8c0069a5924ba5c93cda3bec10c5ef" }
+hopr-transport-p2p = { git = "https://github.com/hoprnet/hoprnet", rev = "cae50aaa8b8c0069a5924ba5c93cda3bec10c5ef" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -114,7 +114,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "e28310bff7730caf263bd4c4356522581aec3a09", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hoprnet", rev = "cae50aaa8b8c0069a5924ba5c93cda3bec10c5ef", features = [
   "runtime-tokio",
   "testing",
 ] }
