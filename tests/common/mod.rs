@@ -26,7 +26,7 @@ use edgli::{
         },
         config::{HoprLibConfig, HostConfig, HostType, SafeModule},
         exports::transport::SessionCapability,
-        exports::transport::{HoprSession, SessionTarget, SurbBalancerConfig},
+        exports::transport::{FlowControlConfig, HoprSession, SessionTarget, SurbBalancerConfig},
     },
     latency_path_planner_config,
     strategy::{EdgeStrategyKind, IncentiveConfiguration, SelectorProfile, default_strategy_cfg},
@@ -1045,34 +1045,38 @@ fn env_flag(var: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether the client-side flow-control window is enabled for this run (mirrors the hoprnet-side
-/// `HOPR_SESSION_FLOW_CONTROL` opt-in). When set, the loopback session runs in **reliable** mode
-/// (so the honest ack clock exists) and the pump sends **unpaced** — the window replaces manual
-/// pacing. When unset, the harness keeps its original paced Segmentation-only behaviour.
-pub fn flow_control_enabled() -> bool {
-    env_flag("HOPR_SESSION_FLOW_CONTROL")
-}
-
-/// Whether the opt-in **robust** flow-control profile is active (mirrors hoprnet-side
-/// `HOPR_SESSION_FLOW_CONTROL_ROBUST`): persist probe + larger retransmission budget, for
-/// deliberately SURB-throttled / high-latency paths. Off by default (the verified clean profile).
-pub fn flow_control_robust() -> bool {
-    env_flag("HOPR_SESSION_FLOW_CONTROL_ROBUST")
-}
-
-/// Human-readable label of the active flow-control profile, for self-documenting run logs.
+/// The flow-control config the harness applies to the loopback session, **selected by env for test
+/// parameterization** across the matrix below. This is *not* a production mechanism — production sets
+/// [`HoprSessionClientConfig::flow_control`] directly; the test just picks which config to build.
 ///
-/// The verification matrix this parameterizes:
-/// * **`paced` × any config** — flow control off: the original hand-paced Segmentation harness.
-/// * **`fc:clean` × unthrottled/max-out SURBs** — default profile, the production path: expect full
-///   20 MiB, 0% loss, both hops (the ship gate).
-/// * **`fc:robust` × throttled SURBs** — opt-in tail-tolerance bundle: best-effort slow-but-correct
-///   on a deliberately under-provisioned return path.
+/// * `HOPR_SESSION_FLOW_CONTROL` unset → `None`: flow control off (the original hand-paced harness).
+/// * set → `Some(FlowControlConfig::default())`: the clean profile (production path / ship gate).
+/// * set + `HOPR_SESSION_FLOW_CONTROL_ROBUST` → `Some(FlowControlConfig::robust())`: the opt-in
+///   tail-tolerance bundle (persist probe + larger retransmission budget).
+pub fn flow_control_config() -> Option<FlowControlConfig> {
+    if !env_flag("HOPR_SESSION_FLOW_CONTROL") {
+        return None;
+    }
+    Some(if env_flag("HOPR_SESSION_FLOW_CONTROL_ROBUST") {
+        FlowControlConfig::robust()
+    } else {
+        FlowControlConfig::default()
+    })
+}
+
+/// Whether flow control is enabled for this run (the session then runs **reliable** so the honest
+/// ack clock exists, and the pump sends **unpaced** — the window replaces manual pacing).
+pub fn flow_control_enabled() -> bool {
+    flow_control_config().is_some()
+}
+
+/// Human-readable label of the active flow-control profile, for self-documenting run logs:
+/// `paced` (off) / `fc:clean` (default profile) / `fc:robust` (tail-tolerance bundle).
 pub fn flow_control_profile() -> &'static str {
-    match (flow_control_enabled(), flow_control_robust()) {
-        (false, _) => "paced",
-        (true, false) => "fc:clean",
-        (true, true) => "fc:robust",
+    match flow_control_config() {
+        None => "paced",
+        Some(cfg) if cfg == FlowControlConfig::robust() => "fc:robust",
+        Some(_) => "fc:clean",
     }
 }
 
@@ -1094,6 +1098,9 @@ fn loopback_session_config(hops: usize) -> anyhow::Result<HoprSessionClientConfi
         return_path: HopRouting::try_from(hops)?,
         capabilities,
         always_max_out_surbs: true,
+        // Client's dial: apply the selected flow-control profile as a real config field (no env is
+        // read node-side). `None` = paced; `Some(clean)` / `Some(robust)` per the profile.
+        flow_control: flow_control_config(),
         ..Default::default()
     };
     if let Some(max_surbs_per_sec) = std::env::var("HOPR_SESSION_MAX_SURBS_PER_SEC")
