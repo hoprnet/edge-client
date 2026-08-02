@@ -1038,23 +1038,26 @@ pub fn loopback_target() -> SessionTarget {
     SessionTarget::ExitNode(0)
 }
 
+/// Truthy env flag: `1` or `true` (case-insensitive), else false.
+fn env_flag(var: &str) -> bool {
+    std::env::var(var)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 /// Whether the client-side flow-control window is enabled for this run (mirrors the hoprnet-side
 /// `HOPR_SESSION_FLOW_CONTROL` opt-in). When set, the loopback session runs in **reliable** mode
 /// (so the honest ack clock exists) and the pump sends **unpaced** — the window replaces manual
 /// pacing. When unset, the harness keeps its original paced Segmentation-only behaviour.
 pub fn flow_control_enabled() -> bool {
-    std::env::var("HOPR_SESSION_FLOW_CONTROL")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+    env_flag("HOPR_SESSION_FLOW_CONTROL")
 }
 
 /// Whether the opt-in **robust** flow-control profile is active (mirrors hoprnet-side
 /// `HOPR_SESSION_FLOW_CONTROL_ROBUST`): persist probe + larger retransmission budget, for
 /// deliberately SURB-throttled / high-latency paths. Off by default (the verified clean profile).
 pub fn flow_control_robust() -> bool {
-    std::env::var("HOPR_SESSION_FLOW_CONTROL_ROBUST")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+    env_flag("HOPR_SESSION_FLOW_CONTROL_ROBUST")
 }
 
 /// Human-readable label of the active flow-control profile, for self-documenting run logs.
