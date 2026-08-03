@@ -98,6 +98,9 @@ const PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const INTRACLUSTER_CHANNEL_TIMEOUT: Duration = Duration::from_secs(120);
 const EDGLI_PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const EXIT_PEER_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long to wait for the edge client's network graph to observe the whole cluster (all nodes
+/// probed, channels indexed via SSE) before routing multi-hop sessions.
+const GRAPH_POPULATE_TIMEOUT: Duration = Duration::from_secs(240);
 
 // ────────────────────────────────────────────────────────────────────────────
 // Network selector
@@ -1006,6 +1009,40 @@ async fn await_edgli_exit_peer_ready(edgli: &Edgli, target: Address) -> anyhow::
     .await
 }
 
+/// Wait until the edge client's network graph is populated enough for multi-hop routing.
+///
+/// Multi-hop path construction is only as good as the graph it runs on: path-finding enumerates
+/// simple paths over the observed channel graph and validates each non-final edge against on-chain
+/// channels (RFC-0014 §6.3). A freshly-booted edge client indexes the cluster's channels via SSE
+/// and probes its neighbours over successive rounds — until every cluster node is *in* the graph,
+/// deeper paths (and their SURB return paths) can route through not-yet-observed relays and stall
+/// at the tail. This polls `all_network_peers(0.0)` until every cluster node has been observed.
+async fn await_graph_populated(
+    edgli: &Edgli,
+    min_peers: usize,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    poll_edgli_until(
+        timeout,
+        Duration::from_secs(5),
+        || format!("timeout ({timeout:?}) waiting for network graph to observe {min_peers} cluster peers"),
+        || async {
+            let peers = edgli
+                .transport()
+                .all_network_peers(0.0)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if peers.len() >= min_peers {
+                tracing::info!(observed = peers.len(), min_peers, "network graph populated");
+                return Ok(true);
+            }
+            tracing::debug!(observed = peers.len(), min_peers, "network graph still populating");
+            Ok(false)
+        },
+    )
+    .await
+}
+
 /// Select session destinations that work for both 0-hop and 1-hop.
 ///
 /// 0-hop target: the first open outgoing channel whose destination is also a
@@ -1081,7 +1118,7 @@ fn probe_settle_duration() -> Duration {
     let secs = std::env::var("EDGLI_E2E_PROBE_SETTLE_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(20);
+        .unwrap_or(60);
     Duration::from_secs(secs)
 }
 
@@ -2014,8 +2051,14 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
     // the cluster complete a few more rounds so multi-hop paths are stable (RFC-0014 §6.3).
     tracing::info!(%exit, "waiting for loopback exit to be probed");
     await_edgli_exit_peer_ready(&edgli, exit).await?;
+    if matches!(net, Network::Local) {
+        // Multi-hop needs the WHOLE cluster in the graph — not just the exit — so path-finding and
+        // its SURB return paths route over observed relays. Poll until every cluster node appears.
+        tracing::info!("waiting for the full network graph to populate (all cluster nodes observed)");
+        await_graph_populated(&edgli, cluster_size(), GRAPH_POPULATE_TIMEOUT).await?;
+    }
     let settle = probe_settle_duration();
-    tracing::info!(?settle, "letting the cluster complete ≥3 probing rounds before routing");
+    tracing::info!(?settle, "letting the graph settle and probing rounds mature before routing");
     tokio::time::sleep(settle).await;
 
     // ── 9. Prepare the random payload ─────────────────────────────────────────
