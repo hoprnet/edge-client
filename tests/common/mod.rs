@@ -1057,7 +1057,7 @@ pub fn flow_control_enabled() -> bool {
 /// code changes between points.
 fn loopback_session_config(hops: usize) -> anyhow::Result<HoprSessionClientConfig> {
     let capabilities = if flow_control_enabled() {
-        (SessionCapability::Segmentation | SessionCapability::RetransmissionAck).into()
+        SessionCapability::Segmentation | SessionCapability::RetransmissionAck
     } else {
         SessionCapability::Segmentation.into()
     };
