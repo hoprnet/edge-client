@@ -69,15 +69,25 @@ pub const PUMP_MAX_LOSS_PCT: f64 = 5.0;
 /// Must exceed the session frame timeout (3 s) so a legitimately delayed tail frame still
 /// counts; kept short so the test does not block on the unflushable end-of-stream tail.
 pub const PUMP_RECV_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
-/// Cluster node count. Must be ≥ `max_hops + 1` so path-finding has enough distinct
-/// relay+exit nodes for the deepest session: an N-hop forward path is `N+1` edges over
-/// `N` distinct intermediate relays plus the exit, none of which may repeat (RFC-0014 §6.3).
-/// 5 supports up to 4-hop and leaves path-finding several candidates for 3-hop.
-pub const CLUSTER_SIZE: usize = 5;
+/// Cluster node count (hoprd nodes, **excluding** the edge client). Sized per run by
+/// `EDGLI_E2E_CLUSTER_SIZE` so each hop count gets a minimal cluster: an N-hop forward path
+/// `E → r₁…r_N → X` spans `N+2` distinct nodes (no node may repeat, RFC-0014 §6.3), i.e. the
+/// edge client + `N` relays + the exit — so it needs `N+1` cluster nodes (`max(N+1, 2)`; ≥2 so
+/// target selection always has two distinct peers). Counting the edge client, that is 3 total for
+/// 0/1-hop, 4 for 2-hop, 5 for 3-hop. Defaults to 3 when unset (covers the default 0/1-hop run).
+pub fn cluster_size() -> usize {
+    std::env::var("EDGLI_E2E_CLUSTER_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n >= 2)
+        .unwrap_or(3)
+}
 const API_PORT_BASE: u16 = 13000;
 const P2P_PORT_BASE: u16 = 19000;
 /// Edgli's P2P port — one slot beyond the cluster nodes.
-const EDGE_P2P_PORT: u16 = P2P_PORT_BASE + CLUSTER_SIZE as u16;
+fn edge_p2p_port() -> u16 {
+    P2P_PORT_BASE + cluster_size() as u16
+}
 const API_HOST: &str = "127.0.0.1";
 const API_TOKEN: &str = "test-token-localcluster";
 
@@ -542,7 +552,7 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
         "--hoprd-bin",
         &hoprd_bin,
         "--size",
-        &CLUSTER_SIZE.to_string(),
+        &cluster_size().to_string(),
         "--extra-identities",
         "1",
         "--data-dir",
@@ -758,7 +768,7 @@ where
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let results = futures::future::join_all(
-            (0..CLUSTER_SIZE).map(|i| check_node(i, API_PORT_BASE + i as u16)),
+            (0..cluster_size()).map(|i| check_node(i, API_PORT_BASE + i as u16)),
         )
         .await;
         if results.into_iter().all(|ok| ok) {
@@ -776,7 +786,7 @@ pub async fn await_nodes_ready() -> anyhow::Result<()> {
     poll_cluster_until(
         READYZ_TIMEOUT,
         Duration::from_secs(3),
-        &format!("all {} cluster nodes passed /readyz", CLUSTER_SIZE),
+        &format!("all {} cluster nodes passed /readyz", cluster_size()),
         &format!("timeout ({READYZ_TIMEOUT:?}) waiting for cluster /readyz"),
         |_i, port| {
             let client = client.clone();
@@ -796,7 +806,7 @@ pub async fn await_nodes_ready() -> anyhow::Result<()> {
 /// Poll /api/v4/network/announced on each node until every node sees CLUSTER_SIZE-1 peers.
 pub async fn await_cluster_peers_discovered() -> anyhow::Result<()> {
     let client = node_http_client();
-    let expected = CLUSTER_SIZE - 1;
+    let expected = cluster_size() - 1;
     poll_cluster_until(
         PEER_DISCOVERY_TIMEOUT,
         Duration::from_secs(3),
@@ -830,7 +840,7 @@ pub async fn await_cluster_peers_discovered() -> anyhow::Result<()> {
 /// Poll /api/v4/channels on each node until every node has CLUSTER_SIZE-1 Open outgoing channels.
 pub async fn await_intracluster_channels_open() -> anyhow::Result<()> {
     let client = node_http_client();
-    let expected = CLUSTER_SIZE - 1;
+    let expected = cluster_size() - 1;
     poll_cluster_until(
         INTRACLUSTER_CHANNEL_TIMEOUT,
         Duration::from_secs(5),
@@ -1154,7 +1164,7 @@ pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibCon
     HoprLibConfig {
         host: HostConfig {
             address: HostType::IPv4("0.0.0.0".to_string()),
-            port: EDGE_P2P_PORT,
+            port: edge_p2p_port(),
         },
         publish: true,
         protocol: HoprProtocolConfig {
@@ -1597,7 +1607,7 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
     // ── 3. Strategy ──────────────────────────────────────────────────────────
     let sizing = IncentiveConfiguration {
         min_open_channels: 1,
-        target_open_channels: CLUSTER_SIZE,
+        target_open_channels: cluster_size(),
         ..Default::default()
     };
     let mut strat_cfg = default_strategy_cfg(&edgli, &sizing).await?;
@@ -1945,7 +1955,7 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
     }
     let sizing = IncentiveConfiguration {
         min_open_channels: 1,
-        target_open_channels: CLUSTER_SIZE + genesis_channel_count,
+        target_open_channels: cluster_size() + genesis_channel_count,
         ..Default::default()
     };
     let mut strat_cfg = default_strategy_cfg(&edgli, &sizing).await?;
