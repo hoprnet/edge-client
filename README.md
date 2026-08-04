@@ -302,7 +302,7 @@ Key inputs handed to `Edgli::new`:
   the `probe_local_addresses` argument to `Edgli::new`) to probe them (e.g. a
   same-host test cluster).
 - **Profiling.** Build with `cargo build --features prof` and attach
-  `tokio-console`. (`.cargo/config.toml` already supplies `--cfg tokio_unstable`;
-  do **not** export `RUSTFLAGS`, as it replaces the target rustflags and would
-  drop the aarch64 AES intrinsics.)
+  `tokio-console`. (`.cargo/config.toml` already supplies
+  `--cfg tokio_unstable`; do **not** export `RUSTFLAGS`, as it replaces the
+  target rustflags and would drop the aarch64 AES intrinsics.)
 - **Reporting issues.** <https://github.com/hoprnet/edge-client/issues>
