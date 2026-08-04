@@ -62,7 +62,9 @@ export HOPRD_CHAIN_IMAGE="${HOPRD_CHAIN_IMAGE:-europe-west3-docker.pkg.dev/hopra
 export HOPRD_CONTAINER_RUNTIME="${HOPRD_CONTAINER_RUNTIME:-container}"
 export EDGLI_TRACE_DIR="${EDGLI_TRACE_DIR:-$REPO_ROOT/profiling-results}"
 export RUST_LOG="${RUST_LOG:-info,edgli=debug,tokio=trace,runtime=trace}"
-export RUSTFLAGS="--cfg tokio_unstable"
+# Do NOT export RUSTFLAGS here: `.cargo/config.toml` already supplies
+# `--cfg tokio_unstable`, and RUSTFLAGS *replaces* (not appends) the target
+# rustflags, which would silently drop the aarch64 AES intrinsics (+aes,+neon).
 
 CLUSTER_START_TIMEOUT=600 # seconds to wait for cluster to reach "running"
 

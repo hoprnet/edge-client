@@ -126,7 +126,7 @@ fn init_subscriber(filename: &str) -> tracing_chrome::FlushGuard {
 #[tokio::test(flavor = "multi_thread")]
 async fn edgli_profiling_paced_pump_baseline() -> anyhow::Result<()> {
     let _guard = init_subscriber("edgli-trace-paced.json");
-    common::run_one_megabyte_session_test(common::Network::Local).await
+    common::run_session_throughput_test(common::Network::Local).await
 }
 
 /// Continuous-pump starvation case with tokio-console + Chrome trace active.
