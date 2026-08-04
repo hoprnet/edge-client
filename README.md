@@ -243,6 +243,7 @@ export HOPRD_BIN=/path/to/hoprd/target/release/hoprd
 # tag known to match your hoprd binaries with e.g.
 # `docker buildx imagetools inspect <image>:latest`, then substitute it below.
 export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil@sha256:<pinned-digest>'
+# macOS Apple `container` runtime; on Linux/others use `docker` or `podman`.
 export HOPRD_CONTAINER_RUNTIME=container
 export EDGLI_TRACE_DIR=./profiling-results
 export RUST_LOG=info,edgli=debug,tokio=trace,runtime=trace

@@ -1279,12 +1279,22 @@ fn throughput_kibs(bytes: usize, elapsed: Duration) -> f64 {
 ///
 /// Does NOT call `shutdown()` on the write half: HOPR sessions do not support
 /// TCP half-close.
+/// Throughput/loss metrics computed by [`pump_and_verify`] over the *transfer* window
+/// (not the wall-clock of the whole call, which includes the idle drain). Call sites should
+/// report these rather than recomputing from `payload_len / total_elapsed`.
+pub struct PumpMetrics {
+    pub send_kibs: f64,
+    pub recv_kibs: f64,
+    pub bytes_received: usize,
+    pub loss_pct: f64,
+}
+
 pub async fn pump_and_verify(
     session: HoprSession,
     payload: &[u8],
     label: &str,
     timeout: Duration,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PumpMetrics> {
     let (mut r, mut w) = tokio::io::split(session);
     let payload_bytes = payload.to_vec();
     let n = payload.len();
@@ -1475,7 +1485,12 @@ pub async fn pump_and_verify(
         "{label}: recv throughput {recv_kibs:.1} KiB/s < {PUMP_MIN_RECV_RATE_KIBS} KiB/s min"
     );
 
-    Ok(())
+    Ok(PumpMetrics {
+        send_kibs,
+        recv_kibs,
+        bytes_received,
+        loss_pct,
+    })
 }
 
 /// Write `payload` into `session` in a single un-paced `write_all`, read back
@@ -1740,18 +1755,14 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
             },
         )
         .await?;
-    let t0 = std::time::Instant::now();
-    pump_and_verify(
+    let m = pump_and_verify(
         session_0h_paced,
         &payload,
         "paced 0-hop",
         tuning.pump_timeout,
     )
     .await?;
-    tracing::info!(
-        "paced 0-hop: {:.0} KiB/s",
-        throughput_kibs(PAYLOAD_SIZE, t0.elapsed())
-    );
+    tracing::info!("paced 0-hop: {:.0} KiB/s recv", m.recv_kibs);
 
     // ── 5. Continuous variant (pump_continuous) ───────────────────────────────
     tracing::info!("=== CONTINUOUS (NO PACING): opening 0-hop session ===");
@@ -1814,18 +1825,14 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
             },
         )
         .await?;
-    let t1 = std::time::Instant::now();
-    pump_and_verify(
+    let m = pump_and_verify(
         session_1h_paced,
         &payload,
         "paced 1-hop",
         tuning.pump_timeout,
     )
     .await?;
-    tracing::info!(
-        "paced 1-hop: {:.0} KiB/s",
-        throughput_kibs(PAYLOAD_SIZE, t1.elapsed())
-    );
+    tracing::info!("paced 1-hop: {:.0} KiB/s recv", m.recv_kibs);
 
     // ── 7. 1-hop continuous variant ───────────────────────────────────────────
     tracing::info!("=== CONTINUOUS (NO PACING): opening 1-hop session ===");
