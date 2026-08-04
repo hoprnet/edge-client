@@ -13,7 +13,7 @@ use tracing_subscriber::{
 };
 
 use edgli::{
-    BlokliEndpoint, Edgli, EdgliInitState, PathPlannerConfig,
+    BlokliEndpoint, Edgli, EdgliInitState, FlowControlConfig, PathPlannerConfig,
     hopr_lib::{
         HopRouting, HoprKeys, HoprSessionClientConfig, IdentityRetrievalModes,
         api::{
@@ -26,7 +26,7 @@ use edgli::{
         },
         config::{HoprLibConfig, HostConfig, HostType, SafeModule},
         exports::transport::SessionCapability,
-        exports::transport::{FlowControlConfig, HoprSession, SessionTarget, SurbBalancerConfig},
+        exports::transport::{HoprSession, SessionTarget, SurbBalancerConfig},
     },
     latency_path_planner_config,
     strategy::{EdgeStrategyKind, IncentiveConfiguration, SelectorProfile, default_strategy_cfg},
