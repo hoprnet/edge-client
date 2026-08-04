@@ -60,9 +60,9 @@ pub const PUMP_SEND_RATE_PPS: u64 = 1000;
 /// after retuning — truncating division would silently push the rate above the cap.
 pub const PUMP_BATCH_DELAY_MS: u64 =
     (PUMP_BATCH_PACKETS as u64 * 1000).div_ceil(PUMP_SEND_RATE_PPS);
-/// Minimum acceptable receive throughput. At 1000 pkt/sec paced send the echo returns at the
-/// same rate; this floor sits well below that so it only catches a genuine stall.
-pub const PUMP_MIN_RECV_RATE_KBS: f64 = 100.0;
+/// Minimum acceptable receive throughput (KiB/s). At 1000 pkt/sec paced send the echo returns at
+/// the same rate; this floor sits well below that so it only catches a genuine stall.
+pub const PUMP_MIN_RECV_RATE_KIBS: f64 = 100.0;
 /// Maximum acceptable packet loss percentage.
 pub const PUMP_MAX_LOSS_PCT: f64 = 5.0;
 /// How long the reader waits with no new bytes before concluding delivery has drained.
@@ -76,11 +76,24 @@ pub const PUMP_RECV_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 /// target selection always has two distinct peers). Counting the edge client, that is 3 total for
 /// 0/1-hop, 4 for 2-hop, 5 for 3-hop. Defaults to 3 when unset (covers the default 0/1-hop run).
 pub fn cluster_size() -> usize {
-    std::env::var("EDGLI_E2E_CLUSTER_SIZE")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&n| n >= 2)
-        .unwrap_or(3)
+    match std::env::var("EDGLI_E2E_CLUSTER_SIZE") {
+        // Unset (or empty) → keep the documented 3-node default.
+        Err(_) => 3,
+        Ok(v) if v.trim().is_empty() => 3,
+        // Set-but-invalid must fail loudly in a measurement harness rather than silently
+        // provisioning a topology the operator did not request.
+        Ok(v) => {
+            let n: usize = v.trim().parse().unwrap_or_else(|e| {
+                panic!("EDGLI_E2E_CLUSTER_SIZE={v:?} is not a valid usize: {e}")
+            });
+            assert!(
+                n >= 2,
+                "EDGLI_E2E_CLUSTER_SIZE={n} is below the minimum of 2 (target selection needs two \
+                 distinct peers)"
+            );
+            n
+        }
+    }
 }
 const API_PORT_BASE: u16 = 13000;
 const P2P_PORT_BASE: u16 = 19000;
@@ -1102,23 +1115,42 @@ fn env_flag(var: &str) -> bool {
 /// tears down its own cluster.
 pub fn hop_counts() -> Vec<usize> {
     match std::env::var("EDGLI_E2E_HOPS") {
-        Ok(v) if !v.trim().is_empty() => v
-            .split(',')
-            .filter_map(|s| s.trim().parse::<usize>().ok())
-            .collect(),
+        Ok(v) if !v.trim().is_empty() => {
+            // Reject unparsable entries loudly: silently dropping them could yield an empty
+            // vector and a vacuous pass that transfers no payload.
+            let hops: Vec<usize> = v
+                .split(',')
+                .map(|s| {
+                    s.trim().parse::<usize>().unwrap_or_else(|e| {
+                        panic!(
+                            "EDGLI_E2E_HOPS entry {:?} is not a valid usize: {e}",
+                            s.trim()
+                        )
+                    })
+                })
+                .collect();
+            assert!(
+                !hops.is_empty(),
+                "EDGLI_E2E_HOPS={v:?} parsed to no hop counts"
+            );
+            hops
+        }
         _ => vec![0, 1],
     }
 }
 
 /// Seconds to let the cluster settle after readiness so nodes complete several probing rounds
-/// before path-finding runs (`EDGLI_E2E_PROBE_SETTLE_SECS`, default 20 s). At hoprd's local probe
+/// before path-finding runs (`EDGLI_E2E_PROBE_SETTLE_SECS`, default 60 s). At hoprd's local probe
 /// cadence this comfortably covers ≥3 rounds, warming edge scores for reliable multi-hop paths
 /// (RFC-0010 §6.2, RFC-0014 §6.3).
 fn probe_settle_duration() -> Duration {
-    let secs = std::env::var("EDGLI_E2E_PROBE_SETTLE_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(60);
+    let secs = match std::env::var("EDGLI_E2E_PROBE_SETTLE_SECS") {
+        Err(_) => 60,
+        Ok(v) if v.trim().is_empty() => 60,
+        Ok(v) => v.trim().parse::<u64>().unwrap_or_else(|e| {
+            panic!("EDGLI_E2E_PROBE_SETTLE_SECS={v:?} is not a valid u64: {e}")
+        }),
+    };
     Duration::from_secs(secs)
 }
 
@@ -1180,10 +1212,12 @@ fn loopback_session_config(hops: usize) -> anyhow::Result<HoprSessionClientConfi
         flow_control: flow_control_config(),
         ..Default::default()
     };
-    if let Some(max_surbs_per_sec) = std::env::var("HOPR_SESSION_MAX_SURBS_PER_SEC")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
+    if let Ok(v) = std::env::var("HOPR_SESSION_MAX_SURBS_PER_SEC")
+        && !v.trim().is_empty()
     {
+        let max_surbs_per_sec = v.trim().parse::<u64>().unwrap_or_else(|e| {
+            panic!("HOPR_SESSION_MAX_SURBS_PER_SEC={v:?} is not a valid u64: {e}")
+        });
         cfg.surb_management = Some(SurbBalancerConfig {
             max_surbs_per_sec,
             ..cfg.surb_management.unwrap_or_default()
@@ -1235,9 +1269,9 @@ pub fn sha256_digest(data: &[u8]) -> Vec<u8> {
     h.finalize().to_vec()
 }
 
-/// Throughput of `bytes` transferred over `elapsed`, expressed in kB/s (1 kB = 1024 B).
-fn throughput_kbs(bytes: usize, elapsed: Duration) -> f64 {
-    bytes as f64 / elapsed.as_secs_f64() / 1024.0
+/// Throughput of `bytes` transferred over `elapsed`, expressed in KiB/s (1 KiB = 1024 B).
+fn throughput_kibs(bytes: usize, elapsed: Duration) -> f64 {
+    bytes as f64 / elapsed.as_secs_f64().max(f64::EPSILON) / 1024.0
 }
 
 /// Sends `payload` as fast as backpressure allows over `session`, reads the echo back,
@@ -1263,6 +1297,10 @@ pub async fn pump_and_verify(
 
     let writer_offset = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let writer_offset_clone = writer_offset.clone();
+    // Resolve the pacing mode once, up front: `flow_control_enabled()` reads the process
+    // environment (taking the global env lock and allocating a config), so calling it per
+    // batch inside the timed loop would perturb the very `send_kbs` we are measuring.
+    let paced = !flow_control_enabled();
     let mut writer = tokio::spawn(async move {
         let write_start = tokio::time::Instant::now();
         let mut offset = 0usize;
@@ -1279,7 +1317,7 @@ pub async fn pump_and_verify(
             //
             // When client-side flow control is enabled the adaptive send window replaces this
             // manual pacing, so we send unpaced and let the window self-size against the drain rate.
-            if offset < payload_bytes.len() && !flow_control_enabled() {
+            if offset < payload_bytes.len() && paced {
                 tokio::time::sleep(Duration::from_millis(PUMP_BATCH_DELAY_MS)).await;
             }
         }
@@ -1338,10 +1376,10 @@ pub async fn pump_and_verify(
                 if cursor >= next_progress || cursor >= n {
                     let pct = cursor * 100 / n;
                     let elapsed = overall_start.elapsed();
-                    let kbs = throughput_kbs(cursor, elapsed);
+                    let kibs = throughput_kibs(cursor, elapsed);
                     let wo = writer_offset.load(std::sync::atomic::Ordering::Relaxed);
                     tracing::info!(
-                        "{label}: recv progress {cursor}/{n} B ({pct}%) in {elapsed:.2?} ({kbs:.1} kB/s) [writer_sent={wo}]"
+                        "{label}: recv progress {cursor}/{n} B ({pct}%) in {elapsed:.2?} ({kibs:.1} KiB/s) [writer_sent={wo}]"
                     );
                     next_progress = cursor + progress_interval;
                 }
@@ -1398,11 +1436,11 @@ pub async fn pump_and_verify(
     };
 
     // Metrics
-    let send_kbs = throughput_kbs(n, write_elapsed);
-    let recv_kbs = throughput_kbs(bytes_received, recv_elapsed);
+    let send_kibs = throughput_kibs(n, write_elapsed);
+    let recv_kibs = throughput_kibs(bytes_received, recv_elapsed);
     let loss_pct = (n - bytes_received) as f64 / n as f64 * 100.0;
     tracing::info!(
-        "{label}: send {send_kbs:.1} kB/s ({:.2?}) | recv {recv_kbs:.1} kB/s ({:.2?}) | loss {loss_pct:.2}% ({bytes_received}/{n} B)",
+        "{label}: send {send_kibs:.1} KiB/s ({:.2?}) | recv {recv_kibs:.1} KiB/s ({:.2?}) | loss {loss_pct:.2}% ({bytes_received}/{n} B)",
         write_elapsed,
         recv_elapsed,
     );
@@ -1433,8 +1471,8 @@ pub async fn pump_and_verify(
         "{label}: packet loss {loss_pct:.1}% > {PUMP_MAX_LOSS_PCT}% max (received {bytes_received}/{n} B)"
     );
     anyhow::ensure!(
-        recv_kbs >= PUMP_MIN_RECV_RATE_KBS,
-        "{label}: recv throughput {recv_kbs:.1} kB/s < {PUMP_MIN_RECV_RATE_KBS} kB/s min"
+        recv_kibs >= PUMP_MIN_RECV_RATE_KIBS,
+        "{label}: recv throughput {recv_kibs:.1} KiB/s < {PUMP_MIN_RECV_RATE_KIBS} KiB/s min"
     );
 
     Ok(())
@@ -1500,12 +1538,12 @@ pub async fn pump_continuous(
     let read_result = tokio::time::timeout(timeout, r.read_exact(&mut received)).await;
 
     let elapsed = start.elapsed();
-    let throughput_kbps = (n as f64 / 1024.0) / elapsed.as_secs_f64();
+    let throughput_kibs = throughput_kibs(n, elapsed);
 
     match read_result {
         Ok(Ok(_)) => {
             tracing::info!(
-                "{label}: ✓ {n} B in {elapsed:.2?} ({throughput_kbps:.0} KB/s) — continuous"
+                "{label}: ✓ {n} B in {elapsed:.2?} ({throughput_kibs:.0} KiB/s) — continuous"
             );
             writer
                 .await
@@ -1580,12 +1618,12 @@ pub async fn pump_yielding(
     let read_result = tokio::time::timeout(timeout, r.read_exact(&mut received)).await;
 
     let elapsed = start.elapsed();
-    let throughput_kbps = (n as f64 / 1024.0) / elapsed.as_secs_f64();
+    let throughput_kibs = throughput_kibs(n, elapsed);
 
     match read_result {
         Ok(Ok(_)) => {
             tracing::info!(
-                "{label}: ✓ {n} B in {elapsed:.2?} ({throughput_kbps:.0} KB/s) — yielding"
+                "{label}: ✓ {n} B in {elapsed:.2?} ({throughput_kibs:.0} KiB/s) — yielding"
             );
             writer
                 .await
@@ -1606,7 +1644,7 @@ pub async fn pump_yielding(
             let _ = writer.await;
             tracing::warn!(
                 "{label}: read timeout ({timeout:?}) after {elapsed:.2?} \
-                 ({throughput_kbps:.0} KB/s before stall)"
+                 ({throughput_kibs:.0} KiB/s before stall)"
             );
         }
     }
@@ -1711,8 +1749,8 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
     )
     .await?;
     tracing::info!(
-        "paced 0-hop: {:.0} KB/s",
-        (PAYLOAD_SIZE as f64 / 1024.0) / t0.elapsed().as_secs_f64()
+        "paced 0-hop: {:.0} KiB/s",
+        throughput_kibs(PAYLOAD_SIZE, t0.elapsed())
     );
 
     // ── 5. Continuous variant (pump_continuous) ───────────────────────────────
@@ -1785,8 +1823,8 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
     )
     .await?;
     tracing::info!(
-        "paced 1-hop: {:.0} KB/s",
-        (PAYLOAD_SIZE as f64 / 1024.0) / t1.elapsed().as_secs_f64()
+        "paced 1-hop: {:.0} KiB/s",
+        throughput_kibs(PAYLOAD_SIZE, t1.elapsed())
     );
 
     // ── 7. 1-hop continuous variant ───────────────────────────────────────────
@@ -2062,7 +2100,7 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
         let peers = edgli.connected_peer_addresses().await?;
         anyhow::ensure!(
             peers.len() > max_hops,
-            "need ≥{} connected peers for {}-hop path-finding, have {} (raise CLUSTER_SIZE)",
+            "need ≥{} connected peers for {}-hop path-finding, have {} (raise EDGLI_E2E_CLUSTER_SIZE)",
             max_hops + 1,
             max_hops,
             peers.len()
@@ -2098,7 +2136,25 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
     rand::rng().fill(&mut payload[..]);
 
     // ── 10. Run each requested hop count over the (warm) cluster ──────────────
-    for &h in &hops {
+    //
+    // NOTE on cross-hop comparability: only the first iteration starts from the freshly settled
+    // state (steps 8–9); every later one inherits the residual state the previous 20 MiB pump left
+    // behind (drained SURB pool, warm mixer queues, exit ticket state). The SURB pool depth is not
+    // exposed to the harness, so we cannot gate on it directly. To make consecutive iterations
+    // start from a comparable state we re-apply the same `probe_settle_duration()` mature-window
+    // before every iteration after the first, on top of the per-hop SURB pre-fill below. For
+    // strictly comparable absolute numbers still run ONE hop count per process (`EDGLI_E2E_HOPS=N`),
+    // as `hop_counts()` documents — each run then provisions and settles its own fresh cluster.
+    for (i, &h) in hops.iter().enumerate() {
+        if i > 0 {
+            let resettle = probe_settle_duration();
+            tracing::info!(
+                hops = h,
+                ?resettle,
+                "re-settling before the next hop so it starts from a state comparable to the first"
+            );
+            tokio::time::sleep(resettle).await;
+        }
         tracing::info!(hops = h, "opening {h}-hop loopback session");
         let (session, _) = edgli
             .connect_to(exit, loopback_target(), loopback_session_config(h)?)

@@ -128,9 +128,14 @@ skips them and CI never invokes them. Run them explicitly with `--ignored`.
 To list what exists without running anything:
 
 ```bash
-# every ignored test, with its module path
+# every ignored test EXCEPT the feature-gated profiling ones, with its module path
 cargo test --no-default-features --features runtime-tokio,blokli \
   --tests -- --ignored --list
+
+# the profiling tests are gated behind the `prof` feature, so list them separately
+# (`.cargo/config.toml` supplies `--cfg tokio_unstable`; do not export RUSTFLAGS)
+cargo test --no-default-features --features runtime-tokio,blokli,prof \
+  --test edgli_profiling -- --ignored --list
 ```
 
 | Test file                       | Test(s)                                     | What it needs                                 |
@@ -177,8 +182,8 @@ RUST_LOG=info,edgli=debug \
 The run reports, per hop count:
 
 ```text
-0-hop: send … kB/s | recv … kB/s | loss …% (bytes)
-1-hop: send … kB/s | recv … kB/s | loss …% (bytes)
+0-hop: send … KiB/s | recv … KiB/s | loss …% (bytes)
+1-hop: send … KiB/s | recv … KiB/s | loss …% (bytes)
 ```
 
 See the module docs at the top of `tests/edgli_session_e2e.rs` for the full
@@ -196,7 +201,10 @@ vars:
 ```bash
 export EDGLI_ROTSEE_BLOKLI_URL=https://blokli.rotsee.gnosisvpn.io
 export EDGLI_ROTSEE_IDENTITY_FILE=/path/to/identity.json
-export EDGLI_ROTSEE_IDENTITY_PASSWORD=my-password
+# Read the identity password interactively so it never lands in shell history.
+read -rsp 'Rotsee identity password: ' EDGLI_ROTSEE_IDENTITY_PASSWORD
+printf '\n'
+export EDGLI_ROTSEE_IDENTITY_PASSWORD
 export EDGLI_ROTSEE_SAFE_ADDRESS=0x...
 export EDGLI_ROTSEE_MODULE_ADDRESS=0x...
 
@@ -229,12 +237,20 @@ Or manually (writes Chrome traces to `$EDGLI_TRACE_DIR`, load them at
 ```bash
 export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd/target/release/hoprd-localcluster
 export HOPRD_BIN=/path/to/hoprd/target/release/hoprd
-export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil:latest'
+# For reproducible profiling numbers, pin the chain image to an immutable digest
+# (`bloklid-anvil@sha256:<digest>`) rather than `:latest` — a remote `:latest`
+# update can shift throughput without any code change. Resolve the digest of a
+# tag known to match your hoprd binaries with e.g.
+# `docker buildx imagetools inspect <image>:latest`, then substitute it below.
+export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil@sha256:<pinned-digest>'
 export HOPRD_CONTAINER_RUNTIME=container
 export EDGLI_TRACE_DIR=./profiling-results
 export RUST_LOG=info,edgli=debug,tokio=trace,runtime=trace
 
-RUSTFLAGS="--cfg tokio_unstable" cargo nextest run \
+# Do NOT export RUSTFLAGS: `.cargo/config.toml` already supplies
+# `--cfg tokio_unstable`, and RUSTFLAGS would *replace* (not append) the target
+# rustflags, silently dropping the aarch64 AES intrinsics (`+aes,+neon`).
+cargo nextest run \
   --test edgli_profiling --profile tracer --features prof \
   --run-ignored ignored-only --no-capture --test-threads 1
 ```
@@ -285,7 +301,8 @@ Key inputs handed to `Edgli::new`:
   Pass `--probe-local-addresses` (or `HOPR_EDGE_PROBE_LOCAL_ADDRESSES=true`, or
   the `probe_local_addresses` argument to `Edgli::new`) to probe them (e.g. a
   same-host test cluster).
-- **Profiling.** Build with
-  `RUSTFLAGS="--cfg tokio_unstable" cargo build --features prof` and attach
-  `tokio-console`.
+- **Profiling.** Build with `cargo build --features prof` and attach
+  `tokio-console`. (`.cargo/config.toml` already supplies `--cfg tokio_unstable`;
+  do **not** export `RUSTFLAGS`, as it replaces the target rustflags and would
+  drop the aarch64 AES intrinsics.)
 - **Reporting issues.** <https://github.com/hoprnet/edge-client/issues>
