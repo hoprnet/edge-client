@@ -26,7 +26,7 @@ use edgli::{
         },
         config::{HoprLibConfig, HostConfig, HostType, SafeModule},
         exports::transport::SessionCapability,
-        exports::transport::{HoprSession, SessionTarget, SurbBalancerConfig},
+        exports::transport::{FlowControlConfig, HoprSession, SessionTarget, SurbBalancerConfig},
     },
     latency_path_planner_config,
     strategy::{EdgeStrategyKind, IncentiveConfiguration, SelectorProfile, default_strategy_cfg},
@@ -69,11 +69,25 @@ pub const PUMP_MAX_LOSS_PCT: f64 = 5.0;
 /// Must exceed the session frame timeout (3 s) so a legitimately delayed tail frame still
 /// counts; kept short so the test does not block on the unflushable end-of-stream tail.
 pub const PUMP_RECV_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
-pub const CLUSTER_SIZE: usize = 3;
+/// Cluster node count (hoprd nodes, **excluding** the edge client). Sized per run by
+/// `EDGLI_E2E_CLUSTER_SIZE` so each hop count gets a minimal cluster: an N-hop forward path
+/// `E → r₁…r_N → X` spans `N+2` distinct nodes (no node may repeat, RFC-0014 §6.3), i.e. the
+/// edge client + `N` relays + the exit — so it needs `N+1` cluster nodes (`max(N+1, 2)`; ≥2 so
+/// target selection always has two distinct peers). Counting the edge client, that is 3 total for
+/// 0/1-hop, 4 for 2-hop, 5 for 3-hop. Defaults to 3 when unset (covers the default 0/1-hop run).
+pub fn cluster_size() -> usize {
+    std::env::var("EDGLI_E2E_CLUSTER_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n >= 2)
+        .unwrap_or(3)
+}
 const API_PORT_BASE: u16 = 13000;
 const P2P_PORT_BASE: u16 = 19000;
 /// Edgli's P2P port — one slot beyond the cluster nodes.
-const EDGE_P2P_PORT: u16 = P2P_PORT_BASE + CLUSTER_SIZE as u16;
+fn edge_p2p_port() -> u16 {
+    P2P_PORT_BASE + cluster_size() as u16
+}
 const API_HOST: &str = "127.0.0.1";
 const API_TOKEN: &str = "test-token-localcluster";
 
@@ -84,6 +98,9 @@ const PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const INTRACLUSTER_CHANNEL_TIMEOUT: Duration = Duration::from_secs(120);
 const EDGLI_PEER_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const EXIT_PEER_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long to wait for the edge client's network graph to observe the whole cluster (all nodes
+/// probed, channels indexed via SSE) before routing multi-hop sessions.
+const GRAPH_POPULATE_TIMEOUT: Duration = Duration::from_secs(240);
 
 // ────────────────────────────────────────────────────────────────────────────
 // Network selector
@@ -538,7 +555,7 @@ async fn provision_local() -> anyhow::Result<ClusterHandle> {
         "--hoprd-bin",
         &hoprd_bin,
         "--size",
-        &CLUSTER_SIZE.to_string(),
+        &cluster_size().to_string(),
         "--extra-identities",
         "1",
         "--data-dir",
@@ -754,7 +771,7 @@ where
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let results = futures::future::join_all(
-            (0..CLUSTER_SIZE).map(|i| check_node(i, API_PORT_BASE + i as u16)),
+            (0..cluster_size()).map(|i| check_node(i, API_PORT_BASE + i as u16)),
         )
         .await;
         if results.into_iter().all(|ok| ok) {
@@ -772,7 +789,7 @@ pub async fn await_nodes_ready() -> anyhow::Result<()> {
     poll_cluster_until(
         READYZ_TIMEOUT,
         Duration::from_secs(3),
-        &format!("all {} cluster nodes passed /readyz", CLUSTER_SIZE),
+        &format!("all {} cluster nodes passed /readyz", cluster_size()),
         &format!("timeout ({READYZ_TIMEOUT:?}) waiting for cluster /readyz"),
         |_i, port| {
             let client = client.clone();
@@ -792,7 +809,7 @@ pub async fn await_nodes_ready() -> anyhow::Result<()> {
 /// Poll /api/v4/network/announced on each node until every node sees CLUSTER_SIZE-1 peers.
 pub async fn await_cluster_peers_discovered() -> anyhow::Result<()> {
     let client = node_http_client();
-    let expected = CLUSTER_SIZE - 1;
+    let expected = cluster_size() - 1;
     poll_cluster_until(
         PEER_DISCOVERY_TIMEOUT,
         Duration::from_secs(3),
@@ -826,7 +843,7 @@ pub async fn await_cluster_peers_discovered() -> anyhow::Result<()> {
 /// Poll /api/v4/channels on each node until every node has CLUSTER_SIZE-1 Open outgoing channels.
 pub async fn await_intracluster_channels_open() -> anyhow::Result<()> {
     let client = node_http_client();
-    let expected = CLUSTER_SIZE - 1;
+    let expected = cluster_size() - 1;
     poll_cluster_until(
         INTRACLUSTER_CHANNEL_TIMEOUT,
         Duration::from_secs(5),
@@ -992,6 +1009,40 @@ async fn await_edgli_exit_peer_ready(edgli: &Edgli, target: Address) -> anyhow::
     .await
 }
 
+/// Wait until the edge client's network graph is populated enough for multi-hop routing.
+///
+/// Multi-hop path construction is only as good as the graph it runs on: path-finding enumerates
+/// simple paths over the observed channel graph and validates each non-final edge against on-chain
+/// channels (RFC-0014 §6.3). A freshly-booted edge client indexes the cluster's channels via SSE
+/// and probes its neighbours over successive rounds — until every cluster node is *in* the graph,
+/// deeper paths (and their SURB return paths) can route through not-yet-observed relays and stall
+/// at the tail. This polls `all_network_peers(0.0)` until every cluster node has been observed.
+async fn await_graph_populated(
+    edgli: &Edgli,
+    min_peers: usize,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    poll_edgli_until(
+        timeout,
+        Duration::from_secs(5),
+        || format!("timeout ({timeout:?}) waiting for network graph to observe {min_peers} cluster peers"),
+        || async {
+            let peers = edgli
+                .transport()
+                .all_network_peers(0.0)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if peers.len() >= min_peers {
+                tracing::info!(observed = peers.len(), min_peers, "network graph populated");
+                return Ok(true);
+            }
+            tracing::debug!(observed = peers.len(), min_peers, "network graph still populating");
+            Ok(false)
+        },
+    )
+    .await
+}
+
 /// Select session destinations that work for both 0-hop and 1-hop.
 ///
 /// 0-hop target: the first open outgoing channel whose destination is also a
@@ -1038,14 +1089,72 @@ pub fn loopback_target() -> SessionTarget {
     SessionTarget::ExitNode(0)
 }
 
-/// Whether the client-side flow-control window is enabled for this run (mirrors the hoprnet-side
-/// `HOPR_SESSION_FLOW_CONTROL` opt-in). When set, the loopback session runs in **reliable** mode
-/// (so the honest ack clock exists) and the pump sends **unpaced** — the window replaces manual
-/// pacing. When unset, the harness keeps its original paced Segmentation-only behaviour.
-pub fn flow_control_enabled() -> bool {
-    std::env::var("HOPR_SESSION_FLOW_CONTROL")
+/// Truthy env flag: `1` or `true` (case-insensitive), else false.
+fn env_flag(var: &str) -> bool {
+    std::env::var(var)
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
+}
+
+/// Hop counts to exercise this run, selected by `EDGLI_E2E_HOPS` (comma-separated, e.g. `"2"` or
+/// `"0,1,2,3"`). Defaults to `[0, 1]` (the original behaviour). Run one hop count per invocation
+/// (e.g. `EDGLI_E2E_HOPS=3`) to get a **fresh cluster per hop** — each binary run provisions and
+/// tears down its own cluster.
+pub fn hop_counts() -> Vec<usize> {
+    match std::env::var("EDGLI_E2E_HOPS") {
+        Ok(v) if !v.trim().is_empty() => v
+            .split(',')
+            .filter_map(|s| s.trim().parse::<usize>().ok())
+            .collect(),
+        _ => vec![0, 1],
+    }
+}
+
+/// Seconds to let the cluster settle after readiness so nodes complete several probing rounds
+/// before path-finding runs (`EDGLI_E2E_PROBE_SETTLE_SECS`, default 20 s). At hoprd's local probe
+/// cadence this comfortably covers ≥3 rounds, warming edge scores for reliable multi-hop paths
+/// (RFC-0010 §6.2, RFC-0014 §6.3).
+fn probe_settle_duration() -> Duration {
+    let secs = std::env::var("EDGLI_E2E_PROBE_SETTLE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(60);
+    Duration::from_secs(secs)
+}
+
+/// The flow-control config the harness applies to the loopback session, **selected by env for test
+/// parameterization** across the matrix below. This is *not* a production mechanism — production sets
+/// [`HoprSessionClientConfig::flow_control`] directly; the test just picks which config to build.
+///
+/// * `HOPR_SESSION_FLOW_CONTROL` unset → `None`: flow control off (the original hand-paced harness).
+/// * set → `Some(FlowControlConfig::default())`: the clean profile (production path / ship gate).
+/// * set + `HOPR_SESSION_FLOW_CONTROL_ROBUST` → `Some(FlowControlConfig::robust())`: the opt-in
+///   tail-tolerance bundle (persist probe + larger retransmission budget).
+pub fn flow_control_config() -> Option<FlowControlConfig> {
+    if !env_flag("HOPR_SESSION_FLOW_CONTROL") {
+        return None;
+    }
+    Some(if env_flag("HOPR_SESSION_FLOW_CONTROL_ROBUST") {
+        FlowControlConfig::robust()
+    } else {
+        FlowControlConfig::default()
+    })
+}
+
+/// Whether flow control is enabled for this run (the session then runs **reliable** so the honest
+/// ack clock exists, and the pump sends **unpaced** — the window replaces manual pacing).
+pub fn flow_control_enabled() -> bool {
+    flow_control_config().is_some()
+}
+
+/// Human-readable label of the active flow-control profile, for self-documenting run logs:
+/// `paced` (off) / `fc:clean` (default profile) / `fc:robust` (tail-tolerance bundle).
+pub fn flow_control_profile() -> &'static str {
+    match flow_control_config() {
+        None => "paced",
+        Some(cfg) if cfg == FlowControlConfig::robust() => "fc:robust",
+        Some(_) => "fc:clean",
+    }
 }
 
 /// Loopback session config with symmetric `hops`-hop forward/return paths and SURBs maxed out (so
@@ -1066,6 +1175,9 @@ fn loopback_session_config(hops: usize) -> anyhow::Result<HoprSessionClientConfi
         return_path: HopRouting::try_from(hops)?,
         capabilities,
         always_max_out_surbs: true,
+        // Client's dial: apply the selected flow-control profile as a real config field (no env is
+        // read node-side). `None` = paced; `Some(clean)` / `Some(robust)` per the profile.
+        flow_control: flow_control_config(),
         ..Default::default()
     };
     if let Some(max_surbs_per_sec) = std::env::var("HOPR_SESSION_MAX_SURBS_PER_SEC")
@@ -1089,7 +1201,7 @@ pub fn build_edgli_config(extra: &ExtraInfo, tuning: &EdgliTuning) -> HoprLibCon
     HoprLibConfig {
         host: HostConfig {
             address: HostType::IPv4("0.0.0.0".to_string()),
-            port: EDGE_P2P_PORT,
+            port: edge_p2p_port(),
         },
         publish: true,
         protocol: HoprProtocolConfig {
@@ -1143,6 +1255,11 @@ pub async fn pump_and_verify(
     let payload_bytes = payload.to_vec();
     let n = payload.len();
     let overall_start = std::time::Instant::now();
+    tracing::info!(
+        "{label}: starting pump [profile={}, {} B]",
+        flow_control_profile(),
+        n
+    );
 
     let writer_offset = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let writer_offset_clone = writer_offset.clone();
@@ -1527,7 +1644,7 @@ pub async fn run_throughput_comparison_test(net: Network) -> anyhow::Result<()> 
     // ── 3. Strategy ──────────────────────────────────────────────────────────
     let sizing = IncentiveConfiguration {
         min_open_channels: 1,
-        target_open_channels: CLUSTER_SIZE,
+        target_open_channels: cluster_size(),
         ..Default::default()
     };
     let mut strat_cfg = default_strategy_cfg(&edgli, &sizing).await?;
@@ -1875,7 +1992,7 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
     }
     let sizing = IncentiveConfiguration {
         min_open_channels: 1,
-        target_open_channels: CLUSTER_SIZE + genesis_channel_count,
+        target_open_channels: cluster_size() + genesis_channel_count,
         ..Default::default()
     };
     let mut strat_cfg = default_strategy_cfg(&edgli, &sizing).await?;
@@ -1902,50 +2019,66 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
     tracing::info!("waiting for strategy to open ≥1 outgoing channel");
     await_edgli_channels_open(&edgli, 1, tuning.channel_open_timeout).await?;
 
-    // ── 7. Select session targets ─────────────────────────────────────────────
-    let (dest_0h, dest_1h) = if let Some(exit) = tuning.exit_node {
-        tracing::info!(%exit, "using configured exit node for both 0-hop and 1-hop sessions");
-        (exit, exit)
+    // ── 7. Select the loopback exit and validate topology depth ───────────────
+    // The exit is the session destination (final forward hop / first return hop); path-finding
+    // fills the intermediate relays from the channel graph. Any peer works as the exit.
+    let hops = hop_counts();
+    let max_hops = hops.iter().copied().max().unwrap_or(0);
+    let exit = if let Some(exit) = tuning.exit_node {
+        tracing::info!(%exit, "using configured exit node for the loopback session(s)");
+        exit
     } else {
-        select_session_targets(&edgli).await?
+        select_session_targets(&edgli).await?.0
     };
 
-    // ── 8. Wait for dest_1h to appear in the probe graph ─────────────────────
-    // 1-hop path-finding needs at least one probe observation for dest_1h in
-    // the network graph (§6.3). Without any probe data the edge does not exist
-    // as a graph entry and path construction fails with a session timeout even
-    // though channels are open.  `await_edgli_exit_peer_ready` polls
-    // `all_network_peers(0.0)` (any observed quality) until the peer appears.
-    // This applies to both pinned exit nodes (Rotsee) and dynamic targets (local).
-    tracing::info!(%dest_1h, "waiting for 1-hop destination to be probed");
-    await_edgli_exit_peer_ready(&edgli, dest_1h).await?;
+    // An N-hop forward path is `N+1` edges over `N` distinct relays plus the exit, with no repeated
+    // node (RFC-0014 §6.3) — so we need at least `max_hops + 1` distinct peers besides ourselves.
+    if matches!(net, Network::Local) {
+        let peers = edgli.connected_peer_addresses().await?;
+        anyhow::ensure!(
+            peers.len() >= max_hops + 1,
+            "need ≥{} connected peers for {}-hop path-finding, have {} (raise CLUSTER_SIZE)",
+            max_hops + 1,
+            max_hops,
+            peers.len()
+        );
+    }
 
-    // ── 9. Prepare 1 MiB random payload ─────────────────────────────────────
-    // Random bytes produce unique HOPR packet ciphertexts on every test run,
-    // preventing false replay-detection hits in cluster nodes' in-memory
-    // packet-tag caches (which persist across Edgli reconnections to the same
-    // hoprd instance).
+    // ── 8. Warm the network: exit probed + several probing rounds ─────────────
+    // Path-finding scores edges from probe results (RFC-0010 §6.2). Without any probe observation
+    // the destination edge is not yet a graph entry and path construction times out; and for
+    // multi-hop we want the intermediate edges scored too. Wait for the exit to be probed, then let
+    // the cluster complete a few more rounds so multi-hop paths are stable (RFC-0014 §6.3).
+    tracing::info!(%exit, "waiting for loopback exit to be probed");
+    await_edgli_exit_peer_ready(&edgli, exit).await?;
+    if matches!(net, Network::Local) {
+        // Multi-hop needs the WHOLE cluster in the graph — not just the exit — so path-finding and
+        // its SURB return paths route over observed relays. Poll until every cluster node appears.
+        tracing::info!("waiting for the full network graph to populate (all cluster nodes observed)");
+        await_graph_populated(&edgli, cluster_size(), GRAPH_POPULATE_TIMEOUT).await?;
+    }
+    let settle = probe_settle_duration();
+    tracing::info!(?settle, "letting the graph settle and probing rounds mature before routing");
+    tokio::time::sleep(settle).await;
+
+    // ── 9. Prepare the random payload ─────────────────────────────────────────
+    // Random bytes produce unique HOPR packet ciphertexts on every test run, preventing false
+    // replay-detection hits in cluster nodes' in-memory packet-tag caches.
     let mut payload = vec![0u8; PAYLOAD_SIZE];
     rand::rng().fill(&mut payload[..]);
 
-    // ── 10. 0-hop session — direct path, no relay ────────────────────────────
-    tracing::info!("opening 0-hop session (loopback)");
-    let (session_0h, _) = edgli
-        .connect_to(dest_0h, loopback_target(), loopback_session_config(0)?)
-        .await?;
-    // Allow SURBs to accumulate before pumping data.
-    // Default balancer target=7000; EXIT's pool reaches ~7000 SURBs after 5 s.
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    pump_and_verify(session_0h, &payload, "0-hop", tuning.pump_timeout).await?;
-
-    // ── 11. 1-hop session — full relay path ──────────────────────────────────
-    tracing::info!("opening 1-hop session (loopback)");
-    let (session_1h, _) = edgli
-        .connect_to(dest_1h, loopback_target(), loopback_session_config(1)?)
-        .await?;
-    // Same SURB pre-fill delay as the 0-hop session above.
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    pump_and_verify(session_1h, &payload, "1-hop", tuning.pump_timeout).await?;
+    // ── 10. Run each requested hop count over the (warm) cluster ──────────────
+    for &h in &hops {
+        tracing::info!(hops = h, "opening {h}-hop loopback session");
+        let (session, _) = edgli
+            .connect_to(exit, loopback_target(), loopback_session_config(h)?)
+            .await?;
+        // Let SURBs accumulate before pumping. The default balancer targets ~7000 SURBs; longer
+        // return paths replenish the pool more slowly, so scale the pre-fill with the hop count.
+        let prefill = Duration::from_secs(5 * (h as u64 + 1));
+        tokio::time::sleep(prefill).await;
+        pump_and_verify(session, &payload, &format!("{h}-hop"), tuning.pump_timeout).await?;
+    }
 
     // ── 12. Final state assertion ─────────────────────────────────────────────
     let channels: Vec<ChannelEntry> = edgli.my_outgoing_channels().await?;
