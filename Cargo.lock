@@ -2792,7 +2792,7 @@ dependencies = [
  "hopr-transport-p2p",
  "lazy_static",
  "mimalloc",
- "multiaddr 0.19.0",
+ "multiaddr 0.18.2",
  "nix 0.31.3",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -5187,20 +5187,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libp2p-identity"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d77f16caa4f4d2667a1fad5bb1a3a4a4556967c1bff93525ebb2975847fa3de"
-dependencies = [
- "bs58",
- "hkdf 0.13.0",
- "multihash",
- "sha2 0.11.0",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
 name = "libp2p-mdns"
 version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5609,26 +5595,6 @@ dependencies = [
  "byteorder",
  "data-encoding",
  "libp2p-identity 0.2.14",
- "multibase",
- "multihash",
- "percent-encoding",
- "serde",
- "static_assertions",
- "unsigned-varint 0.8.0",
- "url",
-]
-
-[[package]]
-name = "multiaddr"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d96879ec0057cf5f99543c5333f6818c1473081684ae7ad55da21b6ea65ba214"
-dependencies = [
- "arrayref",
- "byteorder",
- "bytes",
- "data-encoding",
- "libp2p-identity 0.3.0",
  "multibase",
  "multihash",
  "percent-encoding",
