@@ -2061,7 +2061,7 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
     if matches!(net, Network::Local) {
         let peers = edgli.connected_peer_addresses().await?;
         anyhow::ensure!(
-            peers.len() >= max_hops + 1,
+            peers.len() > max_hops,
             "need ≥{} connected peers for {}-hop path-finding, have {} (raise CLUSTER_SIZE)",
             max_hops + 1,
             max_hops,
