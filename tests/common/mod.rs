@@ -1263,7 +1263,7 @@ pub async fn pump_and_verify(
 
     let writer_offset = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let writer_offset_clone = writer_offset.clone();
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         let write_start = tokio::time::Instant::now();
         let mut offset = 0usize;
         while offset < payload_bytes.len() {
@@ -1379,11 +1379,22 @@ pub async fn pump_and_verify(
     let writer_budget = deadline
         .saturating_duration_since(tokio::time::Instant::now())
         .max(Duration::from_secs(5));
-    let write_elapsed = match tokio::time::timeout(writer_budget, writer).await {
+    let write_elapsed = match tokio::time::timeout(writer_budget, &mut writer).await {
         Ok(Ok(Ok(dur))) => dur,
         Ok(Ok(Err(e))) => return Err(anyhow::anyhow!("{label}: write error: {e}")),
         Ok(Err(e)) => return Err(anyhow::anyhow!("{label}: writer panicked: {e}")),
-        Err(_) => return Err(anyhow::anyhow!("{label}: writer timeout")),
+        Err(_) => {
+            // Dropping a `JoinHandle` detaches the task rather than cancelling it. Abort the
+            // writer explicitly (matching the read-error path above) so it stops competing for
+            // the executor and return path during the next measurement, and report progress so
+            // the stall is diagnosable.
+            let sent = writer_offset.load(std::sync::atomic::Ordering::Relaxed);
+            writer.abort();
+            let _ = writer.await;
+            return Err(anyhow::anyhow!(
+                "{label}: writer timeout (sent {sent}/{n} B, received {bytes_received}/{n} B)"
+            ));
+        }
     };
 
     // Metrics
@@ -1901,12 +1912,26 @@ pub fn init_tracing() -> (
     };
 
     // `try_init` (not `init`) so this coexists with a subscriber already installed by the
-    // `#[test_log::test]` attribute: if one is set, we keep it rather than panicking.
-    let _ = tracing_subscriber::registry()
+    // `#[test_log::test]` attribute: if one is set, we keep it rather than panicking. But when a
+    // subscriber is already installed our Chrome/flame layers are silently dropped — the profiling
+    // files would be created yet never written. Surface that and return no guards, so the caller
+    // cannot mistake a dead layer for a live one (an empty FLAME_OUTPUT read as real profiling data).
+    let profiling_layers = chrome_guard.is_some() || flame_guard.is_some();
+    if tracing_subscriber::registry()
         .with(fmt_layer)
         .with(chrome_layer)
         .with(flame_layer)
-        .try_init();
+        .try_init()
+        .is_err()
+    {
+        if profiling_layers {
+            eprintln!(
+                "init_tracing: a subscriber is already installed; Chrome/flame profiling layers \
+                 were NOT activated — ignoring CHROME_TRACE/FLAME_OUTPUT for this run"
+            );
+        }
+        return (None, None);
+    }
 
     (chrome_guard, flame_guard)
 }
@@ -2054,11 +2079,16 @@ pub async fn run_session_throughput_test(net: Network) -> anyhow::Result<()> {
     if matches!(net, Network::Local) {
         // Multi-hop needs the WHOLE cluster in the graph — not just the exit — so path-finding and
         // its SURB return paths route over observed relays. Poll until every cluster node appears.
-        tracing::info!("waiting for the full network graph to populate (all cluster nodes observed)");
+        tracing::info!(
+            "waiting for the full network graph to populate (all cluster nodes observed)"
+        );
         await_graph_populated(&edgli, cluster_size(), GRAPH_POPULATE_TIMEOUT).await?;
     }
     let settle = probe_settle_duration();
-    tracing::info!(?settle, "letting the graph settle and probing rounds mature before routing");
+    tracing::info!(
+        ?settle,
+        "letting the graph settle and probing rounds mature before routing"
+    );
     tokio::time::sleep(settle).await;
 
     // ── 9. Prepare the random payload ─────────────────────────────────────────
