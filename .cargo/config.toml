@@ -28,11 +28,10 @@ LDFLAGS = "-O3 -ffunction-sections -fdata-sections -fPIC"
 # well as `[build]`. `--check-cfg` keeps `-D warnings` clean.
 #
 # NOTE: The `RUSTFLAGS` environment variable *replaces* these tables wholesale —
-# it does not append. Exporting `RUSTFLAGS="--cfg tokio_unstable"` for a
-# profiling build would therefore silently drop `-Ctarget-feature=+aes,+neon`
-# and `--cfg=aes_armv8` on aarch64-apple-darwin. Because this file already
-# supplies `--cfg tokio_unstable` unconditionally, profiling builds must NOT set
-# `RUSTFLAGS` at all (the profiling docs in README.md rely on this).
+# it does not append. Exporting `RUSTFLAGS="--cfg tokio_unstable"` would therefore
+# silently drop `-Ctarget-feature=+aes,+neon` and `--cfg=aes_armv8` on
+# aarch64-apple-darwin. Since this file already supplies `--cfg tokio_unstable`
+# unconditionally, do NOT set `RUSTFLAGS` for builds here.
 [build]
 rustflags = ["--cfg", "tokio_unstable", "--check-cfg", "cfg(tokio_unstable)"]
 

@@ -99,10 +99,10 @@ library modules.
 
 ## Testing
 
-Unit tests:
+Unit tests (lib `#[cfg(test)]` modules + `tests/mixer_config.rs`):
 
 ```bash
-nix develop -c cargo nextest run --lib
+nix develop -c cargo nextest run
 ```
 
 Full check suite (clippy, rustdoc, audit, licenses, tests) via Nix:
@@ -117,147 +117,22 @@ Coverage (lcov at `coverage.lcov`):
 nix run .#coverage-unit
 ```
 
-### Tests excluded from CI (`#[ignore]` / feature-gated)
+### Integration & throughput tests
 
-Some integration tests are **not** part of `cargo nextest run --lib` or
-`nix flake check`: they need external binaries, a container runtime, a funded
-testnet identity, or a non-default build profile. They are marked `#[ignore]`
-(and some are additionally gated behind a Cargo feature), so a normal test run
-skips them and CI never invokes them. Run them explicitly with `--ignored`.
+Full-stack integration lives in
+**[`hoprnet/hoprd-test`](https://github.com/hoprnet/hoprd-test)**, which
+consumes `edgli` as a library and runs it against a real network. That repo
+owns:
 
-To list what exists without running anything:
+- **Local-cluster session throughput** (0-hop / 1-hop over a
+  `hoprd-localcluster`),
+- **Rotsee public-testnet** sessions (funded Gnosis identity via
+  `EDGLI_ROTSEE_*`), and
+- **executor-yield profiling** (tokio-console + Perfetto traces).
 
-```bash
-# every ignored test EXCEPT the feature-gated profiling ones, with its module path
-cargo test --no-default-features --features runtime-tokio,blokli \
-  --tests -- --ignored --list
-
-# the profiling tests are gated behind the `prof` feature, so list them separately
-# (`.cargo/config.toml` supplies `--cfg tokio_unstable`; do not export RUSTFLAGS)
-cargo test --no-default-features --features runtime-tokio,blokli,prof \
-  --test edgli_profiling -- --ignored --list
-```
-
-| Test file                       | Test(s)                                     | What it needs                                 |
-| ------------------------------- | ------------------------------------------- | --------------------------------------------- |
-| `tests/edgli_session_e2e.rs`    | `edgli_sends_payload_through_local_cluster` | `hoprd*` binaries + container runtime         |
-| `tests/edgli_session_rotsee.rs` | `edgli_sends_payload_through_rotsee`        | funded Rotsee identity (`EDGLI_ROTSEE_*` env) |
-| `tests/edgli_profiling.rs`      | 3 executor-yield profiling tests            | `--features prof` + `--cfg tokio_unstable`    |
-
-The authoritative setup for each lives in the module docs at the top of the
-corresponding test file; the summaries below are the fast path.
-
-#### 1. Local-cluster session throughput (`edgli_session_e2e.rs`)
-
-Spins up a real 3-node HOPR cluster via `hoprd-localcluster`, boots Edgli
-against it, and pumps a 20 MiB payload through 0-hop and 1-hop sessions
-(measuring throughput and packet loss, verifying SHA-256 integrity).
-
-Prerequisites:
-
-- `hoprd` and `hoprd-localcluster` binaries, built from the
-  [`hoprnet/hoprd`](https://github.com/hoprnet/hoprd) repo:
-  ```bash
-  cargo build --release -p hoprd -p hoprd-localcluster
-  ```
-- A container runtime for the chain image. On macOS use Apple's native
-  `container` (`container system start`); elsewhere Docker/Podman.
-- The `bloklid-anvil` chain image pulled (see below).
-
-Run (managed mode — the test starts and tears down its own cluster):
-
-```bash
-export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd/target/release/hoprd-localcluster
-export HOPRD_BIN=/path/to/hoprd/target/release/hoprd
-# Use the `latest` tag — the tag pinned in hoprd's docker-compose can lag the contract
-# schema the hoprd binaries expect (fails with `missing field 'xhopr_token'`).
-export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil:latest'
-export HOPRD_CONTAINER_RUNTIME=container   # macOS Apple runtime; default is docker
-
-# `--release` is required: HOPR's async future chains overflow the default debug stack.
-RUST_LOG=info,edgli=debug \
-  cargo test --test edgli_session_e2e --release -- --ignored --nocapture
-```
-
-The run reports, per hop count:
-
-```text
-0-hop: send … KiB/s | recv … KiB/s | loss …% (bytes)
-1-hop: send … KiB/s | recv … KiB/s | loss …% (bytes)
-```
-
-See the module docs at the top of `tests/edgli_session_e2e.rs` for the full
-env-var table and the "external mode" (attach to an already-running cluster)
-variant.
-
-#### 2. Rotsee public-testnet session (`edgli_session_rotsee.rs`)
-
-Same pump/verify flow as the local-cluster test, but against the **Rotsee**
-public testnet instead of a managed cluster. Needs a HOPR identity that is
-already funded and registered with a Safe + HOPR module on Gnosis Chain — there
-is no cluster to boot, so all configuration comes from `EDGLI_ROTSEE_*` env
-vars:
-
-```bash
-export EDGLI_ROTSEE_BLOKLI_URL=https://blokli.rotsee.gnosisvpn.io
-export EDGLI_ROTSEE_IDENTITY_FILE=/path/to/identity.json
-# Read the identity password interactively so it never lands in shell history.
-read -rsp 'Rotsee identity password: ' EDGLI_ROTSEE_IDENTITY_PASSWORD
-printf '\n'
-export EDGLI_ROTSEE_IDENTITY_PASSWORD
-export EDGLI_ROTSEE_SAFE_ADDRESS=0x...
-export EDGLI_ROTSEE_MODULE_ADDRESS=0x...
-
-# --release is required for the same stack-depth reason as above.
-RUST_LOG=info,edgli=debug \
-  cargo test --test edgli_session_rotsee --release -- --ignored --nocapture
-```
-
-#### 3. Executor-yield profiling (`edgli_profiling.rs`)
-
-Runs the session pump under a `tokio-console` + `tracing-chrome` subscriber to
-capture executor-starvation traces (a fast writer monopolising a worker thread
-and starving the SURB balancer). These tests are **doubly gated**: `#[ignore]`
-_and_ `#[cfg(feature = "prof")]`, and they only see tokio's task spans when
-built with `--cfg tokio_unstable` under the `tracer` profile (which re-enables
-the TRACE callsites `hopr-lib`'s `release_max_level_debug` would otherwise
-compile out). They reuse the same local-cluster / Rotsee prerequisites as the
-tests above.
-
-The simplest way to run them is the wrapper script, which wires up the env vars,
-build flags, and result collection:
-
-```bash
-./scripts/profile-executor-yield.sh
-```
-
-Or manually (writes Chrome traces to `$EDGLI_TRACE_DIR`, load them at
-<https://ui.perfetto.dev>):
-
-```bash
-export HOPRD_LOCALCLUSTER_BIN=/path/to/hoprd/target/release/hoprd-localcluster
-export HOPRD_BIN=/path/to/hoprd/target/release/hoprd
-# For reproducible profiling numbers, pin the chain image to an immutable digest
-# (`bloklid-anvil@sha256:<digest>`) rather than `:latest` — a remote `:latest`
-# update can shift throughput without any code change. Resolve the digest of a
-# tag known to match your hoprd binaries with e.g.
-# `docker buildx imagetools inspect <image>:latest`, then substitute it below.
-export HOPRD_CHAIN_IMAGE='europe-west3-docker.pkg.dev/hoprassociation/docker-images/bloklid-anvil@sha256:<pinned-digest>'
-# macOS Apple `container` runtime; on Linux/others use `docker` or `podman`.
-export HOPRD_CONTAINER_RUNTIME=container
-export EDGLI_TRACE_DIR=./profiling-results
-export RUST_LOG=info,edgli=debug,tokio=trace,runtime=trace
-
-# Do NOT export RUSTFLAGS: `.cargo/config.toml` already supplies
-# `--cfg tokio_unstable`, and RUSTFLAGS would *replace* (not append) the target
-# rustflags, silently dropping the aarch64 AES intrinsics (`+aes,+neon`).
-cargo nextest run \
-  --test edgli_profiling --profile tracer --features prof \
-  --run-ignored ignored-only --no-capture --test-threads 1
-```
-
-See the module docs at the top of `tests/edgli_profiling.rs` for what each trace
-should show and why all three build flags are required together.
+This crate keeps only fast, self-contained unit tests (no network, no external
+binaries): the inline `#[cfg(test)]` modules in `src/` and
+`tests/mixer_config.rs`.
 
 ## Architecture
 
@@ -302,8 +177,9 @@ Key inputs handed to `Edgli::new`:
   Pass `--probe-local-addresses` (or `HOPR_EDGE_PROBE_LOCAL_ADDRESSES=true`, or
   the `probe_local_addresses` argument to `Edgli::new`) to probe them (e.g. a
   same-host test cluster).
-- **Profiling.** Build with `cargo build --features prof` and attach
-  `tokio-console`. (`.cargo/config.toml` already supplies
+- **Profiling.** Build with `cargo build --profile tracer --features prof` and
+  attach `tokio-console` (the `tracer` profile keeps TRACE-level task spans
+  compiled in — see `[profile.tracer]`). (`.cargo/config.toml` already supplies
   `--cfg tokio_unstable`; do **not** export `RUSTFLAGS`, as it replaces the
   target rustflags and would drop the aarch64 AES intrinsics.)
 - **Reporting issues.** <https://github.com/hoprnet/edge-client/issues>
