@@ -99,10 +99,10 @@ library modules.
 
 ## Testing
 
-Unit tests:
+Unit tests (lib `#[cfg(test)]` modules + `tests/mixer_config.rs`):
 
 ```bash
-nix develop -c cargo nextest run --lib
+nix develop -c cargo nextest run
 ```
 
 Full check suite (clippy, rustdoc, audit, licenses, tests) via Nix:
@@ -119,15 +119,20 @@ nix run .#coverage-unit
 
 ### Integration & throughput tests
 
-Full-stack integration lives in **[`hoprnet/hoprd-test`](https://github.com/hoprnet/hoprd-test)**,
-which consumes `edgli` as a library and runs it against a real network. That repo owns:
+Full-stack integration lives in
+**[`hoprnet/hoprd-test`](https://github.com/hoprnet/hoprd-test)**, which
+consumes `edgli` as a library and runs it against a real network. That repo
+owns:
 
-- **Local-cluster session throughput** (0-hop / 1-hop over a `hoprd-localcluster`),
-- **Rotsee public-testnet** sessions (funded Gnosis identity via `EDGLI_ROTSEE_*`), and
+- **Local-cluster session throughput** (0-hop / 1-hop over a
+  `hoprd-localcluster`),
+- **Rotsee public-testnet** sessions (funded Gnosis identity via
+  `EDGLI_ROTSEE_*`), and
 - **executor-yield profiling** (tokio-console + Perfetto traces).
 
-This crate keeps only fast, self-contained unit tests (no network, no external binaries):
-the inline `#[cfg(test)]` modules in `src/` and `tests/mixer_config.rs`.
+This crate keeps only fast, self-contained unit tests (no network, no external
+binaries): the inline `#[cfg(test)]` modules in `src/` and
+`tests/mixer_config.rs`.
 
 ## Architecture
 
@@ -172,8 +177,9 @@ Key inputs handed to `Edgli::new`:
   Pass `--probe-local-addresses` (or `HOPR_EDGE_PROBE_LOCAL_ADDRESSES=true`, or
   the `probe_local_addresses` argument to `Edgli::new`) to probe them (e.g. a
   same-host test cluster).
-- **Profiling.** Build with `cargo build --features prof` and attach
-  `tokio-console`. (`.cargo/config.toml` already supplies
+- **Profiling.** Build with `cargo build --profile tracer --features prof` and
+  attach `tokio-console` (the `tracer` profile keeps TRACE-level task spans
+  compiled in — see `[profile.tracer]`). (`.cargo/config.toml` already supplies
   `--cfg tokio_unstable`; do **not** export `RUSTFLAGS`, as it replaces the
   target rustflags and would drop the aarch64 AES intrinsics.)
 - **Reporting issues.** <https://github.com/hoprnet/edge-client/issues>
