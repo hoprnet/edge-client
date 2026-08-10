@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "3.5.0"
+version = "3.5.1"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -15,16 +15,6 @@ license = "GPL-3.0-only"
 [[bin]]
 name = "edgli"
 path = "src/main.rs"
-required-features = ["runtime-tokio", "blokli"]
-
-# The session end-to-end tests exercise the concrete `Edgli` client through the
-# shared harness in tests/common, so they need the same features as the binary.
-[[test]]
-name = "edgli_session_e2e"
-required-features = ["runtime-tokio", "blokli"]
-
-[[test]]
-name = "edgli_session_rotsee"
 required-features = ["runtime-tokio", "blokli"]
 
 [features]
@@ -46,12 +36,11 @@ telemetry = [
 testing = ["hopr-lib/testing"]
 blokli = ["dep:tokio", "dep:url"]
 
-# tokio-console profiling. Build with the `tracer` profile so TRACE-level task
-# spans stay compiled in (see [profile.tracer] below):
-#   RUSTFLAGS="--cfg tokio_unstable" cargo build --profile tracer --features prof
-prof = [
-  "dep:console-subscriber",
-] # must be built with 'tokio_unstable': https://github.com/tokio-rs/console/tree/main/console-subscriber
+# tokio-console profiling of the `edgli` binary (see init_logger in src/main.rs). Build with
+# the `tracer` profile so TRACE-level task spans stay compiled in (see [profile.tracer]):
+#   cargo build --profile tracer --features prof
+# `.cargo/config.toml` already supplies `--cfg tokio_unstable`; do not set RUSTFLAGS.
+prof = ["dep:console-subscriber"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -112,38 +101,24 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+# `testing` provides the blokli test emulator used by the src/blokli.rs unit tests.
 hopr-chain-connector = { version = "0.22.1", features = [
   "runtime-tokio",
   "testing",
 ] }
-tokio = { version = "1.53.1", features = ["full", "process", "tracing"] }
-# Optional flamegraph layer for the session e2e harness (env-gated: FLAME_OUTPUT).
-# `tracing-chrome` (Chrome/Perfetto layer) is already declared below.
-tracing-flame = "0.2.0"
-reqwest = { version = "0.13.4", default-features = false, features = [
-  "rustls",
-  "json",
-] }
-tempfile = "3.27.0"
-sha2 = "0.11.0"
-nix = { version = "0.31.3", features = ["signal"] }
-rand = "0.10.2"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
-tracing-chrome = "0.7.2"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
-test-log = { version = "0.2.21", features = ["trace"] }
+# `full` for the async unit tests in src/ (#[tokio::test], spawn, time, sync).
+tokio = { version = "1.53.1", features = ["full"] }
 
 [build-dependencies]
 anyhow = "1.0.104"
 
-# tokio-console build target. hopr-lib forces `tracing/release_max_level_debug`,
-# which compiles out TRACE callsites (incl. tokio's task instrumentation) in
-# release. That cap only fires under `cfg(not(debug_assertions))`, so turning
-# debug-asserts back on makes it inert and STATIC_MAX_LEVEL falls through to
-# TRACE — tokio-console then sees the task spans. Optimizations stay on (release)
-# so the profiled run reflects real timings. Build with:
-#   RUSTFLAGS="--cfg tokio_unstable" cargo build --profile tracer --features prof
+# tokio-console build target for the `prof` binary. hopr-lib forces
+# `tracing/release_max_level_debug`, which compiles out TRACE callsites (incl. tokio's task
+# instrumentation) in release. That cap only fires under `cfg(not(debug_assertions))`, so
+# turning debug-asserts back on makes it inert and STATIC_MAX_LEVEL falls through to TRACE —
+# tokio-console then sees the task spans. Optimizations stay on (release) so the profiled run
+# reflects real timings. Build with:
+#   cargo build --profile tracer --features prof
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
