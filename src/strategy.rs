@@ -19,6 +19,10 @@ const ASSUMED_HOPS: u32 = 1;
 /// The strategy's own default is a fixed volume that does not track a requested one, so a
 /// larger request would otherwise clear the gate on a Safe that cannot then top the
 /// channel up. Twice covers the channel and its first top-up.
+///
+/// Applied as a floor *alongside* that default, not in place of it: the gate is the larger
+/// of the two, so a small request cannot lower it below what the strategy would have
+/// required on its own.
 const MIN_SAFE_MULTIPLE: u64 = 2;
 
 /// Confidence level the channel stake is sized for.
@@ -94,10 +98,11 @@ pub struct IncentiveConfiguration {
     ///
     /// # Funding is all-or-nothing
     ///
-    /// Raising this also raises the balance below which the node refuses to operate — the
-    /// safe gate tracks it at [`MIN_SAFE_MULTIPLE`]. Under `stop_when_unfunded`, a Safe
-    /// below that gate opens **zero** channels, not smaller ones and not fewer. Size to a
-    /// volume the Safe is funded for; [`minimum_balance_recommendation`] reports it.
+    /// Raising this also raises the balance below which the node refuses to operate. The
+    /// safe gate is the larger of [`MIN_SAFE_MULTIPLE`] × this volume and the strategy's
+    /// own default, so a small request does not lower it. Under `stop_when_unfunded`, a
+    /// Safe below that gate opens **zero** channels, not smaller ones and not fewer — read
+    /// the figure off [`minimum_balance_recommendation`] rather than deriving it here.
     ///
     /// Default: `None` — the strategy's own initial capacity.
     #[default(None)]
