@@ -4109,9 +4109,9 @@ dependencies = [
 
 [[package]]
 name = "hopr-strategy"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86b7849a82fe53e861a4938d1fab94123a16ba55917ff187de358610c07d599a"
+checksum = "ea1f49bc6a2bec90301732e3fbeee65eb3e67f82341b657e865adf51f0f6a024"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4121,7 +4121,7 @@ dependencies = [
  "futures-concurrency",
  "futures-time",
  "hopr-api",
- "hopr-utilities 0.4.1",
+ "hopr-utilities 0.5.1",
  "humantime-serde",
  "lazy_static",
  "moka",
@@ -4373,13 +4373,15 @@ dependencies = [
 
 [[package]]
 name = "hopr-utilities"
-version = "0.4.1"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95680cead4b551cdeb76b016e99197f17b3528e790d1b37a7978b8e38e5f36b7"
+checksum = "c3fb9c92de05424fd684bc1a0ac2f7df91ec2b6958f2733b2ff1c830a4390a34"
 dependencies = [
  "auto_impl",
+ "const-hex",
  "futures",
  "indexmap 2.14.0",
+ "serde_json",
  "tokio",
  "tracing",
 ]
