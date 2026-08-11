@@ -46,6 +46,24 @@ const MIN_SAFE_FRACTION: (u64, u64) = (5, 4);
 /// enough headroom to carry the configured capacity in 99% of fund cycles.
 const SIZING_SUCCESS_PROBABILITY: f64 = 0.99;
 
+/// Range `hopr_strategy` accepts for a `Probabilistic` success probability.
+///
+/// Its `validate_sizing_mode` rejects anything outside these bounds, and
+/// `capacity_to_balance` clamps to them. [`capacity_stake`] mirrors that clamp, so the
+/// bounds are repeated here to keep the mirror faithful rather than to validate input —
+/// [`SIZING_SUCCESS_PROBABILITY`] is asserted into the range below, which makes the
+/// clamp a provable no-op instead of something that could silently rewrite a bad value.
+const SIZING_PROBABILITY_BOUNDS: (f64, f64) = (0.5001, 0.99999);
+
+// A `SIZING_SUCCESS_PROBABILITY` outside the accepted range would otherwise be clamped
+// at runtime, silently sizing channels for a confidence nobody asked for. Fail the build
+// instead.
+const _: () = assert!(
+    SIZING_SUCCESS_PROBABILITY >= SIZING_PROBABILITY_BOUNDS.0
+        && SIZING_SUCCESS_PROBABILITY <= SIZING_PROBABILITY_BOUNDS.1,
+    "SIZING_SUCCESS_PROBABILITY must lie within the range hopr-strategy accepts"
+);
+
 /// The mode every capacity in [`compute_funding_config`] resolves through.
 ///
 /// Deliberately *not* exposed on [`IncentiveConfiguration`]: [`capacity_stake`] mirrors
@@ -157,20 +175,22 @@ fn capacity_for_face_values(face_values: u64, win_prob: f64) -> anyhow::Result<B
 /// exact multiple keeps [`capacity_stake`] an exact mirror of that conversion.
 fn packet_aligned(bytes: u64) -> anyhow::Result<ByteSize> {
     let payload = packet_payload_size();
-    let packets = bytes.div_ceil(payload).max(1);
-    let bytes = packets
+    let aligned = bytes
+        .div_ceil(payload)
+        .max(1)
         .checked_mul(payload)
         .ok_or_else(|| anyhow::anyhow!("capacity of {bytes} bytes overflows u64 when aligned"))?;
-    Ok(ByteSize::b(bytes))
+    Ok(ByteSize::b(aligned))
 }
 
 /// `capacity × numer / denom`, rounded up to a whole number of packets.
 fn scale_capacity(capacity: ByteSize, (numer, denom): (u64, u64)) -> anyhow::Result<ByteSize> {
-    let scaled = (capacity.as_u64() as u128) * (numer as u128) / (denom as u128);
-    packet_aligned(
-        u64::try_from(scaled)
-            .map_err(|_| anyhow::anyhow!("scaled capacity overflows u64 bytes"))?,
-    )
+    // u128 keeps the product exact; only the result has to fit back into a byte count.
+    let scaled = u128::from(capacity.as_u64()) * u128::from(numer) / u128::from(denom);
+    let scaled = u64::try_from(scaled).map_err(|_| {
+        anyhow::anyhow!("scaling {capacity} by {numer}/{denom} overflows u64 bytes")
+    })?;
+    packet_aligned(scaled)
 }
 
 /// wxHOPR the strategy locks for a channel funded to `capacity`.
@@ -209,8 +229,8 @@ fn capacity_stake(
             success_probability,
         } => {
             use statrs::distribution::{ContinuousCDF, Normal};
-            let alpha = success_probability.clamp(0.5001, 0.99999);
-            let k = Normal::standard().inverse_cdf(alpha);
+            let (lower, upper) = SIZING_PROBABILITY_BOUNDS;
+            let k = Normal::standard().inverse_cdf(success_probability.clamp(lower, upper));
             // σ[D] = tp·h × √(N(1−p)/p) — see `CapacitySizingMode::Probabilistic`.
             let sigma = price * h * (n * (1.0 - p) / p).sqrt();
             mean_drain + k * sigma
