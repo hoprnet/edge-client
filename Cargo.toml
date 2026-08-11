@@ -56,9 +56,6 @@ multiaddr = "0.18.2"
 lazy_static = "1.5.0"
 signal-hook = "0.4.4"
 serde_yaml = { version = "0.9.34" }
-# Pinned to the version hopr-strategy uses so the z-score `capacity_stake` mirrors
-# comes from the exact code path the strategy sizes channels with.
-statrs = "0.19.0"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = [
@@ -90,7 +87,10 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "10f6d80c3cc71dee
 ] }
 hopr-chain-connector = { version = "0.22.1", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.3.0" }
-hopr-strategy = { version = "0.23.0", features = [
+# TEMPORARY: tracks hoprnet/hopr-strategy#27, which makes `FundingConfig::resolve`
+# public so this crate can read funding figures off the strategy instead of
+# mirroring them. Switch back to a registry version once 0.24.0 is published.
+hopr-strategy = { git = "https://github.com/hoprnet/hopr-strategy", rev = "139b6b2", features = [
   "strategy-channel-lifecycle",
 ] }
 hopr-ticket-manager = { version = "0.5.1" }
