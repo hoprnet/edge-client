@@ -120,6 +120,14 @@ pub struct IncentiveConfiguration {
     /// floored at their face-value minimums, because a channel that cannot cover one
     /// winning ticket cannot relay at all. Requesting less than that floor has no effect.
     ///
+    /// # Funding is all-or-nothing
+    ///
+    /// This also raises the balance below which the node refuses to operate. The strategy
+    /// runs with `stop_when_unfunded`, so a Safe holding less than the derived
+    /// `min_safe_capacity_required` opens **zero** channels — it does not open a smaller
+    /// channel, and it does not open fewer of them. Size this to a volume the Safe is
+    /// actually funded for; [`minimum_balance_recommendation`] reports the figure needed.
+    ///
     /// Default: `None` — size to [`INITIAL_FACE_VALUES`] face values, the smallest
     /// stake that keeps ticket issuance running.
     #[default(None)]
@@ -197,8 +205,13 @@ fn scale_capacity(capacity: ByteSize, (numer, denom): (u64, u64)) -> anyhow::Res
 ///
 /// Mirrors the strategy's crate-private `capacity_to_balance` for [`SIZING_MODE`],
 /// including the one-winning-ticket floor. Kept in lockstep with
-/// [`compute_funding_config`] so a balance recommendation can never under-report the
-/// stake the strategy actually locks.
+/// [`compute_funding_config`] so a balance recommendation cannot drift from the stake the
+/// strategy actually locks.
+///
+/// The mirror is faithful rather than exact: it reproduces the strategy's own `f64`
+/// pipeline step for step, `low_u128()` narrowing and all, so both sides round
+/// identically. Fixing the rounding on this side alone would *introduce* a mismatch —
+/// any change here has to land upstream in the same commit.
 fn capacity_stake(
     capacity: ByteSize,
     ticket_price: HoprBalance,
@@ -529,6 +542,10 @@ pub async fn default_strategy_cfg(
         requested_capacity = ?sizing.channel_capacity,
         initial_capacity = %funding.initial_capacity,
         topup_capacity = %funding.topup_capacity,
+        // The threshold that decides when a top-up fires, and so the first value
+        // to reach for when investigating a channel that stalled mid-relay.
+        lower_capacity_threshold = %funding.lower_capacity_threshold,
+        min_safe_capacity_required = %funding.min_safe_capacity_required,
         sizing_mode = ?funding.sizing_mode,
         "channel-lifecycle funding sized from live winning probability"
     );
@@ -773,14 +790,28 @@ mod tests {
         let initial = cfg.initial_capacity.as_u64();
         assert_eq!(initial, requested.as_u64().div_ceil(payload) * payload);
 
-        // Within one packet of the exact fraction (the alignment rounds up).
+        // Within one packet of the exact fraction (the alignment rounds up). `abs_diff`
+        // rather than plain subtraction: a downward drift would underflow and abort with
+        // an arithmetic panic naming neither value, hiding the regression this guards.
         let expect =
             |(numer, denom): (u64, u64)| ((initial as u128) * numer as u128 / denom as u128) as u64;
-        assert!(cfg.topup_capacity.as_u64() - expect(TOPUP_FRACTION) < payload);
-        assert!(cfg.lower_capacity_threshold.as_u64() - expect(LOWER_THRESHOLD_FRACTION) < payload);
-        assert!(
-            cfg.min_safe_capacity_required.as_u64() - expect(MIN_SAFE_FRACTION) < payload,
-            "min_safe must be a quarter above the initial capacity"
+        let within_a_packet = |label: &str, actual: u64, fraction: (u64, u64)| {
+            let expected = expect(fraction);
+            assert!(
+                actual.abs_diff(expected) < payload,
+                "{label}: {actual} is more than one packet ({payload} B) from {expected}"
+            );
+        };
+        within_a_packet("topup", cfg.topup_capacity.as_u64(), TOPUP_FRACTION);
+        within_a_packet(
+            "lower threshold",
+            cfg.lower_capacity_threshold.as_u64(),
+            LOWER_THRESHOLD_FRACTION,
+        );
+        within_a_packet(
+            "min safe",
+            cfg.min_safe_capacity_required.as_u64(),
+            MIN_SAFE_FRACTION,
         );
 
         assert!(cfg.lower_capacity_threshold < cfg.topup_capacity);
