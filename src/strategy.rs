@@ -24,6 +24,18 @@ const TOPUP_FACE_VALUES: u64 = 4;
 /// tickets keep being issued while the top-up confirms.
 const LOWER_THRESHOLD_FACE_VALUES: u64 = 2;
 
+/// Top-up capacity as a fraction of the initial capacity: half the channel back.
+const TOPUP_FRACTION: (u64, u64) = (1, 2);
+
+/// Lower threshold as a fraction of the initial capacity. A top-up fires once the
+/// channel has spent three quarters of what it was funded with.
+const LOWER_THRESHOLD_FRACTION: (u64, u64) = (1, 4);
+
+/// Safe balance required before a channel is opened, as a fraction of the initial
+/// capacity. Always a quarter above it, so a freshly opened channel still has room
+/// in the Safe for its first top-up rather than stranding on the funding gate.
+const MIN_SAFE_FRACTION: (u64, u64) = (5, 4);
+
 /// Confidence level the channel stake is sized for.
 ///
 /// [`CapacitySizingMode::Deterministic`] sizes a channel to the *mean* drain, so its
@@ -82,13 +94,13 @@ pub struct IncentiveConfiguration {
     /// Data volume a single channel should be able to carry before it needs a top-up.
     ///
     /// This is the only sizing input a caller supplies — the funding capacities, the
-    /// sizing mode, and the resulting stakes are all derived from it. Top-up and
-    /// lower-threshold capacities keep the same proportions to the requested volume
-    /// that the face-value defaults use (`4/5` and `2/5`).
+    /// sizing mode, and the resulting stakes are all derived from it. The top-up
+    /// capacity is half this volume and the lower threshold a quarter of it, while the
+    /// Safe balance required to open a channel sits a quarter above it.
     ///
-    /// Raising the volume only ever raises a capacity: every field stays floored at its
-    /// face-value minimum, because a channel that cannot cover one winning ticket
-    /// cannot relay at all. Requesting less than that floor therefore has no effect.
+    /// Raising the volume only ever raises a capacity: top-up and lower threshold stay
+    /// floored at their face-value minimums, because a channel that cannot cover one
+    /// winning ticket cannot relay at all. Requesting less than that floor has no effect.
     ///
     /// Default: `None` — size to [`INITIAL_FACE_VALUES`] face values, the smallest
     /// stake that keeps ticket issuance running.
@@ -153,7 +165,7 @@ fn packet_aligned(bytes: u64) -> anyhow::Result<ByteSize> {
 }
 
 /// `capacity × numer / denom`, rounded up to a whole number of packets.
-fn scale_capacity(capacity: ByteSize, numer: u64, denom: u64) -> anyhow::Result<ByteSize> {
+fn scale_capacity(capacity: ByteSize, (numer, denom): (u64, u64)) -> anyhow::Result<ByteSize> {
     let scaled = (capacity.as_u64() as u128) * (numer as u128) / (denom as u128);
     packet_aligned(
         u64::try_from(scaled)
@@ -215,10 +227,14 @@ fn capacity_stake(
 /// probability.
 ///
 /// `channel_capacity` is the data volume one channel should carry before needing a
-/// top-up; `None` sizes it to [`INITIAL_FACE_VALUES`] ticket face values. Top-up and
-/// lower-threshold capacities keep the `4/5` and `2/5` proportions of the initial
-/// capacity, and every field is floored at its face-value minimum — below one face
-/// value no ticket can be issued at all.
+/// top-up; `None` sizes it to [`INITIAL_FACE_VALUES`] ticket face values. The remaining
+/// capacities are fractions of that initial capacity — [`TOPUP_FRACTION`] and
+/// [`LOWER_THRESHOLD_FRACTION`] — with [`MIN_SAFE_FRACTION`] always a quarter above it.
+///
+/// Top-up and lower threshold are additionally floored at their face-value minimums:
+/// below one face value no ticket can be issued at all. At the default sizing those
+/// floors dominate the fractions, so requesting no volume reproduces the previous
+/// `5 / 4 / 2` face-value capacities exactly.
 ///
 /// All capacities resolve through [`SIZING_MODE`], which [`capacity_stake`] mirrors.
 pub fn compute_funding_config(
@@ -229,47 +245,40 @@ pub fn compute_funding_config(
     let face_topup = capacity_for_face_values(TOPUP_FACE_VALUES, win_prob)?;
     let face_lower = capacity_for_face_values(LOWER_THRESHOLD_FACE_VALUES, win_prob)?;
 
-    // With no requested volume the face-value capacities are used verbatim; scaling
-    // them instead would round differently and shift the long-standing defaults.
-    let (initial_capacity, topup_capacity, lower_capacity_threshold) = match channel_capacity {
-        None => (face_initial, face_topup, face_lower),
-        Some(requested) => {
-            let initial = packet_aligned(requested.as_u64())?.max(face_initial);
-            let topup =
-                scale_capacity(initial, TOPUP_FACE_VALUES, INITIAL_FACE_VALUES)?.max(face_topup);
-            let lower = scale_capacity(initial, LOWER_THRESHOLD_FACE_VALUES, INITIAL_FACE_VALUES)?
-                .max(face_lower);
-            (initial, topup, lower)
-        }
+    let initial_capacity = match channel_capacity {
+        None => face_initial,
+        Some(requested) => packet_aligned(requested.as_u64())?.max(face_initial),
     };
 
     Ok(FundingConfig {
         initial_capacity,
-        topup_capacity,
-        lower_capacity_threshold,
-        min_safe_capacity_required: initial_capacity,
+        topup_capacity: scale_capacity(initial_capacity, TOPUP_FRACTION)?.max(face_topup),
+        lower_capacity_threshold: scale_capacity(initial_capacity, LOWER_THRESHOLD_FRACTION)?
+            .max(face_lower),
+        min_safe_capacity_required: scale_capacity(initial_capacity, MIN_SAFE_FRACTION)?,
         assumed_hops: ASSUMED_HOPS,
         stop_when_unfunded: true,
         sizing_mode: SIZING_MODE,
     })
 }
 
-/// wxHOPR a single new channel's initial stake locks.
+/// wxHOPR the Safe must hold to fund `missing_channels` new channels.
 ///
-/// Read off [`compute_funding_config`] so the recommendation cannot drift from
-/// what the strategy locks.
-fn initial_channel_stake(
+/// Read off [`compute_funding_config`] so the recommendation cannot drift from what
+/// the strategy locks. `stop_when_unfunded` blocks every open while the Safe holds
+/// less than `min_safe_capacity_required`, so the recommendation is raised to that
+/// gate — otherwise a node funded to exactly `missing × initial` would sit at the
+/// threshold and never open its first channel.
+fn channel_stakes(
     ticket_price: HoprBalance,
     win_prob: f64,
     channel_capacity: Option<ByteSize>,
+    missing_channels: usize,
 ) -> anyhow::Result<HoprBalance> {
     let funding = compute_funding_config(channel_capacity, win_prob)?;
-    Ok(capacity_stake(
-        funding.initial_capacity,
-        ticket_price,
-        funding.assumed_hops,
-        win_prob,
-    ))
+    let stake = |capacity| capacity_stake(capacity, ticket_price, funding.assumed_hops, win_prob);
+    let total = stake(funding.initial_capacity) * (missing_channels as u64);
+    Ok(total.max(stake(funding.min_safe_capacity_required)))
 }
 
 /// One-time costs still owed before this node can be fully up and running,
@@ -364,7 +373,7 @@ pub(crate) fn compute_balance_recommendation(
     let stake = if missing_channels == 0 {
         HoprBalance::zero()
     } else {
-        initial_channel_stake(ticket_price, win_prob, channel_capacity)? * (missing_channels as u64)
+        channel_stakes(ticket_price, win_prob, channel_capacity, missing_channels)?
     };
     Ok(BalanceRecommendation {
         channel_stakes: stake,
@@ -567,23 +576,26 @@ mod tests {
             cfg.initial_capacity.as_u64(),
             (INITIAL_FACE_VALUES as f64 / 0.001).ceil() as u64 * payload
         );
-        assert_eq!(cfg.min_safe_capacity_required, cfg.initial_capacity);
+        assert_eq!(
+            cfg.min_safe_capacity_required,
+            scale_capacity(cfg.initial_capacity, MIN_SAFE_FRACTION).unwrap()
+        );
         assert_eq!(cfg.assumed_hops, ASSUMED_HOPS);
         assert!(cfg.stop_when_unfunded);
     }
 
     #[test]
     fn compute_funding_config_proportional_fields() {
-        // Verify lower < topup < initial and min_safe == initial at every win_prob;
-        // the per-field ceil could otherwise invert the ordering.
+        // Verify lower < topup < initial < min_safe at every win_prob; the per-field
+        // ceil could otherwise invert the ordering.
         for p in WIN_PROBS {
             let cfg = compute_funding_config(None, p).unwrap();
-            assert_eq!(
-                cfg.min_safe_capacity_required, cfg.initial_capacity,
-                "p={p}"
-            );
             assert!(cfg.lower_capacity_threshold < cfg.topup_capacity, "p={p}");
             assert!(cfg.topup_capacity < cfg.initial_capacity, "p={p}");
+            assert!(
+                cfg.min_safe_capacity_required > cfg.initial_capacity,
+                "p={p}: the Safe gate must sit above one channel's initial capacity"
+            );
         }
     }
 
@@ -731,22 +743,29 @@ mod tests {
 
     #[test]
     fn channel_capacity_sizes_initial_and_keeps_proportions() {
-        // A requested volume drives the initial capacity; top-up and lower threshold
-        // keep the 4/5 and 2/5 proportions, each rounded up to a whole packet.
+        // A requested volume drives the initial capacity; the rest are fractions of it —
+        // half for the top-up, a quarter for the threshold, and a quarter *above* for the
+        // Safe gate. Each is rounded up to a whole packet.
         let payload = packet_payload_size();
         let requested = ByteSize::mb(100);
         let cfg = compute_funding_config(Some(requested), 1.0).unwrap();
 
         let initial = cfg.initial_capacity.as_u64();
         assert_eq!(initial, requested.as_u64().div_ceil(payload) * payload);
-        assert_eq!(cfg.min_safe_capacity_required, cfg.initial_capacity);
 
-        // Within one packet of the exact proportion (the alignment rounds up).
-        let expect = |numer: u64| ((initial as u128) * numer as u128 / 5u128) as u64;
-        assert!(cfg.topup_capacity.as_u64() - expect(4) < payload);
-        assert!(cfg.lower_capacity_threshold.as_u64() - expect(2) < payload);
+        // Within one packet of the exact fraction (the alignment rounds up).
+        let expect =
+            |(numer, denom): (u64, u64)| ((initial as u128) * numer as u128 / denom as u128) as u64;
+        assert!(cfg.topup_capacity.as_u64() - expect(TOPUP_FRACTION) < payload);
+        assert!(cfg.lower_capacity_threshold.as_u64() - expect(LOWER_THRESHOLD_FRACTION) < payload);
+        assert!(
+            cfg.min_safe_capacity_required.as_u64() - expect(MIN_SAFE_FRACTION) < payload,
+            "min_safe must be a quarter above the initial capacity"
+        );
+
         assert!(cfg.lower_capacity_threshold < cfg.topup_capacity);
         assert!(cfg.topup_capacity < cfg.initial_capacity);
+        assert!(cfg.initial_capacity < cfg.min_safe_capacity_required);
     }
 
     #[test]
@@ -791,7 +810,9 @@ mod tests {
         let price = HoprBalance::new_base(10);
         for p in [1.0, 0.01, 0.001] {
             let cfg = compute_funding_config(Some(ByteSize::mb(50)), p).unwrap();
-            let expected = capacity_stake(cfg.initial_capacity, price, cfg.assumed_hops, p);
+            // One channel: the Safe gate dominates `1 × initial`.
+            let expected =
+                capacity_stake(cfg.min_safe_capacity_required, price, cfg.assumed_hops, p);
             let rec = compute_balance_recommendation(
                 price,
                 p,
@@ -848,19 +869,24 @@ mod tests {
 
     #[test]
     fn balance_recommendation_matches_strategy_initial_stake() {
-        // The recommendation must equal what the strategy locks, never less.
+        // The recommendation must equal what the strategy locks, never less: `missing ×
+        // initial`, raised to the Safe gate when a single channel would fall under it.
         for price in [HoprBalance::new_base(10), HoprBalance::from(100u32)] {
             for p in [1.0, 0.01, 0.001] {
                 let cfg = compute_funding_config(None, p).unwrap();
-                let expected = capacity_stake(cfg.initial_capacity, price, ASSUMED_HOPS, p);
+                let per_channel = capacity_stake(cfg.initial_capacity, price, ASSUMED_HOPS, p);
+                let min_safe =
+                    capacity_stake(cfg.min_safe_capacity_required, price, ASSUMED_HOPS, p);
+
                 let one =
                     compute_balance_recommendation(price, p, 1, no_startup_costs(), None).unwrap();
-                assert_eq!(one.channel_stakes, expected, "price={price}, p={p}");
+                assert_eq!(one.channel_stakes, min_safe, "price={price}, p={p}");
+
                 let eight =
                     compute_balance_recommendation(price, p, 8, no_startup_costs(), None).unwrap();
                 assert_eq!(
                     eight.channel_stakes,
-                    expected * 8u64,
+                    per_channel * 8u64,
                     "price={price}, p={p}"
                 );
             }
