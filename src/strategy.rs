@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use bytesize::ByteSize;
 use hopr_lib::api::types::primitive::prelude::{
-    Address, HoprBalance, UnitaryFloatOps as _, XDaiBalance,
+    Address, HoprBalance, U256, UnitaryFloatOps as _, XDaiBalance,
 };
 pub use hopr_strategy::channel_lifecycle::{
     CapacitySizingMode, ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig,
@@ -23,6 +23,26 @@ const TOPUP_FACE_VALUES: u64 = 4;
 /// Face values the balance may decay to before a top-up triggers. Above one so
 /// tickets keep being issued while the top-up confirms.
 const LOWER_THRESHOLD_FACE_VALUES: u64 = 2;
+
+/// Confidence level the channel stake is sized for.
+///
+/// [`CapacitySizingMode::Deterministic`] sizes a channel to the *mean* drain, so its
+/// lower threshold bottoms out near a single ticket face value. Payouts are lumpy —
+/// the number of winning tickets is `Binomial(N, win_prob)` — so a channel resting on
+/// that floor starves: it cannot issue the next ticket and relaying stalls until a
+/// top-up confirms. Sizing for 99% adds `k·σ` (`k = Φ⁻¹(0.99) ≈ 2.33`) above the mean,
+/// enough headroom to carry the configured capacity in 99% of fund cycles.
+const SIZING_SUCCESS_PROBABILITY: f64 = 0.99;
+
+/// The mode every capacity in [`compute_funding_config`] resolves through.
+///
+/// Deliberately *not* exposed on [`IncentiveConfiguration`]: [`capacity_stake`] mirrors
+/// this exact mode to derive balance recommendations, so a caller overriding it on the
+/// returned [`FundingConfig`] would silently desync the recommendation from the stake
+/// the strategy actually locks.
+const SIZING_MODE: CapacitySizingMode = CapacitySizingMode::Probabilistic {
+    success_probability: SIZING_SUCCESS_PROBABILITY,
+};
 
 #[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
 use hopr_lib::api::chain::{AccountSelector, ChainReadAccountOperations, ChainValues};
@@ -58,6 +78,22 @@ pub struct IncentiveConfiguration {
     /// ensure channels exist to the required relayers. Default: `None` (open to any peer).
     #[default(None)]
     pub channel_allowlist: Option<HashSet<Address>>,
+
+    /// Data volume a single channel should be able to carry before it needs a top-up.
+    ///
+    /// This is the only sizing input a caller supplies — the funding capacities, the
+    /// sizing mode, and the resulting stakes are all derived from it. Top-up and
+    /// lower-threshold capacities keep the same proportions to the requested volume
+    /// that the face-value defaults use (`4/5` and `2/5`).
+    ///
+    /// Raising the volume only ever raises a capacity: every field stays floored at its
+    /// face-value minimum, because a channel that cannot cover one winning ticket
+    /// cannot relay at all. Requesting less than that floor therefore has no effect.
+    ///
+    /// Default: `None` — size to [`INITIAL_FACE_VALUES`] face values, the smallest
+    /// stake that keeps ticket issuance running.
+    #[default(None)]
+    pub channel_capacity: Option<ByteSize>,
 }
 
 impl IncentiveConfiguration {
@@ -103,31 +139,118 @@ fn capacity_for_face_values(face_values: u64, win_prob: f64) -> anyhow::Result<B
     Ok(ByteSize::b(bytes))
 }
 
-/// wxHOPR the strategy locks for a channel funded to `capacity`.
+/// Rounds `bytes` up to a whole number of packets.
 ///
-/// Mirrors the strategy's crate-private `capacity_to_balance` for
-/// [`CapacitySizingMode::Deterministic`]; an upper bound for the other modes.
-fn capacity_stake(capacity: ByteSize, ticket_price: HoprBalance, hops: u32) -> HoprBalance {
-    let packets = capacity.as_u64().div_ceil(packet_payload_size());
-    ticket_price * packets * hops as u64
+/// The strategy divides every capacity by the packet payload and rounds up, so an
+/// exact multiple keeps [`capacity_stake`] an exact mirror of that conversion.
+fn packet_aligned(bytes: u64) -> anyhow::Result<ByteSize> {
+    let payload = packet_payload_size();
+    let packets = bytes.div_ceil(payload).max(1);
+    let bytes = packets
+        .checked_mul(payload)
+        .ok_or_else(|| anyhow::anyhow!("capacity of {bytes} bytes overflows u64 when aligned"))?;
+    Ok(ByteSize::b(bytes))
 }
 
-/// Capacity-based [`FundingConfig`] for the given winning probability.
+/// `capacity × numer / denom`, rounded up to a whole number of packets.
+fn scale_capacity(capacity: ByteSize, numer: u64, denom: u64) -> anyhow::Result<ByteSize> {
+    let scaled = (capacity.as_u64() as u128) * (numer as u128) / (denom as u128);
+    packet_aligned(
+        u64::try_from(scaled)
+            .map_err(|_| anyhow::anyhow!("scaled capacity overflows u64 bytes"))?,
+    )
+}
+
+/// wxHOPR the strategy locks for a channel funded to `capacity`.
 ///
-/// Each capacity is sized so the stake the strategy resolves it to covers a fixed
-/// number of ticket face values; below one face value no ticket can be issued.
-/// [`CapacitySizingMode::Deterministic`] is the expected-drain model here, and the
-/// only mode this crate can mirror exactly for balance recommendations.
-pub fn compute_funding_config(win_prob: f64) -> anyhow::Result<FundingConfig> {
-    let initial_capacity = capacity_for_face_values(INITIAL_FACE_VALUES, win_prob)?;
+/// Mirrors the strategy's crate-private `capacity_to_balance` for [`SIZING_MODE`],
+/// including the one-winning-ticket floor. Kept in lockstep with
+/// [`compute_funding_config`] so a balance recommendation can never under-report the
+/// stake the strategy actually locks.
+fn capacity_stake(
+    capacity: ByteSize,
+    ticket_price: HoprBalance,
+    hops: u32,
+    win_prob: f64,
+) -> HoprBalance {
+    let bytes = capacity.as_u64();
+    if bytes == 0 {
+        return HoprBalance::zero();
+    }
+
+    let n = bytes.div_ceil(packet_payload_size()) as f64;
+    // Same clamp the strategy applies: a zero or NaN win_prob would send the
+    // one-ticket floor to infinity and saturate the stake.
+    let p = if win_prob.is_nan() {
+        f64::EPSILON
+    } else {
+        win_prob.clamp(f64::EPSILON, 1.0_f64)
+    };
+    let h = hops as f64;
+    let price = ticket_price.amount().low_u128() as f64;
+
+    // Mean drain E[D] = N × h × tp, independent of p.
+    let mean_drain = n * h * price;
+    let target = match SIZING_MODE {
+        CapacitySizingMode::Deterministic => mean_drain,
+        CapacitySizingMode::Probabilistic {
+            success_probability,
+        } => {
+            use statrs::distribution::{ContinuousCDF, Normal};
+            let alpha = success_probability.clamp(0.5001, 0.99999);
+            let k = Normal::standard().inverse_cdf(alpha);
+            // σ[D] = tp·h × √(N(1−p)/p) — see `CapacitySizingMode::Probabilistic`.
+            let sigma = price * h * (n * (1.0 - p) / p).sqrt();
+            mean_drain + k * sigma
+        }
+    };
+
+    // One-winning-ticket floor: below a full-path face value no ticket can issue.
+    let floor = price * h / p;
+    let stake = target.max(floor).max(0.0);
+    HoprBalance::from(U256::from(stake.ceil() as u128))
+}
+
+/// Capacity-based [`FundingConfig`] for a requested transfer volume and winning
+/// probability.
+///
+/// `channel_capacity` is the data volume one channel should carry before needing a
+/// top-up; `None` sizes it to [`INITIAL_FACE_VALUES`] ticket face values. Top-up and
+/// lower-threshold capacities keep the `4/5` and `2/5` proportions of the initial
+/// capacity, and every field is floored at its face-value minimum — below one face
+/// value no ticket can be issued at all.
+///
+/// All capacities resolve through [`SIZING_MODE`], which [`capacity_stake`] mirrors.
+pub fn compute_funding_config(
+    channel_capacity: Option<ByteSize>,
+    win_prob: f64,
+) -> anyhow::Result<FundingConfig> {
+    let face_initial = capacity_for_face_values(INITIAL_FACE_VALUES, win_prob)?;
+    let face_topup = capacity_for_face_values(TOPUP_FACE_VALUES, win_prob)?;
+    let face_lower = capacity_for_face_values(LOWER_THRESHOLD_FACE_VALUES, win_prob)?;
+
+    // With no requested volume the face-value capacities are used verbatim; scaling
+    // them instead would round differently and shift the long-standing defaults.
+    let (initial_capacity, topup_capacity, lower_capacity_threshold) = match channel_capacity {
+        None => (face_initial, face_topup, face_lower),
+        Some(requested) => {
+            let initial = packet_aligned(requested.as_u64())?.max(face_initial);
+            let topup =
+                scale_capacity(initial, TOPUP_FACE_VALUES, INITIAL_FACE_VALUES)?.max(face_topup);
+            let lower = scale_capacity(initial, LOWER_THRESHOLD_FACE_VALUES, INITIAL_FACE_VALUES)?
+                .max(face_lower);
+            (initial, topup, lower)
+        }
+    };
+
     Ok(FundingConfig {
         initial_capacity,
-        topup_capacity: capacity_for_face_values(TOPUP_FACE_VALUES, win_prob)?,
-        lower_capacity_threshold: capacity_for_face_values(LOWER_THRESHOLD_FACE_VALUES, win_prob)?,
+        topup_capacity,
+        lower_capacity_threshold,
         min_safe_capacity_required: initial_capacity,
         assumed_hops: ASSUMED_HOPS,
         stop_when_unfunded: true,
-        sizing_mode: CapacitySizingMode::Deterministic,
+        sizing_mode: SIZING_MODE,
     })
 }
 
@@ -135,12 +258,17 @@ pub fn compute_funding_config(win_prob: f64) -> anyhow::Result<FundingConfig> {
 ///
 /// Read off [`compute_funding_config`] so the recommendation cannot drift from
 /// what the strategy locks.
-fn initial_channel_stake(ticket_price: HoprBalance, win_prob: f64) -> anyhow::Result<HoprBalance> {
-    let funding = compute_funding_config(win_prob)?;
+fn initial_channel_stake(
+    ticket_price: HoprBalance,
+    win_prob: f64,
+    channel_capacity: Option<ByteSize>,
+) -> anyhow::Result<HoprBalance> {
+    let funding = compute_funding_config(channel_capacity, win_prob)?;
     Ok(capacity_stake(
         funding.initial_capacity,
         ticket_price,
         funding.assumed_hops,
+        win_prob,
     ))
 }
 
@@ -231,11 +359,12 @@ pub(crate) fn compute_balance_recommendation(
     win_prob: f64,
     missing_channels: usize,
     costs: StartupCosts,
+    channel_capacity: Option<ByteSize>,
 ) -> anyhow::Result<BalanceRecommendation> {
     let stake = if missing_channels == 0 {
         HoprBalance::zero()
     } else {
-        initial_channel_stake(ticket_price, win_prob)? * (missing_channels as u64)
+        initial_channel_stake(ticket_price, win_prob, channel_capacity)? * (missing_channels as u64)
     };
     Ok(BalanceRecommendation {
         channel_stakes: stake,
@@ -344,6 +473,7 @@ pub async fn minimum_balance_recommendation(
         win_prob,
         cfg.target_open_channels,
         costs,
+        cfg.channel_capacity,
     )
 }
 
@@ -364,11 +494,13 @@ pub async fn default_strategy_cfg(
         .minimum_incoming_ticket_win_prob()
         .await?
         .as_f64();
-    let funding = compute_funding_config(win_prob)?;
+    let funding = compute_funding_config(sizing.channel_capacity, win_prob)?;
     tracing::info!(
         win_prob,
+        requested_capacity = ?sizing.channel_capacity,
         initial_capacity = %funding.initial_capacity,
         topup_capacity = %funding.topup_capacity,
+        sizing_mode = ?funding.sizing_mode,
         "channel-lifecycle funding sized from live winning probability"
     );
     let cfg = ChannelLifecycleConfig {
@@ -429,7 +561,7 @@ mod tests {
 
     #[test]
     fn compute_funding_config_capacity_is_a_whole_number_of_packets() {
-        let cfg = compute_funding_config(0.001).unwrap();
+        let cfg = compute_funding_config(None, 0.001).unwrap();
         let payload = packet_payload_size();
         assert_eq!(
             cfg.initial_capacity.as_u64(),
@@ -445,7 +577,7 @@ mod tests {
         // Verify lower < topup < initial and min_safe == initial at every win_prob;
         // the per-field ceil could otherwise invert the ordering.
         for p in WIN_PROBS {
-            let cfg = compute_funding_config(p).unwrap();
+            let cfg = compute_funding_config(None, p).unwrap();
             assert_eq!(
                 cfg.min_safe_capacity_required, cfg.initial_capacity,
                 "p={p}"
@@ -461,8 +593,8 @@ mod tests {
         // could fall below the balance needed to issue a ticket before a top-up fires.
         let price = HoprBalance::new_base(10);
         for p in WIN_PROBS {
-            let cfg = compute_funding_config(p).unwrap();
-            let stake = capacity_stake(cfg.lower_capacity_threshold, price, cfg.assumed_hops);
+            let cfg = compute_funding_config(None, p).unwrap();
+            let stake = capacity_stake(cfg.lower_capacity_threshold, price, cfg.assumed_hops, p);
             assert!(
                 covers_face_values(stake, price, p, 1),
                 "p={p}, stake={stake}"
@@ -471,13 +603,18 @@ mod tests {
     }
 
     #[test]
-    fn compute_funding_config_uses_deterministic_sizing() {
-        // `capacity_stake` mirrors `capacity_to_balance` for this mode only; a change
-        // here silently breaks the balance recommendations.
-        let cfg = compute_funding_config(1.0).unwrap();
+    fn compute_funding_config_uses_probabilistic_sizing() {
+        // `capacity_stake` mirrors `capacity_to_balance` for whichever mode is set
+        // here; the two must not drift, or the balance recommendations under-report
+        // what the strategy actually locks.
+        let cfg = compute_funding_config(None, 1.0).unwrap();
         assert!(
-            matches!(cfg.sizing_mode, CapacitySizingMode::Deterministic),
-            "expected Deterministic, got {:?}",
+            matches!(
+                cfg.sizing_mode,
+                CapacitySizingMode::Probabilistic { success_probability }
+                    if success_probability == SIZING_SUCCESS_PROBABILITY
+            ),
+            "expected Probabilistic({SIZING_SUCCESS_PROBABILITY}), got {:?}",
             cfg.sizing_mode
         );
     }
@@ -488,8 +625,8 @@ mod tests {
         // 5 face values; the stake must still cover them at every win_prob.
         let price = HoprBalance::new_base(10);
         for p in WIN_PROBS {
-            let cfg = compute_funding_config(p).unwrap();
-            let stake = capacity_stake(cfg.initial_capacity, price, cfg.assumed_hops);
+            let cfg = compute_funding_config(None, p).unwrap();
+            let stake = capacity_stake(cfg.initial_capacity, price, cfg.assumed_hops, p);
             assert!(
                 covers_face_values(stake, price, p, INITIAL_FACE_VALUES),
                 "p={p}, stake={stake}"
@@ -501,8 +638,8 @@ mod tests {
     fn funding_config_topup_stake_covers_face_values() {
         let price = HoprBalance::new_base(10);
         for p in WIN_PROBS {
-            let cfg = compute_funding_config(p).unwrap();
-            let stake = capacity_stake(cfg.topup_capacity, price, cfg.assumed_hops);
+            let cfg = compute_funding_config(None, p).unwrap();
+            let stake = capacity_stake(cfg.topup_capacity, price, cfg.assumed_hops, p);
             assert!(
                 covers_face_values(stake, price, p, TOPUP_FACE_VALUES),
                 "p={p}, stake={stake}"
@@ -516,7 +653,7 @@ mod tests {
         // exact multiples keep `capacity_stake` an exact mirror of that conversion.
         let payload = packet_payload_size();
         for p in WIN_PROBS {
-            let cfg = compute_funding_config(p).unwrap();
+            let cfg = compute_funding_config(None, p).unwrap();
             for cap in [
                 cfg.initial_capacity,
                 cfg.topup_capacity,
@@ -531,7 +668,7 @@ mod tests {
     #[test]
     fn funding_config_win_prob_one_matches_face_value_counts() {
         // Pins the pre-0.22 economics: 5 / 4 / 2 packets at win_prob = 1.
-        let cfg = compute_funding_config(1.0).unwrap();
+        let cfg = compute_funding_config(None, 1.0).unwrap();
         let payload = packet_payload_size();
         assert_eq!(cfg.initial_capacity.as_u64(), INITIAL_FACE_VALUES * payload);
         assert_eq!(cfg.topup_capacity.as_u64(), TOPUP_FACE_VALUES * payload);
@@ -543,10 +680,10 @@ mod tests {
 
     #[test]
     fn compute_funding_config_rejects_invalid_win_prob() {
-        assert!(compute_funding_config(0.0).is_err());
-        assert!(compute_funding_config(1.1).is_err());
-        assert!(compute_funding_config(f64::NAN).is_err());
-        assert!(compute_funding_config(f64::INFINITY).is_err());
+        assert!(compute_funding_config(None, 0.0).is_err());
+        assert!(compute_funding_config(None, 1.1).is_err());
+        assert!(compute_funding_config(None, f64::NAN).is_err());
+        assert!(compute_funding_config(None, f64::INFINITY).is_err());
     }
 
     #[test]
@@ -555,16 +692,158 @@ mod tests {
         // so 2⁻⁵² is the smallest value the chain can report. Its capacity exceeds
         // `u64::MAX` bytes and must be rejected rather than clamped — clamping makes
         // `lower < topup < initial` false and `min_safe` unfundable.
-        assert!(compute_funding_config(2f64.powi(-52)).is_err());
-        assert!(compute_funding_config(f64::MIN_POSITIVE).is_err());
+        assert!(compute_funding_config(None, 2f64.powi(-52)).is_err());
+        assert!(compute_funding_config(None, f64::MIN_POSITIVE).is_err());
     }
 
     #[test]
     fn compute_funding_config_smallest_usable_win_prob_keeps_ordering() {
         // One encoding step above the rejected value the config is still well formed.
-        let cfg = compute_funding_config(2f64.powi(-51)).unwrap();
+        let cfg = compute_funding_config(None, 2f64.powi(-51)).unwrap();
         assert!(cfg.lower_capacity_threshold < cfg.topup_capacity);
         assert!(cfg.topup_capacity < cfg.initial_capacity);
+    }
+
+    #[test]
+    fn channel_capacity_none_matches_face_value_capacities() {
+        // `None` must reproduce the face-value sizing verbatim: scaling from the initial
+        // capacity instead rounds differently and would silently shift the defaults for
+        // every caller that does not request a volume.
+        for p in WIN_PROBS {
+            let cfg = compute_funding_config(None, p).unwrap();
+            assert_eq!(
+                cfg.initial_capacity,
+                capacity_for_face_values(INITIAL_FACE_VALUES, p).unwrap(),
+                "p={p}"
+            );
+            assert_eq!(
+                cfg.topup_capacity,
+                capacity_for_face_values(TOPUP_FACE_VALUES, p).unwrap(),
+                "p={p}"
+            );
+            assert_eq!(
+                cfg.lower_capacity_threshold,
+                capacity_for_face_values(LOWER_THRESHOLD_FACE_VALUES, p).unwrap(),
+                "p={p}"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_capacity_sizes_initial_and_keeps_proportions() {
+        // A requested volume drives the initial capacity; top-up and lower threshold
+        // keep the 4/5 and 2/5 proportions, each rounded up to a whole packet.
+        let payload = packet_payload_size();
+        let requested = ByteSize::mb(100);
+        let cfg = compute_funding_config(Some(requested), 1.0).unwrap();
+
+        let initial = cfg.initial_capacity.as_u64();
+        assert_eq!(initial, requested.as_u64().div_ceil(payload) * payload);
+        assert_eq!(cfg.min_safe_capacity_required, cfg.initial_capacity);
+
+        // Within one packet of the exact proportion (the alignment rounds up).
+        let expect = |numer: u64| ((initial as u128) * numer as u128 / 5u128) as u64;
+        assert!(cfg.topup_capacity.as_u64() - expect(4) < payload);
+        assert!(cfg.lower_capacity_threshold.as_u64() - expect(2) < payload);
+        assert!(cfg.lower_capacity_threshold < cfg.topup_capacity);
+        assert!(cfg.topup_capacity < cfg.initial_capacity);
+    }
+
+    #[test]
+    fn channel_capacity_below_face_value_floor_is_ignored() {
+        // A channel that cannot cover one winning ticket cannot relay, so a requested
+        // volume under the face-value floor must not shrink the capacities.
+        for p in WIN_PROBS {
+            let floored = compute_funding_config(Some(ByteSize::b(1)), p).unwrap();
+            let default = compute_funding_config(None, p).unwrap();
+            assert_eq!(floored.initial_capacity, default.initial_capacity, "p={p}");
+            assert_eq!(floored.topup_capacity, default.topup_capacity, "p={p}");
+            assert_eq!(
+                floored.lower_capacity_threshold, default.lower_capacity_threshold,
+                "p={p}"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_capacity_keeps_ordering_across_win_probs() {
+        for p in WIN_PROBS {
+            for requested in [ByteSize::kb(1), ByteSize::mb(10), ByteSize::gb(1)] {
+                let cfg = compute_funding_config(Some(requested), p).unwrap();
+                assert!(
+                    cfg.lower_capacity_threshold < cfg.topup_capacity,
+                    "p={p}, requested={requested}"
+                );
+                assert!(
+                    cfg.topup_capacity < cfg.initial_capacity,
+                    "p={p}, requested={requested}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn balance_recommendation_tracks_requested_capacity() {
+        // Regression: the recommendation is derived from the same funding config the
+        // reactor runs on. If it ignored `channel_capacity` it would report the
+        // face-value stake while the strategy locked the requested-volume stake, and a
+        // node funded to the recommendation could never open a channel.
+        let price = HoprBalance::new_base(10);
+        for p in [1.0, 0.01, 0.001] {
+            let cfg = compute_funding_config(Some(ByteSize::mb(50)), p).unwrap();
+            let expected = capacity_stake(cfg.initial_capacity, price, cfg.assumed_hops, p);
+            let rec = compute_balance_recommendation(
+                price,
+                p,
+                1,
+                no_startup_costs(),
+                Some(ByteSize::mb(50)),
+            )
+            .unwrap();
+            assert_eq!(rec.channel_stakes, expected, "p={p}");
+
+            let default =
+                compute_balance_recommendation(price, p, 1, no_startup_costs(), None).unwrap();
+            assert!(
+                rec.channel_stakes > default.channel_stakes,
+                "p={p}: a 50 MB request must cost more than the face-value floor"
+            );
+        }
+    }
+
+    #[test]
+    fn capacity_stake_carries_the_variance_buffer() {
+        // Guards the mirror against silently collapsing back to the mean drain: below
+        // win_prob = 1 the Probabilistic term must add k·σ on top of N × hops × price.
+        let price = HoprBalance::new_base(10);
+        for p in [0.5, 0.1, 0.01, 0.001] {
+            let cfg = compute_funding_config(None, p).unwrap();
+            let packets = cfg.initial_capacity.as_u64() / packet_payload_size();
+            let mean_drain = price * packets * ASSUMED_HOPS as u64;
+            let stake = capacity_stake(cfg.initial_capacity, price, ASSUMED_HOPS, p);
+            assert!(
+                stake > mean_drain,
+                "p={p}: stake {stake} should exceed mean drain {mean_drain}"
+            );
+        }
+    }
+
+    #[test]
+    fn capacity_stake_at_win_prob_one_equals_mean_drain() {
+        // At win_prob = 1 the variance vanishes, so Probabilistic collapses onto
+        // Deterministic and the stake is exactly the mean drain.
+        let price = HoprBalance::new_base(10);
+        let cfg = compute_funding_config(None, 1.0).unwrap();
+        let packets = cfg.initial_capacity.as_u64() / packet_payload_size();
+        assert_eq!(
+            capacity_stake(cfg.initial_capacity, price, ASSUMED_HOPS, 1.0),
+            price * packets * ASSUMED_HOPS as u64
+        );
+    }
+
+    #[test]
+    fn incentive_configuration_default_channel_capacity_is_none() {
+        assert!(IncentiveConfiguration::default().channel_capacity.is_none());
     }
 
     #[test]
@@ -572,12 +851,13 @@ mod tests {
         // The recommendation must equal what the strategy locks, never less.
         for price in [HoprBalance::new_base(10), HoprBalance::from(100u32)] {
             for p in [1.0, 0.01, 0.001] {
-                let cfg = compute_funding_config(p).unwrap();
-                let expected = capacity_stake(cfg.initial_capacity, price, ASSUMED_HOPS);
-                let one = compute_balance_recommendation(price, p, 1, no_startup_costs()).unwrap();
+                let cfg = compute_funding_config(None, p).unwrap();
+                let expected = capacity_stake(cfg.initial_capacity, price, ASSUMED_HOPS, p);
+                let one =
+                    compute_balance_recommendation(price, p, 1, no_startup_costs(), None).unwrap();
                 assert_eq!(one.channel_stakes, expected, "price={price}, p={p}");
                 let eight =
-                    compute_balance_recommendation(price, p, 8, no_startup_costs()).unwrap();
+                    compute_balance_recommendation(price, p, 8, no_startup_costs(), None).unwrap();
                 assert_eq!(
                     eight.channel_stakes,
                     expected * 8u64,
@@ -592,9 +872,11 @@ mod tests {
         // `stop_when_unfunded` blocks every open below min_safe_capacity_required.
         let price = HoprBalance::new_base(10);
         for p in WIN_PROBS {
-            let cfg = compute_funding_config(p).unwrap();
-            let min_safe = capacity_stake(cfg.min_safe_capacity_required, price, cfg.assumed_hops);
-            let rec = compute_balance_recommendation(price, p, 1, no_startup_costs()).unwrap();
+            let cfg = compute_funding_config(None, p).unwrap();
+            let min_safe =
+                capacity_stake(cfg.min_safe_capacity_required, price, cfg.assumed_hops, p);
+            let rec =
+                compute_balance_recommendation(price, p, 1, no_startup_costs(), None).unwrap();
             assert!(rec.channel_stakes >= min_safe, "p={p}");
         }
     }
@@ -602,7 +884,7 @@ mod tests {
     #[test]
     fn compute_funding_config_default_sizing_has_one_strategy_shape() {
         // Smoke-test: can build a MultiStrategyConfig from compute_funding_config output
-        let funding = compute_funding_config(1.0).unwrap();
+        let funding = compute_funding_config(None, 1.0).unwrap();
         let lifecycle_cfg = ChannelLifecycleConfig {
             funding,
             ..Default::default()
@@ -627,9 +909,14 @@ mod tests {
 
     #[test]
     fn compute_balance_recommendation_zero_missing_returns_zero_wxhopr() {
-        let rec =
-            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 0, no_startup_costs())
-                .unwrap();
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            0,
+            no_startup_costs(),
+            None,
+        )
+        .unwrap();
         assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
         assert_eq!(rec.xdai_fee_per_tx, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
     }
@@ -647,6 +934,7 @@ mod tests {
                 fee_to_start: fee,
                 txs_to_start: 3,
             },
+            None,
         )
         .unwrap();
         // stake per channel = ticket_price × INITIAL_FACE_VALUES at win_prob = 1
@@ -670,6 +958,7 @@ mod tests {
                 fee_to_start: fee,
                 txs_to_start: 2,
             },
+            None,
         )
         .unwrap();
         assert_eq!(rec.channel_stakes, HoprBalance::zero());
@@ -681,9 +970,14 @@ mod tests {
     #[test]
     fn compute_balance_recommendation_scales_by_missing_channels() {
         // win_prob=1.0, ticket_price=10, hops=1: stake = 10 × 5 face values; 8 channels
-        let rec =
-            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 8, no_startup_costs())
-                .unwrap();
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            8,
+            no_startup_costs(),
+            None,
+        )
+        .unwrap();
         let per_channel = HoprBalance::new_base(10) * 5u64;
         assert_eq!(rec.channel_stakes, per_channel * 8u64);
         assert_eq!(rec.fee_to_start, HoprBalance::zero());
@@ -693,23 +987,44 @@ mod tests {
     }
 
     #[test]
-    fn compute_balance_recommendation_halved_win_prob_doubles_stake() {
-        // The derived capacity is ceil(INITIAL_FACE_VALUES / win_prob) packets, so
-        // halving win_prob doubles the packet count and with it the stake.
-        let full =
-            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 1, no_startup_costs())
-                .unwrap();
-        let half =
-            compute_balance_recommendation(HoprBalance::new_base(10), 0.5, 1, no_startup_costs())
-                .unwrap();
-        assert_eq!(half.channel_stakes, full.channel_stakes * 2u64);
+    fn compute_balance_recommendation_halved_win_prob_more_than_doubles_stake() {
+        // The derived capacity is ceil(INITIAL_FACE_VALUES / win_prob) packets, so halving
+        // win_prob doubles the mean drain. Probabilistic sizing adds k·σ on top and σ grows
+        // as 1/√p, so the stake must rise by strictly more than that factor of two.
+        let full = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            1,
+            no_startup_costs(),
+            None,
+        )
+        .unwrap();
+        let half = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            0.5,
+            1,
+            no_startup_costs(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            half.channel_stakes > full.channel_stakes * 2u64,
+            "expected more than 2x, got {} vs {}",
+            half.channel_stakes,
+            full.channel_stakes
+        );
     }
 
     #[test]
     fn compute_balance_recommendation_zero_target_yields_zero() {
-        let rec =
-            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 0, no_startup_costs())
-                .unwrap();
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            0,
+            no_startup_costs(),
+            None,
+        )
+        .unwrap();
         assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
     }
 

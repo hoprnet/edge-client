@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "3.5.1"
+version = "4.0.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -56,6 +56,9 @@ multiaddr = "0.18.2"
 lazy_static = "1.5.0"
 signal-hook = "0.4.4"
 serde_yaml = { version = "0.9.34" }
+# Pinned to the version hopr-strategy uses so the z-score `capacity_stake` mirrors
+# comes from the exact code path the strategy sizes channels with.
+statrs = "0.19.0"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = [

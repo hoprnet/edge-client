@@ -2853,7 +2853,7 @@ dependencies = [
 
 [[package]]
 name = "edgli"
-version = "3.5.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "async-signal",
@@ -2879,6 +2879,7 @@ dependencies = [
  "serde_yaml",
  "signal-hook",
  "smart-default",
+ "statrs",
  "strum",
  "thiserror 2.0.19",
  "tokio",
