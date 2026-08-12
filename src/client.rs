@@ -361,7 +361,13 @@ impl Edgli {
         // verified on-chain rather than assumed.
         // A running node cannot start without a Safe, so it is always deployed here.
         let costs = super::strategy::compute_costs_to_start(chain, Some(source), true).await?;
-        super::strategy::compute_balance_recommendation(ticket_price, win_prob, missing, costs)
+        super::strategy::compute_balance_recommendation(
+            ticket_price,
+            win_prob,
+            missing,
+            costs,
+            cfg.channel_capacity,
+        )
     }
 
     /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].
@@ -440,14 +446,14 @@ impl Edgli {
         let strategies = cfg
             .strategies
             .into_iter()
-            .map(|kind| -> Box<dyn Strategy + Send> {
+            .map(|kind| -> anyhow::Result<Box<dyn Strategy + Send>> {
                 match kind {
                     EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
-                        ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))
+                        Ok(ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))?)
                     }
                 }
             })
-            .collect();
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         let mut multi_strategy = MultiStrategy::new(strategies);
 

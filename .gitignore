@@ -23,3 +23,5 @@ target
 .direnv/
 /result
 /.pre-commit-config.yaml
+
+.claude/
