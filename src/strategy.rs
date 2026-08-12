@@ -158,6 +158,17 @@ pub struct StartupCosts {
     pub txs_to_start: u64,
 }
 
+/// Recommended total xDai amount to fund the node with for gas: 0.005 xDai.
+///
+/// A hardcoded funding target, distinct from
+/// [`BalanceRecommendation::xdai_fee_per_tx`] (the per-transaction fee, which
+/// depends on the chain). Halves upstream's
+/// [`hopr_lib::SUGGESTED_NATIVE_BALANCE`] (0.01 xDai), which suggests roughly
+/// double what setup transactions need on Gnosis Chain.
+pub fn suggested_xdai_fund_amount() -> XDaiBalance {
+    XDaiBalance::from(5_000_000_000_000_000_u64) // 0.005 xDai in wei
+}
+
 /// Everything still needed for this node to be fully up and running.
 #[derive(Clone, Copy, Debug)]
 pub struct BalanceRecommendation {
@@ -172,6 +183,9 @@ pub struct BalanceRecommendation {
     /// Maximum xDAI fee per transaction (gas)
     /// (fixed at [`hopr_lib::SUGGESTED_NATIVE_BALANCE`]).
     pub xdai_fee_per_tx: XDaiBalance,
+    /// Total xDAI to fund the node with for gas
+    /// (fixed at [`suggested_xdai_fund_amount`]).
+    pub xdai_fund_amount: XDaiBalance,
 }
 
 impl BalanceRecommendation {
@@ -242,6 +256,7 @@ pub(crate) fn compute_balance_recommendation(
         fee_to_start: costs.fee_to_start,
         txs_to_start: costs.txs_to_start,
         xdai_fee_per_tx: *hopr_lib::SUGGESTED_NATIVE_BALANCE,
+        xdai_fund_amount: suggested_xdai_fund_amount(),
     })
 }
 
@@ -626,12 +641,18 @@ mod tests {
     }
 
     #[test]
+    fn suggested_xdai_fund_amount_is_0_005_xdai() {
+        assert_eq!(suggested_xdai_fund_amount(), "0.005 xdai".parse().unwrap());
+    }
+
+    #[test]
     fn compute_balance_recommendation_zero_missing_returns_zero_wxhopr() {
         let rec =
             compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 0, no_startup_costs())
                 .unwrap();
         assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
         assert_eq!(rec.xdai_fee_per_tx, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
+        assert_eq!(rec.xdai_fund_amount, suggested_xdai_fund_amount());
     }
 
     #[test]
@@ -690,6 +711,7 @@ mod tests {
         assert_eq!(rec.txs_to_start, 0);
         assert_eq!(rec.total_wxhopr(), per_channel * 8u64);
         assert_eq!(rec.xdai_fee_per_tx, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
+        assert_eq!(rec.xdai_fund_amount, suggested_xdai_fund_amount());
     }
 
     #[test]
