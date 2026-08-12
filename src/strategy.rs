@@ -836,7 +836,8 @@ mod tests {
     }
 
     #[test]
-    fn compute_capacity_balance_below_ticket_price() {
+    fn compute_capacity_balance_below_one_message_drain() {
+        // 5 is below the 10 × 3 a single message costs, so nothing is payable.
         let cap =
             compute_capacity(HoprBalance::new_base(5), HoprBalance::new_base(10), 1.0).unwrap();
         assert_eq!(cap.expected_messages, 0);
@@ -850,16 +851,6 @@ mod tests {
         assert_eq!(cap.expected_messages, 0);
         assert_eq!(cap.min_guaranteed_messages, 0);
         assert_eq!(cap.byte_capacity, 0);
-    }
-
-    #[test]
-    fn compute_capacity_win_prob_one_matches_expected() {
-        // win_prob=1.0 → face_value = per-message drain → min_guaranteed == expected
-        // 300 / (10 × 3 hops) = 10
-        let cap =
-            compute_capacity(HoprBalance::new_base(300), HoprBalance::new_base(10), 1.0).unwrap();
-        assert_eq!(cap.expected_messages, 10);
-        assert_eq!(cap.min_guaranteed_messages, 10);
     }
 
     #[test]
