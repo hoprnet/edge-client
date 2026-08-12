@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use bytesize::ByteSize;
 use hopr_lib::api::node::PacketTransport;
+use hopr_lib::api::types::internal::routing::RoutingOptions;
 use hopr_lib::api::types::primitive::prelude::{
     Address, HoprBalance, UnitaryFloatOps as _, XDaiBalance,
 };
@@ -10,9 +11,16 @@ pub use hopr_strategy::channel_lifecycle::{
     ResolvedFunding, SelectorProfile,
 };
 
-/// Paid downstream relay hops assumed when sizing a channel's stake. Edge nodes
-/// route over a single hop by default, so a channel's tickets pay one relay.
-const ASSUMED_HOPS: u32 = 1;
+/// Paid downstream relay hops a ticket's face value covers.
+///
+/// Fixed at the protocol's maximum path length rather than the single hop an edge node
+/// typically routes over: the node issuing a ticket cannot know how long a path the packet
+/// will take, so a face value assuming fewer hops cannot pay for a longer one.
+///
+/// `hopr-strategy` sizes stakes from this same constant. Reading it from the protocol here
+/// rather than restating a number keeps [`compute_capacity`] from reporting more payable
+/// tickets than a stake actually covers.
+const ASSUMED_HOPS: u32 = RoutingOptions::MAX_INTERMEDIATE_HOPS as u32;
 
 /// Safe capacity required before a channel opens, as a multiple of the initial capacity.
 ///
@@ -174,7 +182,6 @@ pub fn compute_funding_config(channel_capacity: Option<ByteSize>) -> anyhow::Res
     Ok(FundingConfig {
         initial_capacity,
         min_safe_capacity_required: ByteSize::b(min_safe).max(defaults.min_safe_capacity_required),
-        assumed_hops: ASSUMED_HOPS,
         stop_when_unfunded: true,
         sizing_mode: SIZING_MODE,
         ..defaults
@@ -252,12 +259,14 @@ pub enum CapacityAllocator {
 pub struct Capacity {
     /// wxHOPR stake — locked balance for channels, unallocated balance for the Safe.
     pub stake: HoprBalance,
-    /// Expected long-run session-frame count: `floor(stake / ticket_price)`.
+    /// Expected long-run session-frame count: `floor(stake / (ticket_price × ASSUMED_HOPS))`.
     ///
-    /// `ticket_price` is the *expected* per-hop drain (= `face_value × win_prob`),
-    /// so this figure is win_prob-independent — it reflects average lifetime throughput.
+    /// `ticket_price × ASSUMED_HOPS` is the *expected* per-message drain
+    /// (= `face_value × win_prob`), so this figure is win_prob-independent — it reflects
+    /// average lifetime throughput.
     pub expected_messages: u64,
-    /// Worst-case floor: `floor(stake / face_value)` = `floor(stake × win_prob / ticket_price)`.
+    /// Worst-case floor: `floor(stake / face_value)`, where
+    /// `face_value = ticket_price × ASSUMED_HOPS / win_prob`.
     ///
     /// Reflects the maximum number of tickets the channel can hold simultaneously
     /// before balance drops below one face value and ticket issuance halts.
@@ -312,16 +321,22 @@ pub(crate) fn compute_capacity(
         win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
         "win_prob must be in (0, 1]; got {win_prob}"
     );
-    let expected_messages = if ticket_price == HoprBalance::zero() {
+    // Both counts are per *message*, and a message pays `ASSUMED_HOPS` relays: it issues one
+    // aggregated ticket of face value `ticket_price × ASSUMED_HOPS / win_prob`, whose expected
+    // cost is `ticket_price × ASSUMED_HOPS`. Measuring either against the bare ticket price
+    // would report `ASSUMED_HOPS`× more messages than the stake can actually pay for — and the
+    // strategy funds and gates on the same hop count, so the two must agree.
+    let per_message_drain = ticket_price * ASSUMED_HOPS as u64;
+    let expected_messages = if per_message_drain == HoprBalance::zero() {
         0u64
     } else {
         // Clamp to u64::MAX before converting so astronomically large quotients
         // saturate rather than truncate via low_u64().
-        let quotient = stake.amount() / ticket_price.amount();
+        let quotient = stake.amount() / per_message_drain.amount();
         quotient.min(u64::MAX.into()).low_u64()
     };
-    // face_value = ticket_price / win_prob — minimum balance locked per outstanding ticket.
-    let face_value = ticket_price.div_f64(win_prob)?;
+    // face_value = ticket_price × ASSUMED_HOPS / win_prob — balance locked per outstanding ticket.
+    let face_value = per_message_drain.div_f64(win_prob)?;
     let min_guaranteed_messages = if face_value == HoprBalance::zero() {
         0u64
     } else {
@@ -528,7 +543,6 @@ mod tests {
             "expected Probabilistic({SIZING_SUCCESS_PROBABILITY}), got {:?}",
             cfg.sizing_mode
         );
-        assert_eq!(cfg.assumed_hops, ASSUMED_HOPS);
         assert!(cfg.stop_when_unfunded);
     }
 
@@ -542,7 +556,7 @@ mod tests {
             .initial_capacity
             .as_u64()
             .div_ceil(packet_payload_size());
-        let mean_drain = price * packets * cfg.assumed_hops as u64;
+        let mean_drain = price * packets * ASSUMED_HOPS as u64;
         for p in [0.5, 0.1, 0.01, 0.001] {
             let stake = resolve_funding(&cfg, price, p).initial_balance;
             assert!(
@@ -567,7 +581,7 @@ mod tests {
             .div_ceil(packet_payload_size());
         assert_eq!(
             resolve_funding(&cfg, price, 1.0).initial_balance,
-            price * packets * cfg.assumed_hops as u64
+            price * packets * ASSUMED_HOPS as u64
         );
     }
 
@@ -797,12 +811,28 @@ mod tests {
 
     #[test]
     fn compute_capacity_basic_arithmetic() {
+        // A message pays ASSUMED_HOPS (3) relays, so it drains 10 × 3 = 30 per message:
+        // expected = 900 / 30 = 30, and at win_prob = 1 the face value is the same 30.
         let cap =
-            compute_capacity(HoprBalance::new_base(1000), HoprBalance::new_base(10), 1.0).unwrap();
-        assert_eq!(cap.expected_messages, 100);
-        assert_eq!(cap.min_guaranteed_messages, 100);
-        assert_eq!(cap.byte_capacity, 100 * hopr_lib::SESSION_MTU as u64);
-        assert_eq!(cap.stake, HoprBalance::new_base(1000));
+            compute_capacity(HoprBalance::new_base(900), HoprBalance::new_base(10), 1.0).unwrap();
+        assert_eq!(cap.expected_messages, 30);
+        assert_eq!(cap.min_guaranteed_messages, 30);
+        assert_eq!(cap.byte_capacity, 30 * hopr_lib::SESSION_MTU as u64);
+        assert_eq!(cap.stake, HoprBalance::new_base(900));
+    }
+
+    /// The hop factor must be the one the strategy funds with, or a stake reports more
+    /// payable messages than it can cover and the funding-issue checks under-report.
+    #[test]
+    fn compute_capacity_counts_every_paid_hop() {
+        let price = HoprBalance::new_base(10);
+        let stake = price * 30u64;
+        let cap = compute_capacity(stake, price, 1.0).unwrap();
+        assert_eq!(
+            cap.expected_messages,
+            30 / ASSUMED_HOPS as u64,
+            "a message must be charged for all {ASSUMED_HOPS} paid hops"
+        );
     }
 
     #[test]
@@ -824,30 +854,31 @@ mod tests {
 
     #[test]
     fn compute_capacity_win_prob_one_matches_expected() {
-        // win_prob=1.0 → face_value = ticket_price → min_guaranteed == expected
+        // win_prob=1.0 → face_value = per-message drain → min_guaranteed == expected
+        // 300 / (10 × 3 hops) = 10
         let cap =
             compute_capacity(HoprBalance::new_base(300), HoprBalance::new_base(10), 1.0).unwrap();
-        assert_eq!(cap.expected_messages, 30);
-        assert_eq!(cap.min_guaranteed_messages, 30);
+        assert_eq!(cap.expected_messages, 10);
+        assert_eq!(cap.min_guaranteed_messages, 10);
     }
 
     #[test]
     fn compute_capacity_win_prob_half_halves_guaranteed() {
-        // stake=100, ticket_price=10, win_prob=0.5
-        // expected  = 100/10 = 10
-        // face_value = 10/0.5 = 20 → min_guaranteed = 100/20 = 5
+        // stake=600, ticket_price=10, 3 hops, win_prob=0.5
+        // expected   = 600 / (10 × 3) = 20
+        // face_value = 30 / 0.5 = 60 → min_guaranteed = 600 / 60 = 10
         let cap =
-            compute_capacity(HoprBalance::new_base(100), HoprBalance::new_base(10), 0.5).unwrap();
-        assert_eq!(cap.expected_messages, 10);
-        assert_eq!(cap.min_guaranteed_messages, 5);
+            compute_capacity(HoprBalance::new_base(600), HoprBalance::new_base(10), 0.5).unwrap();
+        assert_eq!(cap.expected_messages, 20);
+        assert_eq!(cap.min_guaranteed_messages, 10);
     }
 
     #[test]
     fn compute_capacity_win_prob_small_floors_guaranteed_to_zero() {
-        // stake=10, ticket_price=10, win_prob=0.5
-        // face_value = 10/0.5 = 20 > stake → min_guaranteed = 0; expected = 1
+        // stake=40, ticket_price=10, 3 hops, win_prob=0.5
+        // face_value = 30 / 0.5 = 60 > stake → min_guaranteed = 0; expected = 40 / 30 = 1
         let cap =
-            compute_capacity(HoprBalance::new_base(10), HoprBalance::new_base(10), 0.5).unwrap();
+            compute_capacity(HoprBalance::new_base(40), HoprBalance::new_base(10), 0.5).unwrap();
         assert_eq!(cap.expected_messages, 1);
         assert_eq!(cap.min_guaranteed_messages, 0);
     }
