@@ -87,10 +87,7 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "10f6d80c3cc71dee
 ] }
 hopr-chain-connector = { version = "0.22.1", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.3.0" }
-# TEMPORARY: tracks hoprnet/hopr-strategy#27, which makes `FundingConfig::resolve`
-# public so this crate can read funding figures off the strategy instead of
-# mirroring them. Switch back to a registry version once 0.24.0 is published.
-hopr-strategy = { git = "https://github.com/hoprnet/hopr-strategy", rev = "139b6b2", features = [
+hopr-strategy = { version = "0.24.1", features = [
   "strategy-channel-lifecycle",
 ] }
 hopr-ticket-manager = { version = "0.5.1" }
