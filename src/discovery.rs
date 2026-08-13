@@ -58,7 +58,7 @@ fn parse_exit_node_metadata(bytes: &[u8]) -> Result<ExitNodeMetadataV1, Metadata
 }
 
 /// A `gvpn:exit` node, decoded from its on-chain registry entry.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExitNodeInfo {
     /// On-chain address of the exit node.
     pub node: Address,
@@ -285,6 +285,120 @@ where
     }
 }
 
+/// How often [`ExitNodeRegistry`] re-fetches the full registry to catch nodes that went orphaned
+/// (lost their Safe binding) without emitting a `Deregistered` event — [`subscribe_exit_nodes`]
+/// does not get that liveness cross-check, only [`list_exit_nodes`] does.
+const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
+
+fn to_map(nodes: Vec<ExitNodeInfo>) -> HashMap<Address, ExitNodeInfo> {
+    nodes.into_iter().map(|node| (node.node, node)).collect()
+}
+
+/// A live, continuously updated view of registered `gvpn:exit` nodes.
+///
+/// Owns the whole discovery lifecycle behind one handle — the initial fetch, the live
+/// subscription, and periodic liveness reconciliation — so a caller never has to see a Blokli
+/// selector or a raw registry update. Dropping the handle stops the background task.
+pub struct ExitNodeRegistry {
+    nodes: tokio::sync::watch::Receiver<HashMap<Address, ExitNodeInfo>>,
+    task: tokio::task::AbortHandle,
+}
+
+impl ExitNodeRegistry {
+    /// The current set of registered, live exit nodes, keyed by node address.
+    pub fn nodes(&self) -> HashMap<Address, ExitNodeInfo> {
+        self.nodes.borrow().clone()
+    }
+
+    /// Waits for the next change to [`Self::nodes`].
+    pub async fn changed(&mut self) -> anyhow::Result<()> {
+        self.nodes.changed().await.map_err(anyhow::Error::from)
+    }
+}
+
+impl Drop for ExitNodeRegistry {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn reconcile_exit_nodes<C>(
+    client: C,
+    tx: tokio::sync::watch::Sender<HashMap<Address, ExitNodeInfo>>,
+) where
+    C: BlokliQueryClient + BlokliSubscriptionClient + Clone + Send + Sync + 'static,
+{
+    // `None` once the live subscription ends (e.g. exhausted its own reconnect attempts); from
+    // then on this task falls back to periodic reconciliation only, rather than busy-polling a
+    // stream that will keep reporting `None`.
+    let mut live_updates = Some(std::pin::pin!(subscribe_exit_nodes_with_client(
+        client.clone()
+    )));
+    let mut reconcile = tokio::time::interval(RECONCILE_INTERVAL);
+    reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    reconcile.tick().await; // the initial fetch already happened in `watch_exit_nodes`
+
+    loop {
+        tokio::select! {
+            update = async { live_updates.as_mut()?.next().await }, if live_updates.is_some() => {
+                match update {
+                    Some(update) => {
+                        tx.send_modify(|nodes| match update.entry {
+                            Some(entry) => { nodes.insert(update.node, entry); }
+                            None => { nodes.remove(&update.node); }
+                        });
+                    }
+                    None => {
+                        tracing::warn!("gvpn:exit subscription ended; falling back to periodic reconciliation only");
+                        live_updates = None;
+                    }
+                }
+            }
+            _ = reconcile.tick() => {
+                match list_exit_nodes_with_client(client.clone()).await {
+                    Ok(nodes) => {
+                        let nodes = to_map(nodes);
+                        tx.send_if_modified(|current| {
+                            let changed = *current != nodes;
+                            *current = nodes;
+                            changed
+                        });
+                    }
+                    Err(error) => tracing::warn!(%error, "periodic gvpn:exit reconciliation failed"),
+                }
+            }
+        }
+
+        if tx.is_closed() {
+            break;
+        }
+    }
+}
+
+/// Starts discovering registered `gvpn:exit` nodes, returning once the initial fetch completes.
+///
+/// This is the intended entry point for callers that just want a live destination list without
+/// touching Blokli-specific types: it fetches the current registry, then keeps the result fresh
+/// in the background (live subscription plus periodic reconciliation) for as long as the
+/// returned [`ExitNodeRegistry`] stays alive.
+pub async fn watch_exit_nodes(blokli_endpoint: BlokliEndpoint) -> anyhow::Result<ExitNodeRegistry> {
+    watch_exit_nodes_with_client(blokli_endpoint.build_client()).await
+}
+
+async fn watch_exit_nodes_with_client<C>(client: C) -> anyhow::Result<ExitNodeRegistry>
+where
+    C: BlokliQueryClient + BlokliSubscriptionClient + Clone + Send + Sync + 'static,
+{
+    let initial = to_map(list_exit_nodes_with_client(client.clone()).await?);
+    let (tx, rx) = tokio::sync::watch::channel(initial);
+    let task = tokio::spawn(reconcile_exit_nodes(client, tx));
+
+    Ok(ExitNodeRegistry {
+        nodes: rx,
+        task: task.abort_handle(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -423,6 +537,38 @@ mod tests {
 
         assert_eq!(1, nodes.len());
         assert_eq!(Address::from(NODE), nodes[0].node);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn watch_exit_nodes_returns_the_initial_registry() -> anyhow::Result<()> {
+        let client = BlokliTestStateBuilder::default()
+            .with_services([entry_with_metadata(NODE, valid_metadata())?])
+            .with_deployed_safes([safe_with_nodes(&[NODE])])
+            .build_static_client();
+
+        let registry = watch_exit_nodes_with_client(client).await?;
+        let nodes = registry.nodes();
+
+        assert_eq!(1, nodes.len());
+        assert_eq!(Address::from(NODE), nodes[&Address::from(NODE)].node);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn watch_exit_nodes_dropping_the_registry_stops_the_background_task() -> anyhow::Result<()>
+    {
+        let client = BlokliTestStateBuilder::default().build_static_client();
+
+        let registry = watch_exit_nodes_with_client(client).await?;
+        let task = registry.task.clone();
+        drop(registry);
+
+        // `AbortHandle::abort` schedules cancellation; give the runtime a tick to apply it.
+        tokio::task::yield_now().await;
+        assert!(task.is_finished());
 
         Ok(())
     }
