@@ -64,15 +64,6 @@ const SIZING_MODE: CapacitySizingMode = CapacitySizingMode::Probabilistic {
     success_probability: SIZING_SUCCESS_PROBABILITY,
 };
 
-/// Gas assumed for one node-setup transaction, used to turn the chain's
-/// `max_fee_per_gas` into a per-transaction xDai fee.
-///
-/// Covers a typical setup transaction (Safe registration, key-binding
-/// announcement, channel funding) with headroom. Safe + module deployment costs
-/// several times this; the headroom in [`suggested_xdai_fund_amount`] absorbs
-/// that one-off.
-const SETUP_TX_GAS: u128 = 500_000;
-
 #[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
 use hopr_lib::api::chain::{AccountSelector, ChainReadAccountOperations, ChainValues};
 
@@ -240,13 +231,18 @@ pub fn suggested_xdai_fund_amount() -> XDaiBalance {
     XDaiBalance::from(5_000_000_000_000_000_u64) // 0.005 xDai in wei
 }
 
-/// Per-transaction xDai gas fee at the given chain `max_fee_per_gas` (wei per gas).
+/// Maximum xDai one transaction can cost at the given chain `max_fee_per_gas`
+/// (wei per gas).
 ///
-/// `SETUP_TX_GAS` × `max_fee_per_gas`, saturating rather than overflowing on an
-/// absurd reported gas price. Obtain `max_fee_per_gas` from the chain via
-/// `crate::blokli::query_max_fee_per_gas`.
+/// The gas limit is the one `hopr-chain-connector` signs every transaction with
+/// (`GasEstimation::default().gas_limit`), so this is the EIP-1559 ceiling the
+/// sender authorises — *not* expected spend, which is `gas_used × effective
+/// price` and on Gnosis Chain is orders of magnitude lower. Saturates rather
+/// than overflowing on an absurd reported gas price. Obtain `max_fee_per_gas`
+/// from the chain via `crate::blokli::query_max_fee_per_gas`.
 pub fn xdai_fee_per_tx(max_fee_per_gas: u128) -> XDaiBalance {
-    XDaiBalance::from(max_fee_per_gas.saturating_mul(SETUP_TX_GAS))
+    let gas_limit = hopr_lib::api::types::chain::payload::GasEstimation::default().gas_limit;
+    XDaiBalance::from(max_fee_per_gas.saturating_mul(gas_limit as u128))
 }
 
 /// Everything still needed for this node to be fully up and running.
@@ -260,9 +256,13 @@ pub struct BalanceRecommendation {
     /// Number of on-chain transactions still needed before channel-funding
     /// transactions can begin; see [`StartupCosts::txs_to_start`].
     pub txs_to_start: u64,
-    /// Maximum xDAI fee per transaction (gas): the assumed gas per setup
-    /// transaction times the chain's current `max_fee_per_gas`, so this tracks
-    /// the chain and its congestion. See [`xdai_fee_per_tx`].
+    /// Maximum xDAI fee per transaction (gas): the gas limit the connector signs
+    /// transactions with, times the chain's current `max_fee_per_gas`, so this
+    /// tracks the chain and its congestion.
+    ///
+    /// A ceiling on what one transaction may cost, not expected spend — see
+    /// [`xdai_fee_per_tx`]. Use [`xdai_fund_amount`](Self::xdai_fund_amount) for
+    /// what to actually fund the node with.
     pub xdai_fee_per_tx: XDaiBalance,
     /// Total xDAI to fund the node with for gas
     /// (fixed at [`suggested_xdai_fund_amount`]).
@@ -771,15 +771,29 @@ mod tests {
     }
 
     #[test]
-    fn xdai_fee_per_tx_at_gnosis_typical_gas_is_below_fund_amount() {
-        // Regression guard: the per-transaction fee used to be
-        // hopr_lib::SUGGESTED_NATIVE_BALANCE (0.01 xDai), a *total* funding
-        // suggestion — twice the total fund amount reported next to it. All the
-        // startup transactions together must fit inside the fund amount.
-        let fee = xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS);
-        assert_eq!(fee, "0.001 xdai".parse().unwrap());
-        // 3 is the maximum txs_to_start: Safe deployment, registration, announcement.
-        assert!(fee * 3u64 < suggested_xdai_fund_amount());
+    fn xdai_fee_per_tx_is_the_signed_gas_limit_times_price() {
+        // Read the limit off GasEstimation rather than restating 10_000_000, so an
+        // upstream change to what the connector signs with fails this loudly
+        // instead of being masked by a hardcoded copy.
+        let gas_limit = hopr_lib::api::types::chain::payload::GasEstimation::default().gas_limit;
+        let expected = XDaiBalance::from(TEST_MAX_FEE_PER_GAS * gas_limit as u128);
+        assert_eq!(xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS), expected);
+        // 10M gas at 2 Gwei, today's upstream default.
+        assert_eq!(
+            xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS),
+            "0.02 xdai".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn xdai_fee_per_tx_is_a_ceiling_not_expected_spend() {
+        // Deliberately above the fund amount, and not the defect this field used
+        // to have: it is the EIP-1559 maximum the sender authorises (the signed
+        // gas limit x max_fee_per_gas), while xdai_fund_amount is what a node
+        // actually needs. Actual spend is gas_used x effective price, far lower.
+        // Previously the field held hopr_lib::SUGGESTED_NATIVE_BALANCE — a *total*
+        // funding suggestion misapplied per transaction, arbitrary in either role.
+        assert!(xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS) > suggested_xdai_fund_amount());
     }
 
     #[test]
