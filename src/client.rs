@@ -339,6 +339,7 @@ impl Edgli {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
         let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
+        let max_fee_per_gas = crate::blokli::query_max_fee_per_gas(chain.client()).await?;
 
         let source = HasChainApi::identity(&*self.hopr).node_address;
         let all_channels = IncentiveChannelOperations::channels_from(&*self.hopr, source)
@@ -361,7 +362,13 @@ impl Edgli {
         // verified on-chain rather than assumed.
         // A running node cannot start without a Safe, so it is always deployed here.
         let costs = super::strategy::compute_costs_to_start(chain, Some(source), true).await?;
-        super::strategy::compute_balance_recommendation(ticket_price, win_prob, missing, costs)
+        super::strategy::compute_balance_recommendation(
+            ticket_price,
+            win_prob,
+            missing,
+            costs,
+            max_fee_per_gas,
+        )
     }
 
     /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].

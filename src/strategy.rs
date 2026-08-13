@@ -24,6 +24,15 @@ const TOPUP_FACE_VALUES: u64 = 4;
 /// tickets keep being issued while the top-up confirms.
 const LOWER_THRESHOLD_FACE_VALUES: u64 = 2;
 
+/// Gas assumed for one node-setup transaction, used to turn the chain's
+/// `max_fee_per_gas` into a per-transaction xDai fee.
+///
+/// Covers a typical setup transaction (Safe registration, key-binding
+/// announcement, channel funding) with headroom. Safe + module deployment costs
+/// several times this; the headroom in [`suggested_xdai_fund_amount`] absorbs
+/// that one-off.
+const SETUP_TX_GAS: u128 = 500_000;
+
 #[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
 use hopr_lib::api::chain::{AccountSelector, ChainReadAccountOperations, ChainValues};
 
@@ -160,13 +169,23 @@ pub struct StartupCosts {
 
 /// Recommended total xDai amount to fund the node with for gas: 0.005 xDai.
 ///
-/// A hardcoded funding target, distinct from
+/// A hardcoded funding target covering all setup transactions plus headroom for
+/// the larger Safe + module deployment, distinct from
 /// [`BalanceRecommendation::xdai_fee_per_tx`] (the per-transaction fee, which
-/// depends on the chain). Halves upstream's
-/// [`hopr_lib::SUGGESTED_NATIVE_BALANCE`] (0.01 xDai), which suggests roughly
+/// depends on the chain's current gas price). The figure halves upstream's
+/// `hopr_lib::SUGGESTED_NATIVE_BALANCE` (0.01 xDai), which suggests roughly
 /// double what setup transactions need on Gnosis Chain.
 pub fn suggested_xdai_fund_amount() -> XDaiBalance {
     XDaiBalance::from(5_000_000_000_000_000_u64) // 0.005 xDai in wei
+}
+
+/// Per-transaction xDai gas fee at the given chain `max_fee_per_gas` (wei per gas).
+///
+/// `SETUP_TX_GAS` × `max_fee_per_gas`, saturating rather than overflowing on an
+/// absurd reported gas price. Obtain `max_fee_per_gas` from the chain via
+/// `crate::blokli::query_max_fee_per_gas`.
+pub fn xdai_fee_per_tx(max_fee_per_gas: u128) -> XDaiBalance {
+    XDaiBalance::from(max_fee_per_gas.saturating_mul(SETUP_TX_GAS))
 }
 
 /// Everything still needed for this node to be fully up and running.
@@ -180,8 +199,9 @@ pub struct BalanceRecommendation {
     /// Number of on-chain transactions still needed before channel-funding
     /// transactions can begin; see [`StartupCosts::txs_to_start`].
     pub txs_to_start: u64,
-    /// Maximum xDAI fee per transaction (gas)
-    /// (fixed at [`hopr_lib::SUGGESTED_NATIVE_BALANCE`]).
+    /// Maximum xDAI fee per transaction (gas): the assumed gas per setup
+    /// transaction times the chain's current `max_fee_per_gas`, so this tracks
+    /// the chain and its congestion. See [`xdai_fee_per_tx`].
     pub xdai_fee_per_tx: XDaiBalance,
     /// Total xDAI to fund the node with for gas
     /// (fixed at [`suggested_xdai_fund_amount`]).
@@ -240,11 +260,15 @@ pub struct Capacity {
 /// set-up node. On networks with a dust ticket price (e.g. rotsee: 100 wei
 /// tickets, 0.01 wxHOPR fee) the fee dominates the recommendation, so omitting
 /// it underfunds the node.
+///
+/// `max_fee_per_gas` is the chain's current EIP-1559 gas price in wei per gas,
+/// from which the per-transaction xDai fee is derived; see [`xdai_fee_per_tx`].
 pub(crate) fn compute_balance_recommendation(
     ticket_price: HoprBalance,
     win_prob: f64,
     missing_channels: usize,
     costs: StartupCosts,
+    max_fee_per_gas: u128,
 ) -> anyhow::Result<BalanceRecommendation> {
     let stake = if missing_channels == 0 {
         HoprBalance::zero()
@@ -255,7 +279,7 @@ pub(crate) fn compute_balance_recommendation(
         channel_stakes: stake,
         fee_to_start: costs.fee_to_start,
         txs_to_start: costs.txs_to_start,
-        xdai_fee_per_tx: *hopr_lib::SUGGESTED_NATIVE_BALANCE,
+        xdai_fee_per_tx: xdai_fee_per_tx(max_fee_per_gas),
         xdai_fund_amount: suggested_xdai_fund_amount(),
     })
 }
@@ -354,11 +378,13 @@ pub async fn minimum_balance_recommendation(
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
     let costs = incentive_ops.compute_costs_to_start().await?;
+    let max_fee_per_gas = incentive_ops.max_fee_per_gas().await?;
     compute_balance_recommendation(
         stats.ticket_price,
         win_prob,
         cfg.target_open_channels,
         costs,
+        max_fee_per_gas,
     )
 }
 
@@ -417,6 +443,9 @@ mod tests {
             txs_to_start: 0,
         }
     }
+
+    /// Gnosis-typical gas price in wei per gas (2 Gwei).
+    const TEST_MAX_FEE_PER_GAS: u128 = 2_000_000_000;
 
     /// Winning probabilities spanning the range the network may run at.
     const WIN_PROBS: [f64; 6] = [1.0, 0.5, 0.1, 0.01, 0.001, 0.0001];
@@ -589,10 +618,23 @@ mod tests {
             for p in [1.0, 0.01, 0.001] {
                 let cfg = compute_funding_config(p).unwrap();
                 let expected = capacity_stake(cfg.initial_capacity, price, ASSUMED_HOPS);
-                let one = compute_balance_recommendation(price, p, 1, no_startup_costs()).unwrap();
+                let one = compute_balance_recommendation(
+                    price,
+                    p,
+                    1,
+                    no_startup_costs(),
+                    TEST_MAX_FEE_PER_GAS,
+                )
+                .unwrap();
                 assert_eq!(one.channel_stakes, expected, "price={price}, p={p}");
-                let eight =
-                    compute_balance_recommendation(price, p, 8, no_startup_costs()).unwrap();
+                let eight = compute_balance_recommendation(
+                    price,
+                    p,
+                    8,
+                    no_startup_costs(),
+                    TEST_MAX_FEE_PER_GAS,
+                )
+                .unwrap();
                 assert_eq!(
                     eight.channel_stakes,
                     expected * 8u64,
@@ -609,7 +651,14 @@ mod tests {
         for p in WIN_PROBS {
             let cfg = compute_funding_config(p).unwrap();
             let min_safe = capacity_stake(cfg.min_safe_capacity_required, price, cfg.assumed_hops);
-            let rec = compute_balance_recommendation(price, p, 1, no_startup_costs()).unwrap();
+            let rec = compute_balance_recommendation(
+                price,
+                p,
+                1,
+                no_startup_costs(),
+                TEST_MAX_FEE_PER_GAS,
+            )
+            .unwrap();
             assert!(rec.channel_stakes >= min_safe, "p={p}");
         }
     }
@@ -646,12 +695,42 @@ mod tests {
     }
 
     #[test]
+    fn xdai_fee_per_tx_scales_with_gas_price() {
+        let base = xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS);
+        assert_eq!(xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS * 2), base * 2u64);
+        assert_eq!(xdai_fee_per_tx(0), XDaiBalance::zero());
+    }
+
+    #[test]
+    fn xdai_fee_per_tx_at_gnosis_typical_gas_is_below_fund_amount() {
+        // Regression guard: the per-transaction fee used to be
+        // hopr_lib::SUGGESTED_NATIVE_BALANCE (0.01 xDai), a *total* funding
+        // suggestion — twice the total fund amount reported next to it. All the
+        // startup transactions together must fit inside the fund amount.
+        let fee = xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS);
+        assert_eq!(fee, "0.001 xdai".parse().unwrap());
+        // 3 is the maximum txs_to_start: Safe deployment, registration, announcement.
+        assert!(fee * 3u64 < suggested_xdai_fund_amount());
+    }
+
+    #[test]
+    fn xdai_fee_per_tx_saturates_on_absurd_gas_price() {
+        // An absurd reported gas price must clamp, not overflow.
+        let _ = xdai_fee_per_tx(u128::MAX);
+    }
+
+    #[test]
     fn compute_balance_recommendation_zero_missing_returns_zero_wxhopr() {
-        let rec =
-            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 0, no_startup_costs())
-                .unwrap();
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            0,
+            no_startup_costs(),
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
         assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
-        assert_eq!(rec.xdai_fee_per_tx, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
+        assert_eq!(rec.xdai_fee_per_tx, xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS));
         assert_eq!(rec.xdai_fund_amount, suggested_xdai_fund_amount());
     }
 
@@ -668,6 +747,7 @@ mod tests {
                 fee_to_start: fee,
                 txs_to_start: 3,
             },
+            TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
         // stake per channel = ticket_price × INITIAL_FACE_VALUES at win_prob = 1
@@ -691,6 +771,7 @@ mod tests {
                 fee_to_start: fee,
                 txs_to_start: 2,
             },
+            TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
         assert_eq!(rec.channel_stakes, HoprBalance::zero());
@@ -702,15 +783,20 @@ mod tests {
     #[test]
     fn compute_balance_recommendation_scales_by_missing_channels() {
         // win_prob=1.0, ticket_price=10, hops=1: stake = 10 × 5 face values; 8 channels
-        let rec =
-            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 8, no_startup_costs())
-                .unwrap();
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            8,
+            no_startup_costs(),
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
         let per_channel = HoprBalance::new_base(10) * 5u64;
         assert_eq!(rec.channel_stakes, per_channel * 8u64);
         assert_eq!(rec.fee_to_start, HoprBalance::zero());
         assert_eq!(rec.txs_to_start, 0);
         assert_eq!(rec.total_wxhopr(), per_channel * 8u64);
-        assert_eq!(rec.xdai_fee_per_tx, *hopr_lib::SUGGESTED_NATIVE_BALANCE);
+        assert_eq!(rec.xdai_fee_per_tx, xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS));
         assert_eq!(rec.xdai_fund_amount, suggested_xdai_fund_amount());
     }
 
@@ -718,20 +804,35 @@ mod tests {
     fn compute_balance_recommendation_halved_win_prob_doubles_stake() {
         // The derived capacity is ceil(INITIAL_FACE_VALUES / win_prob) packets, so
         // halving win_prob doubles the packet count and with it the stake.
-        let full =
-            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 1, no_startup_costs())
-                .unwrap();
-        let half =
-            compute_balance_recommendation(HoprBalance::new_base(10), 0.5, 1, no_startup_costs())
-                .unwrap();
+        let full = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            1,
+            no_startup_costs(),
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
+        let half = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            0.5,
+            1,
+            no_startup_costs(),
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
         assert_eq!(half.channel_stakes, full.channel_stakes * 2u64);
     }
 
     #[test]
     fn compute_balance_recommendation_zero_target_yields_zero() {
-        let rec =
-            compute_balance_recommendation(HoprBalance::new_base(10), 1.0, 0, no_startup_costs())
-                .unwrap();
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            0,
+            no_startup_costs(),
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
         assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
     }
 
