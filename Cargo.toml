@@ -81,7 +81,7 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "41ac2a46aa810f519db8f1321233491fe9833429", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "6ed6b5f7d30a8c9168d68c0bceeb8c5c1aba51b3", features = [
   "session-client",
   "serde",
 ] }
