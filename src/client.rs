@@ -367,6 +367,7 @@ impl Edgli {
             win_prob,
             missing,
             costs,
+            cfg.channel_capacity,
             max_fee_per_gas,
         )
     }
@@ -447,14 +448,14 @@ impl Edgli {
         let strategies = cfg
             .strategies
             .into_iter()
-            .map(|kind| -> Box<dyn Strategy + Send> {
+            .map(|kind| -> anyhow::Result<Box<dyn Strategy + Send>> {
                 match kind {
                     EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
-                        ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))
+                        Ok(ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))?)
                     }
                 }
             })
-            .collect();
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         let mut multi_strategy = MultiStrategy::new(strategies);
 
