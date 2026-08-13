@@ -81,7 +81,7 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "4a47cdffd9b453708c5e3b6f4e91f58de50ee585", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "5897a4501f80fbcc2565f09907041f6e92222167", features = [
   "session-client",
   "serde",
 ] }
@@ -122,3 +122,10 @@ anyhow = "1.0.104"
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
+
+# Temporary: pins the unreleased upstreams the hopr-lib rev above depends on. Remove once
+# hopr-api 1.21.0, hopr-utilities 0.7.0 and hopr-network-graph 0.3.3 are published.
+[patch.crates-io]
+hopr-api = { git = "https://github.com/hoprnet/hopr-api", rev = "4a53ed13634a5080a63760b9ca84bd9fe7710114" }
+hopr-utilities = { git = "https://github.com/hoprnet/hopr-utilities", rev = "e17451a8db2fd72cecde273ac8ef87de96c8bac0" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", rev = "d9dc437108b59776b8b9673664c88d9b177d7769" }
