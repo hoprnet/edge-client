@@ -8,6 +8,9 @@ pub mod errors;
 pub mod blokli;
 
 #[cfg(feature = "blokli")]
+pub mod discovery;
+
+#[cfg(feature = "blokli")]
 pub mod endpoint;
 
 pub mod strategy;
@@ -17,6 +20,8 @@ pub use hopr_lib;
 
 #[cfg(feature = "blokli")]
 pub use blokli::*;
+#[cfg(feature = "blokli")]
+pub use discovery::*;
 #[cfg(feature = "blokli")]
 pub use endpoint::*;
 #[cfg(feature = "blokli")]

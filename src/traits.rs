@@ -17,6 +17,9 @@ use hopr_lib::{
     errors::HoprLibError,
 };
 
+#[cfg(feature = "blokli")]
+use crate::discovery::{ExitNodeInfo, ExitNodeRegistry, ExitNodeUpdate};
+
 /// All balance information for the node wallet and its linked Safe.
 #[derive(Clone, Debug)]
 pub struct NodeBalances {
@@ -77,6 +80,18 @@ pub trait EdgeNodeApi: Send + Sync {
     /// Combines the transport-layer peer list with the chain-key lookup so
     /// callers receive Ethereum addresses directly.
     async fn connected_peer_addresses(&self) -> std::result::Result<Vec<Address>, HoprLibError>;
+
+    // --- Exit discovery ---
+
+    /// Subscribes to live changes in the usable `gvpn:exit` destination set.
+    #[cfg(feature = "blokli")]
+    fn subscribe_exit_nodes(
+        &self,
+    ) -> anyhow::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>>;
+
+    /// Maintains a live registry from an initial list fetched before or during node startup.
+    #[cfg(feature = "blokli")]
+    fn watch_exit_nodes(&self, initial: Vec<ExitNodeInfo>) -> anyhow::Result<ExitNodeRegistry>;
 }
 
 #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
@@ -165,6 +180,20 @@ mod impl_edgli {
             }
             Ok(addresses)
         }
+
+        #[cfg(feature = "blokli")]
+        fn subscribe_exit_nodes(
+            &self,
+        ) -> anyhow::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>> {
+            use futures::StreamExt;
+
+            Ok(Edgli::subscribe_exit_nodes(self)?.boxed())
+        }
+
+        #[cfg(feature = "blokli")]
+        fn watch_exit_nodes(&self, initial: Vec<ExitNodeInfo>) -> anyhow::Result<ExitNodeRegistry> {
+            Edgli::watch_exit_nodes(self, initial)
+        }
     }
 }
 
@@ -240,6 +269,23 @@ mod tests {
             &self,
         ) -> std::result::Result<Vec<Address>, HoprLibError> {
             Ok(self.peers.clone())
+        }
+
+        #[cfg(feature = "blokli")]
+        fn subscribe_exit_nodes(
+            &self,
+        ) -> anyhow::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>> {
+            use futures::StreamExt;
+
+            Ok(futures::stream::empty().boxed())
+        }
+
+        #[cfg(feature = "blokli")]
+        fn watch_exit_nodes(
+            &self,
+            _initial: Vec<ExitNodeInfo>,
+        ) -> anyhow::Result<ExitNodeRegistry> {
+            Err(anyhow::anyhow!("stub does not run background discovery"))
         }
     }
 
