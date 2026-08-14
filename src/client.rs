@@ -443,6 +443,9 @@ impl Edgli {
 
         let node = self.hopr.clone();
 
+        // `build` became fallible in hopr-strategy 0.26. Propagate rather than unwrap: a strategy
+        // that failed to construct would otherwise leave the reactor running with nothing driving
+        // channel lifecycle, which looks like a healthy node that never opens a channel.
         let strategies = cfg
             .strategies
             .into_iter()
