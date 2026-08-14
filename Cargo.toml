@@ -37,9 +37,6 @@ testing = ["hopr-lib/testing"]
 blokli = [
   "dep:tokio",
   "dep:url",
-  "dep:async-stream",
-  "dep:blokli-client",
-  "dep:const-hex",
   "dep:serde",
   "dep:serde_json",
 ]
@@ -108,17 +105,6 @@ hopr-strategy = { version = "0.25.0", features = [
 hopr-ticket-manager = { git = "https://github.com/hoprnet/hopr-impls", rev = "f5c44b245f7a52679185acbf244152c5fd5c2199" }
 hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", rev = "f5c44b245f7a52679185acbf244152c5fd5c2199", default-features = false }
 hopr-transport-p2p = { git = "https://github.com/hoprnet/hopr-impls", rev = "f5c44b245f7a52679185acbf244152c5fd5c2199" }
-# Direct dependency only for the raw subscription selector/update types (`discovery::subscribe_exit_nodes`):
-# `hopr_chain_connector::blokli_client` re-exports the client traits but not these. Pinned to the
-# exact rev hopr-impls' own workspace uses, so Cargo unifies it with hopr-chain-connector's
-# transitive copy instead of duplicating the crate.
-blokli-client = { git = "https://github.com/hoprnet/blokli-client", rev = "2b2d41a387f46d2d7adf4e0e66dd4dff520c0b92", optional = true }
-# `BlokliSubscriptionClient::subscribe_services` ties its returned stream to `&self`'s lifetime;
-# `discovery::subscribe_exit_nodes` needs to return an owned, 'static stream that keeps its
-# client alive for as long as the subscription lives. `stream!` builds that safely (no unsafe
-# lifetime extension) the same way `async fn` bodies already do.
-async-stream = { version = "0.3", optional = true }
-const-hex = { version = "1.19.1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 

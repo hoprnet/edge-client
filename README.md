@@ -75,6 +75,13 @@ The same `BlokliEndpoint` is accepted by `make_incentive_operations`, so the
 on-boarding flow (balances, ticket pricing, Safe deployment, withdrawals)
 honours the override too.
 
+Exit-node discovery is split across startup deliberately: call
+`list_exit_nodes(endpoint)` for the initial `gvpn:exit` destination list, then
+pass that list to `Edgli::watch_exit_nodes` after the edge client is connected.
+Live registrations, updates, and removals then come from the connected chain
+connector's domain event stream; periodic reads reconcile entries whose node
+has lost its Safe binding.
+
 `BlokliEndpoint`, `BlokliDnsOverride` and `make_incentive_operations` are
 blokli-specific: they are only available with the `blokli` feature enabled (it
 is on by default).

@@ -1,22 +1,20 @@
 //! Discovery of `gvpn:exit` nodes registered in the on-chain `HoprServiceRegistry`.
 //!
-//! Reads go through [`hopr_chain_connector::HoprBlockchainReader`], which needs only a Blokli
-//! client (no chain key, no `connect()`), so a client that only wants to discover exit nodes does
-//! not have to sync the whole channel graph first.
+//! Initial reads go through [`hopr_chain_connector::HoprBlockchainReader`], which does not require
+//! the full connector to be initialized. Live updates use the domain event stream of the connected
+//! chain connector, keeping Blokli wire types behind `hopr-chain-connector`.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
-use blokli_client::api::{
-    BlokliQueryClient, BlokliSubscriptionClient, ServiceSelector as BlokliServiceSelector,
-    types::{ServiceUpdate, ServiceUpdateKind},
-};
 use futures::{Stream, StreamExt};
 use hopr_chain_connector::HoprBlockchainReader;
-use hopr_lib::api::chain::{ChainReadServiceOperations, ServiceEntry, ServiceSelector};
+use hopr_lib::api::chain::{
+    ChainEvent, ChainEvents, ChainReadServiceOperations, ServiceEntry, ServiceSelector,
+};
 use hopr_lib::api::types::internal::prelude::ServiceType;
-use hopr_lib::api::types::primitive::prelude::{Address, ToHex};
+use hopr_lib::api::types::primitive::prelude::Address;
 use serde::Deserialize;
 
 use crate::endpoint::BlokliEndpoint;
@@ -76,26 +74,18 @@ pub struct ExitNodeInfo {
     pub updated_at: SystemTime,
 }
 
-/// Decodes one registry entry, dropping it (with a log) if the metadata does not parse.
-///
-/// The registry is permissionless — garbage and squatted entries under `gvpn:exit` are expected,
-/// not fatal, so a decode failure is skipped rather than propagated.
-fn decode(entry: ServiceEntry) -> Option<ExitNodeInfo> {
-    match parse_exit_node_metadata(entry.metadata.as_ref()) {
-        Ok(m) => Some(ExitNodeInfo {
-            node: entry.node,
-            safe: entry.safe,
-            gnosis_vpn_server: m.gnosis_vpn_server,
-            wireguard_server: m.wireguard_server,
-            meta: m.meta,
-            registered_at: entry.registered_at,
-            updated_at: entry.updated_at,
-        }),
-        Err(error) => {
-            tracing::warn!(%error, node = %entry.node, "skipping exit node with malformed metadata");
-            None
-        }
-    }
+/// Decodes one registry entry's application-specific metadata.
+fn decode(entry: ServiceEntry) -> Result<ExitNodeInfo, MetadataDecodeError> {
+    let metadata = parse_exit_node_metadata(entry.metadata.as_ref())?;
+    Ok(ExitNodeInfo {
+        node: entry.node,
+        safe: entry.safe,
+        gnosis_vpn_server: metadata.gnosis_vpn_server,
+        wireguard_server: metadata.wireguard_server,
+        meta: metadata.meta,
+        registered_at: entry.registered_at,
+        updated_at: entry.updated_at,
+    })
 }
 
 /// Fetches all currently registered, live `gvpn:exit` nodes.
@@ -109,15 +99,34 @@ pub async fn list_exit_nodes(blokli_endpoint: BlokliEndpoint) -> anyhow::Result<
 
 async fn list_exit_nodes_with_client<C>(client: C) -> anyhow::Result<Vec<ExitNodeInfo>>
 where
-    C: BlokliQueryClient + Send + Sync + 'static,
+    C: hopr_chain_connector::blokli_client::BlokliQueryClient + Send + Sync + 'static,
 {
     let reader = HoprBlockchainReader::new(client);
+    list_exit_nodes_with_reader(&reader).await
+}
+
+async fn list_exit_nodes_with_reader<R>(reader: &R) -> anyhow::Result<Vec<ExitNodeInfo>>
+where
+    R: ChainReadServiceOperations + Send + Sync,
+{
     let selector = ServiceSelector::default()
         .with_service_type(ServiceType::GVPN_EXIT)
         .with_live_only(true);
 
     let entries: Vec<ServiceEntry> = reader.stream_services(selector)?.collect().await;
-    Ok(entries.into_iter().filter_map(decode).collect())
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| {
+            let node = entry.node;
+            match decode(entry) {
+                Ok(entry) => Some(entry),
+                Err(error) => {
+                    tracing::warn!(%error, %node, "skipping exit node with malformed metadata");
+                    None
+                }
+            }
+        })
+        .collect())
 }
 
 /// What changed about a `gvpn:exit` registry entry.
@@ -125,164 +134,78 @@ where
 pub enum ExitNodeUpdateKind {
     Registered,
     Updated,
+}
+
+/// Why an exit node was removed from the usable destination set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExitNodeRemovalReason {
+    /// The service registry entry was removed on-chain.
     Deregistered,
+    /// The registered entry exists but no longer contains valid `gvpn:exit` metadata.
+    InvalidMetadata,
 }
 
-/// A live change to a `gvpn:exit` registry entry.
-#[derive(Clone, Debug)]
-pub struct ExitNodeUpdate {
-    pub kind: ExitNodeUpdateKind,
-    pub node: Address,
-    /// `None` for [`ExitNodeUpdateKind::Deregistered`], where the entry no longer exists, or when
-    /// the updated entry's metadata failed to decode.
-    pub entry: Option<ExitNodeInfo>,
+/// A live change to the usable `gvpn:exit` destination set.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExitNodeUpdate {
+    /// A valid registration or metadata update that should be inserted into the destination set.
+    Upsert {
+        kind: ExitNodeUpdateKind,
+        entry: ExitNodeInfo,
+    },
+    /// An entry that should be removed from the usable destination set.
+    Remove {
+        node: Address,
+        reason: ExitNodeRemovalReason,
+    },
 }
 
-fn model_timestamp(seconds: i32) -> Option<SystemTime> {
-    match u64::try_from(seconds) {
-        Ok(seconds) => Some(UNIX_EPOCH + Duration::from_secs(seconds)),
-        Err(_) => {
-            tracing::warn!(
-                seconds,
-                "exit node update timestamp precedes the Unix epoch"
-            );
-            None
+fn decode_event(event: ChainEvent) -> Option<ExitNodeUpdate> {
+    let (kind, entry) = match event {
+        ChainEvent::ServiceRegistered(entry) if entry.service_type == ServiceType::GVPN_EXIT => {
+            (ExitNodeUpdateKind::Registered, entry)
         }
-    }
-}
-
-/// Decodes the raw Blokli model carried by a subscription update, dropping it (with a log) on any
-/// malformed field. Mirrors [`decode`], but for the hex-encoded GraphQL model rather than the
-/// already-parsed domain [`ServiceEntry`] `list_exit_nodes` works with.
-fn decode_model_entry(model: blokli_client::api::types::ServiceEntry) -> Option<ExitNodeInfo> {
-    let node = match Address::from_hex(&model.node) {
-        Ok(node) => node,
-        Err(error) => {
-            tracing::warn!(%error, node = %model.node, "skipping exit node update with malformed node address");
-            return None;
+        ChainEvent::ServiceUpdated(entry) if entry.service_type == ServiceType::GVPN_EXIT => {
+            (ExitNodeUpdateKind::Updated, entry)
         }
-    };
-
-    let safe = match Address::from_hex(&model.safe) {
-        Ok(safe) => safe,
-        Err(error) => {
-            tracing::warn!(%error, %node, "skipping exit node update with malformed safe address");
-            return None;
-        }
-    };
-
-    let metadata_bytes = match const_hex::decode(&model.metadata) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::warn!(%error, %node, "skipping exit node update with malformed metadata encoding");
-            return None;
-        }
-    };
-
-    let metadata = match parse_exit_node_metadata(&metadata_bytes) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            tracing::warn!(%error, %node, "skipping exit node update with malformed metadata");
-            return None;
-        }
-    };
-
-    let registered_at = model_timestamp(model.registered_at)?;
-    let updated_at = model_timestamp(model.updated_at)?;
-
-    Some(ExitNodeInfo {
-        node,
-        safe,
-        gnosis_vpn_server: metadata.gnosis_vpn_server,
-        wireguard_server: metadata.wireguard_server,
-        meta: metadata.meta,
-        registered_at,
-        updated_at,
-    })
-}
-
-/// Decodes one subscription update, dropping it (with a log) on any malformed field.
-fn decode_update(
-    update: Result<ServiceUpdate, blokli_client::errors::BlokliClientError>,
-) -> Option<ExitNodeUpdate> {
-    let update = match update {
-        Ok(update) => update,
-        Err(error) => {
-            tracing::warn!(%error, "gvpn:exit subscription error");
-            return None;
-        }
-    };
-
-    let node = match Address::from_hex(&update.node) {
-        Ok(node) => node,
-        Err(error) => {
-            tracing::warn!(%error, node = %update.node, "skipping update with malformed node address");
-            return None;
-        }
-    };
-
-    match update.kind {
-        ServiceUpdateKind::Deregistered => Some(ExitNodeUpdate {
-            kind: ExitNodeUpdateKind::Deregistered,
-            node,
-            entry: None,
-        }),
-        ServiceUpdateKind::Registered | ServiceUpdateKind::Updated => {
-            let kind = if update.kind == ServiceUpdateKind::Registered {
-                ExitNodeUpdateKind::Registered
-            } else {
-                ExitNodeUpdateKind::Updated
-            };
-            Some(ExitNodeUpdate {
-                kind,
+        ChainEvent::ServiceDeregistered(service_type, node)
+            if service_type == ServiceType::GVPN_EXIT =>
+        {
+            return Some(ExitNodeUpdate::Remove {
                 node,
-                entry: update.entry.and_then(decode_model_entry),
-            })
+                reason: ExitNodeRemovalReason::Deregistered,
+            });
         }
-    }
+        _ => return None,
+    };
+
+    let node = entry.node;
+    Some(match decode(entry) {
+        Ok(entry) => ExitNodeUpdate::Upsert { kind, entry },
+        Err(error) => {
+            tracing::warn!(%error, %node, "removing exit node with malformed metadata");
+            ExitNodeUpdate::Remove {
+                node,
+                reason: ExitNodeRemovalReason::InvalidMetadata,
+            }
+        }
+    })
 }
 
 /// Subscribes to live `gvpn:exit` registrations, updates, and deregistrations.
 ///
-/// Built directly on the raw Blokli subscription — [`ChainReadServiceOperations`] has no
-/// subscribe method — so unlike [`list_exit_nodes`], updates here do not get the Safe-binding
-/// liveness cross-check: a node that goes orphaned mid-stream is not flagged until the next
-/// `list_exit_nodes` call. Acceptable for v1; reconcile periodically if that gap matters.
-///
-/// A failure to open the subscription itself (as opposed to a malformed update once open, which
-/// is merely skipped) ends the returned stream after a single log line rather than surfacing an
-/// error to the caller — the selector is always a valid, concrete `gvpn:exit` filter, so this
-/// path is not expected to fail in practice.
-pub fn subscribe_exit_nodes(
-    blokli_endpoint: BlokliEndpoint,
-) -> impl Stream<Item = ExitNodeUpdate> + Send {
-    subscribe_exit_nodes_with_client(blokli_endpoint.build_client())
-}
-
-fn subscribe_exit_nodes_with_client<C>(client: C) -> impl Stream<Item = ExitNodeUpdate> + Send
+/// Uses the already-connected chain connector's domain event stream, keeping Blokli wire types
+/// and conversion details behind `hopr-chain-connector`. Safe-binding liveness is reconciled by
+/// [`ExitNodeRegistry`] because a node losing its binding does not emit a service deregistration.
+pub fn subscribe_exit_nodes<C>(
+    chain: &C,
+) -> Result<impl Stream<Item = ExitNodeUpdate> + Send + 'static, C::Error>
 where
-    C: BlokliSubscriptionClient + Send + Sync + 'static,
+    C: ChainEvents,
 {
-    // `subscribe_services` ties its returned stream to `&client`'s lifetime; `stream!` lets this
-    // function return an owned, 'static stream that keeps `client` alive for exactly as long as
-    // the inner stream borrowed from it, without unsafe lifetime extension.
-    async_stream::stream! {
-        let selector = BlokliServiceSelector::ServiceType(ServiceType::GVPN_EXIT.as_encoded());
-        let updates = match client.subscribe_services(selector) {
-            Ok(updates) => updates,
-            Err(error) => {
-                tracing::error!(%error, "failed to open the gvpn:exit registry subscription");
-                return;
-            }
-        };
-
-        let mut updates = std::pin::pin!(updates);
-        while let Some(update) = updates.next().await {
-            if let Some(mapped) = decode_update(update) {
-                yield mapped;
-            }
-        }
-    }
+    Ok(chain
+        .subscribe()?
+        .filter_map(|event| futures::future::ready(decode_event(event))))
 }
 
 /// How often [`ExitNodeRegistry`] re-fetches the full registry to catch nodes that went orphaned
@@ -294,11 +217,22 @@ fn to_map(nodes: Vec<ExitNodeInfo>) -> HashMap<Address, ExitNodeInfo> {
     nodes.into_iter().map(|node| (node.node, node)).collect()
 }
 
+fn apply_update(nodes: &mut HashMap<Address, ExitNodeInfo>, update: ExitNodeUpdate) {
+    match update {
+        ExitNodeUpdate::Upsert { entry, .. } => {
+            nodes.insert(entry.node, entry);
+        }
+        ExitNodeUpdate::Remove { node, .. } => {
+            nodes.remove(&node);
+        }
+    }
+}
+
 /// A live, continuously updated view of registered `gvpn:exit` nodes.
 ///
-/// Owns the whole discovery lifecycle behind one handle — the initial fetch, the live
-/// subscription, and periodic liveness reconciliation — so a caller never has to see a Blokli
-/// selector or a raw registry update. Dropping the handle stops the background task.
+/// Owns the live subscription and periodic liveness reconciliation behind one handle. Construct
+/// it with the initial result from [`list_exit_nodes`] once the full edge client's chain connector
+/// is available. Dropping the handle stops the background task.
 pub struct ExitNodeRegistry {
     nodes: tokio::sync::watch::Receiver<HashMap<Address, ExitNodeInfo>>,
     task: tokio::task::AbortHandle,
@@ -322,31 +256,25 @@ impl Drop for ExitNodeRegistry {
     }
 }
 
-async fn reconcile_exit_nodes<C>(
-    client: C,
+async fn reconcile_exit_nodes<C, S>(
+    chain: C,
+    updates: S,
     tx: tokio::sync::watch::Sender<HashMap<Address, ExitNodeInfo>>,
 ) where
-    C: BlokliQueryClient + BlokliSubscriptionClient + Clone + Send + Sync + 'static,
+    C: ChainReadServiceOperations + Clone + Send + Sync + 'static,
+    S: Stream<Item = ExitNodeUpdate> + Send + 'static,
 {
-    // `None` once the live subscription ends (e.g. exhausted its own reconnect attempts); from
-    // then on this task falls back to periodic reconciliation only, rather than busy-polling a
-    // stream that will keep reporting `None`.
-    let mut live_updates = Some(std::pin::pin!(subscribe_exit_nodes_with_client(
-        client.clone()
-    )));
+    let mut live_updates = Some(std::pin::pin!(updates));
     let mut reconcile = tokio::time::interval(RECONCILE_INTERVAL);
     reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    reconcile.tick().await; // the initial fetch already happened in `watch_exit_nodes`
+    reconcile.tick().await; // the caller already supplied the initial fetch
 
     loop {
         tokio::select! {
             update = async { live_updates.as_mut()?.next().await }, if live_updates.is_some() => {
                 match update {
                     Some(update) => {
-                        tx.send_modify(|nodes| match update.entry {
-                            Some(entry) => { nodes.insert(update.node, entry); }
-                            None => { nodes.remove(&update.node); }
-                        });
+                        tx.send_modify(|nodes| apply_update(nodes, update));
                     }
                     None => {
                         tracing::warn!("gvpn:exit subscription ended; falling back to periodic reconciliation only");
@@ -355,7 +283,7 @@ async fn reconcile_exit_nodes<C>(
                 }
             }
             _ = reconcile.tick() => {
-                match list_exit_nodes_with_client(client.clone()).await {
+                match list_exit_nodes_with_reader(&chain).await {
                     Ok(nodes) => {
                         let nodes = to_map(nodes);
                         tx.send_if_modified(|current| {
@@ -375,23 +303,21 @@ async fn reconcile_exit_nodes<C>(
     }
 }
 
-/// Starts discovering registered `gvpn:exit` nodes, returning once the initial fetch completes.
+/// Starts maintaining a live exit-node registry through an already-connected chain connector.
 ///
-/// This is the intended entry point for callers that just want a live destination list without
-/// touching Blokli-specific types: it fetches the current registry, then keeps the result fresh
-/// in the background (live subscription plus periodic reconciliation) for as long as the
-/// returned [`ExitNodeRegistry`] stays alive.
-pub async fn watch_exit_nodes(blokli_endpoint: BlokliEndpoint) -> anyhow::Result<ExitNodeRegistry> {
-    watch_exit_nodes_with_client(blokli_endpoint.build_client()).await
-}
-
-async fn watch_exit_nodes_with_client<C>(client: C) -> anyhow::Result<ExitNodeRegistry>
+/// `initial` should be fetched with [`list_exit_nodes`] before or during edge-client startup. The
+/// connected connector supplies domain-level service events and is also used for periodic
+/// Safe-binding reconciliation.
+pub fn watch_exit_nodes<C>(
+    initial: Vec<ExitNodeInfo>,
+    chain: C,
+) -> Result<ExitNodeRegistry, <C as ChainEvents>::Error>
 where
-    C: BlokliQueryClient + BlokliSubscriptionClient + Clone + Send + Sync + 'static,
+    C: ChainEvents + ChainReadServiceOperations + Clone + Send + Sync + 'static,
 {
-    let initial = to_map(list_exit_nodes_with_client(client.clone()).await?);
-    let (tx, rx) = tokio::sync::watch::channel(initial);
-    let task = tokio::spawn(reconcile_exit_nodes(client, tx));
+    let updates = subscribe_exit_nodes(&chain)?;
+    let (tx, rx) = tokio::sync::watch::channel(to_map(initial));
+    let task = tokio::spawn(reconcile_exit_nodes(chain, updates, tx));
 
     Ok(ExitNodeRegistry {
         nodes: rx,
@@ -401,7 +327,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, UNIX_EPOCH};
 
     use hopr_chain_connector::testing::BlokliTestStateBuilder;
     use hopr_lib::api::chain::{DeployedSafe, ServiceMetadata};
@@ -541,132 +467,104 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn watch_exit_nodes_returns_the_initial_registry() -> anyhow::Result<()> {
-        let client = BlokliTestStateBuilder::default()
-            .with_services([entry_with_metadata(NODE, valid_metadata())?])
-            .with_deployed_safes([safe_with_nodes(&[NODE])])
-            .build_static_client();
+    #[test]
+    fn service_events_map_to_domain_updates() -> anyhow::Result<()> {
+        let registered = decode_event(ChainEvent::ServiceRegistered(entry_with_metadata(
+            NODE,
+            valid_metadata(),
+        )?))
+        .expect("gvpn registration should be mapped");
+        assert!(matches!(
+            registered,
+            ExitNodeUpdate::Upsert {
+                kind: ExitNodeUpdateKind::Registered,
+                ref entry,
+            } if entry.node == Address::from(NODE)
+        ));
 
-        let registry = watch_exit_nodes_with_client(client).await?;
-        let nodes = registry.nodes();
+        let updated = decode_event(ChainEvent::ServiceUpdated(entry_with_metadata(
+            NODE,
+            valid_metadata(),
+        )?))
+        .expect("gvpn update should be mapped");
+        assert!(matches!(
+            updated,
+            ExitNodeUpdate::Upsert {
+                kind: ExitNodeUpdateKind::Updated,
+                ..
+            }
+        ));
 
-        assert_eq!(1, nodes.len());
-        assert_eq!(Address::from(NODE), nodes[&Address::from(NODE)].node);
-
+        let deregistered = decode_event(ChainEvent::ServiceDeregistered(
+            ServiceType::GVPN_EXIT,
+            NODE.into(),
+        ))
+        .expect("gvpn deregistration should be mapped");
+        assert_eq!(
+            ExitNodeUpdate::Remove {
+                node: NODE.into(),
+                reason: ExitNodeRemovalReason::Deregistered,
+            },
+            deregistered
+        );
         Ok(())
     }
 
-    #[tokio::test]
-    async fn watch_exit_nodes_dropping_the_registry_stops_the_background_task() -> anyhow::Result<()>
-    {
-        let client = BlokliTestStateBuilder::default().build_static_client();
+    #[test]
+    fn invalid_metadata_is_an_explicit_invalid_metadata_removal() -> anyhow::Result<()> {
+        let update = decode_event(ChainEvent::ServiceUpdated(entry_with_metadata(
+            NODE,
+            b"not json".to_vec(),
+        )?))
+        .expect("gvpn update should be mapped");
 
-        let registry = watch_exit_nodes_with_client(client).await?;
-        let task = registry.task.clone();
-        drop(registry);
-
-        // `AbortHandle::abort` schedules cancellation; give the runtime a tick to apply it.
-        tokio::task::yield_now().await;
-        assert!(task.is_finished());
-
+        assert_eq!(
+            ExitNodeUpdate::Remove {
+                node: NODE.into(),
+                reason: ExitNodeRemovalReason::InvalidMetadata,
+            },
+            update
+        );
         Ok(())
     }
 
-    fn model_entry_with_metadata(
-        node: [u8; 20],
-        metadata: Vec<u8>,
-    ) -> blokli_client::api::types::ServiceEntry {
-        blokli_client::api::types::ServiceEntry {
-            service_type: "gvpn:exit".to_string(),
-            node: const_hex::encode(node),
-            safe: const_hex::encode(SAFE),
-            metadata: const_hex::encode(metadata),
-            registered_at: 1_700_000_000,
-            updated_at: 1_700_000_000,
-        }
-    }
-
     #[test]
-    fn decode_model_entry_decodes_a_well_formed_entry() {
-        let info = decode_model_entry(model_entry_with_metadata(NODE, valid_metadata()))
-            .expect("should decode");
+    fn service_events_for_other_types_are_ignored() -> anyhow::Result<()> {
+        let registered_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let entry = ServiceEntry::new(
+            "other".parse()?,
+            NODE.into(),
+            SAFE.into(),
+            ServiceMetadata::try_from(valid_metadata())?,
+            registered_at,
+            registered_at,
+        )?;
 
-        assert_eq!(Address::from(NODE), info.node);
-        assert_eq!(Address::from(SAFE), info.safe);
-        assert_eq!(
-            "172.30.0.1:8000".parse::<SocketAddr>().unwrap(),
-            info.gnosis_vpn_server
+        assert!(decode_event(ChainEvent::ServiceRegistered(entry)).is_none());
+        assert!(
+            decode_event(ChainEvent::ServiceDeregistered(
+                "other".parse()?,
+                NODE.into()
+            ))
+            .is_none()
         );
-        assert_eq!(
-            "172.30.0.1:51820".parse::<SocketAddr>().unwrap(),
-            info.wireguard_server
+        Ok(())
+    }
+
+    #[test]
+    fn applying_invalid_metadata_removes_without_claiming_deregistration() -> anyhow::Result<()> {
+        let info = decode(entry_with_metadata(NODE, valid_metadata())?)?;
+        let mut nodes = to_map(vec![info]);
+
+        apply_update(
+            &mut nodes,
+            ExitNodeUpdate::Remove {
+                node: NODE.into(),
+                reason: ExitNodeRemovalReason::InvalidMetadata,
+            },
         );
-    }
 
-    #[test]
-    fn decode_model_entry_skips_malformed_node_address() {
-        let mut model = model_entry_with_metadata(NODE, valid_metadata());
-        model.node = "not hex".to_string();
-
-        assert!(decode_model_entry(model).is_none());
-    }
-
-    #[test]
-    fn decode_model_entry_skips_malformed_metadata_encoding() {
-        let mut model = model_entry_with_metadata(NODE, valid_metadata());
-        model.metadata = "not hex".to_string();
-
-        assert!(decode_model_entry(model).is_none());
-    }
-
-    #[test]
-    fn decode_update_maps_registered_and_updated_kinds() {
-        let registered = decode_update(Ok(ServiceUpdate {
-            kind: ServiceUpdateKind::Registered,
-            service_type: "gvpn:exit".to_string(),
-            node: const_hex::encode(NODE),
-            entry: Some(model_entry_with_metadata(NODE, valid_metadata())),
-        }))
-        .expect("should decode");
-        assert_eq!(ExitNodeUpdateKind::Registered, registered.kind);
-        assert_eq!(Address::from(NODE), registered.node);
-        assert!(registered.entry.is_some());
-
-        let updated = decode_update(Ok(ServiceUpdate {
-            kind: ServiceUpdateKind::Updated,
-            service_type: "gvpn:exit".to_string(),
-            node: const_hex::encode(NODE),
-            entry: Some(model_entry_with_metadata(NODE, valid_metadata())),
-        }))
-        .expect("should decode");
-        assert_eq!(ExitNodeUpdateKind::Updated, updated.kind);
-    }
-
-    #[test]
-    fn decode_update_maps_deregistered_with_no_entry() {
-        let deregistered = decode_update(Ok(ServiceUpdate {
-            kind: ServiceUpdateKind::Deregistered,
-            service_type: "gvpn:exit".to_string(),
-            node: const_hex::encode(NODE),
-            entry: None,
-        }))
-        .expect("should decode");
-
-        assert_eq!(ExitNodeUpdateKind::Deregistered, deregistered.kind);
-        assert_eq!(Address::from(NODE), deregistered.node);
-        assert!(deregistered.entry.is_none());
-    }
-
-    #[test]
-    fn decode_update_skips_malformed_node_address() {
-        let update = decode_update(Ok(ServiceUpdate {
-            kind: ServiceUpdateKind::Deregistered,
-            service_type: "gvpn:exit".to_string(),
-            node: "not hex".to_string(),
-            entry: None,
-        }));
-
-        assert!(update.is_none());
+        assert!(!nodes.contains_key(&Address::from(NODE)));
+        Ok(())
     }
 }
