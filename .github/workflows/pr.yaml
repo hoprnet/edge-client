@@ -93,13 +93,17 @@ jobs:
           # only surfaces as behaviour that does not match the release it claims.
           fail=0
 
-          # Manifests: any hoprnet git dependency must carry branch = "release/...".
+          # Manifests: any line naming the hoprnet repo must carry branch = "release/...".
+          # Matched on `hoprnet/hoprnet` rather than a full URL literal, so a `.git` suffix or a
+          # different scheme still counts. The lock check below is the authoritative one -- it
+          # sees the resolved source however the manifest was spelled, including a multi-line
+          # [dependencies.hopr-lib] table this line-based scan would miss entirely.
           while IFS= read -r line; do
             case "${line}" in
               *'branch = "release/'*) ;;
               *) echo "::error::not on a release branch: ${line}"; fail=1 ;;
             esac
-          done < <(grep -n 'git = "https://github.com/hoprnet/hoprnet"' Cargo.toml || true)
+          done < <(grep -nE 'git *= *"[^"]*hoprnet/hoprnet' Cargo.toml || true)
 
           # Lock: the resolved source must record the same, so a stale lock cannot
           # quietly outlive a corrected manifest.

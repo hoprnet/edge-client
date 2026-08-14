@@ -122,6 +122,3 @@ anyhow = "1.0.104"
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
-
-# Temporary: pins the unreleased upstreams the hopr-lib rev above depends on. Remove once
-# hopr-api 1.21.0, hopr-utilities 0.7.0 and hopr-network-graph 0.3.3 are published.
