@@ -87,11 +87,11 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "646701cd6f93b179
 ] }
 hopr-chain-connector = { version = "0.22.1", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.3.0" }
-hopr-strategy = { version = "0.22.0", features = [
+hopr-strategy = { version = "0.26.0", features = [
   "strategy-channel-lifecycle",
 ] }
 hopr-ticket-manager = { version = "0.5.1" }
-hopr-network-graph = { version = "0.3.1" }
+hopr-network-graph = { version = "0.3.4" }
 hopr-transport-p2p = { version = "0.9.4" }
 
 # Target-specific dependencies for memory allocators

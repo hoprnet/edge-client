@@ -125,7 +125,6 @@ pub fn compute_funding_config(win_prob: f64) -> anyhow::Result<FundingConfig> {
         topup_capacity: capacity_for_face_values(TOPUP_FACE_VALUES, win_prob)?,
         lower_capacity_threshold: capacity_for_face_values(LOWER_THRESHOLD_FACE_VALUES, win_prob)?,
         min_safe_capacity_required: initial_capacity,
-        assumed_hops: ASSUMED_HOPS,
         stop_when_unfunded: true,
         sizing_mode: CapacitySizingMode::Deterministic,
     })
@@ -140,7 +139,7 @@ fn initial_channel_stake(ticket_price: HoprBalance, win_prob: f64) -> anyhow::Re
     Ok(capacity_stake(
         funding.initial_capacity,
         ticket_price,
-        funding.assumed_hops,
+        ASSUMED_HOPS,
     ))
 }
 
@@ -436,7 +435,6 @@ mod tests {
             (INITIAL_FACE_VALUES as f64 / 0.001).ceil() as u64 * payload
         );
         assert_eq!(cfg.min_safe_capacity_required, cfg.initial_capacity);
-        assert_eq!(cfg.assumed_hops, ASSUMED_HOPS);
         assert!(cfg.stop_when_unfunded);
     }
 
@@ -462,7 +460,7 @@ mod tests {
         let price = HoprBalance::new_base(10);
         for p in WIN_PROBS {
             let cfg = compute_funding_config(p).unwrap();
-            let stake = capacity_stake(cfg.lower_capacity_threshold, price, cfg.assumed_hops);
+            let stake = capacity_stake(cfg.lower_capacity_threshold, price, ASSUMED_HOPS);
             assert!(
                 covers_face_values(stake, price, p, 1),
                 "p={p}, stake={stake}"
@@ -489,7 +487,7 @@ mod tests {
         let price = HoprBalance::new_base(10);
         for p in WIN_PROBS {
             let cfg = compute_funding_config(p).unwrap();
-            let stake = capacity_stake(cfg.initial_capacity, price, cfg.assumed_hops);
+            let stake = capacity_stake(cfg.initial_capacity, price, ASSUMED_HOPS);
             assert!(
                 covers_face_values(stake, price, p, INITIAL_FACE_VALUES),
                 "p={p}, stake={stake}"
@@ -502,7 +500,7 @@ mod tests {
         let price = HoprBalance::new_base(10);
         for p in WIN_PROBS {
             let cfg = compute_funding_config(p).unwrap();
-            let stake = capacity_stake(cfg.topup_capacity, price, cfg.assumed_hops);
+            let stake = capacity_stake(cfg.topup_capacity, price, ASSUMED_HOPS);
             assert!(
                 covers_face_values(stake, price, p, TOPUP_FACE_VALUES),
                 "p={p}, stake={stake}"
@@ -593,7 +591,7 @@ mod tests {
         let price = HoprBalance::new_base(10);
         for p in WIN_PROBS {
             let cfg = compute_funding_config(p).unwrap();
-            let min_safe = capacity_stake(cfg.min_safe_capacity_required, price, cfg.assumed_hops);
+            let min_safe = capacity_stake(cfg.min_safe_capacity_required, price, ASSUMED_HOPS);
             let rec = compute_balance_recommendation(price, p, 1, no_startup_costs()).unwrap();
             assert!(rec.channel_stakes >= min_safe, "p={p}");
         }
