@@ -81,7 +81,7 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "ab4e37723fe11d29379a8801a51b670c5649545c", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "cabab0e6a97acc02ed93bd77d7d405fe07a16463", features = [
   "session-client",
   "serde",
 ] }
@@ -127,5 +127,5 @@ debug-assertions = true
 # hopr-api 1.21.0, hopr-utilities 0.7.0 and hopr-network-graph 0.3.3 are published.
 [patch.crates-io]
 hopr-api = { git = "https://github.com/hoprnet/hopr-api", rev = "4a53ed13634a5080a63760b9ca84bd9fe7710114" }
-hopr-utilities = { git = "https://github.com/hoprnet/hopr-utilities", rev = "e17451a8db2fd72cecde273ac8ef87de96c8bac0" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", rev = "d9dc437108b59776b8b9673664c88d9b177d7769" }
+hopr-utilities = { git = "https://github.com/hoprnet/hopr-utilities", rev = "047d81f96fe9019769e7cca38b55a5b71c60919d" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", rev = "b16f2d56a3ae7c1c66d64f89f762483df92d1b9d" }
