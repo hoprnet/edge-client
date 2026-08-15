@@ -89,7 +89,7 @@ hopr-chain-connector = { version = "0.22.2", git = "https://github.com/hoprnet/h
   "runtime-tokio",
 ] }
 hopr-ct-full-network = { version = "0.4.0", git = "https://github.com/hoprnet/hopr-impls", rev = "81399f427c7bf93aba1ccc3c432382c7e379b6e7" }
-hopr-strategy = { version = "0.27.0", git = "https://github.com/hoprnet/hopr-strategy", rev = "5c14e0f820084e3895868ee3903b11f6a6e17133", features = [
+hopr-strategy = { version = "0.28.0", git = "https://github.com/hoprnet/hopr-strategy", rev = "272f41000cd6e1bec9e2d08e2cd85f37aa804ea9", features = [
   "strategy-channel-lifecycle",
 ] }
 hopr-ticket-manager = { version = "0.5.2", git = "https://github.com/hoprnet/hopr-impls", rev = "81399f427c7bf93aba1ccc3c432382c7e379b6e7" }
