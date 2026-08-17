@@ -85,14 +85,14 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "release/4.0",
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { version = "0.22.1", features = ["runtime-tokio"] }
-hopr-ct-full-network = { version = "0.3.0" }
-hopr-strategy = { version = "0.26.0", features = [
+hopr-chain-connector = { version = "0.22.2", features = ["runtime-tokio"] }
+hopr-ct-full-network = { version = "0.4.0" }
+hopr-strategy = { version = "0.28.0", features = [
   "strategy-channel-lifecycle",
 ] }
-hopr-ticket-manager = { version = "0.5.1" }
-hopr-network-graph = { version = "0.3.4" }
-hopr-transport-p2p = { version = "0.9.4" }
+hopr-ticket-manager = { version = "0.5.2" }
+hopr-network-graph = { version = "0.5.0" }
+hopr-transport-p2p = { version = "0.9.5" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -102,7 +102,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 
 [dev-dependencies]
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests.
-hopr-chain-connector = { version = "0.22.1", features = [
+hopr-chain-connector = { version = "0.22.2", features = [
   "runtime-tokio",
   "testing",
 ] }
