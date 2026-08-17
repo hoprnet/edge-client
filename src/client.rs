@@ -372,20 +372,16 @@ impl Edgli {
         )
     }
 
-    /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].
-    ///
-    /// Open outgoing channels are keyed by `CapacityAllocator::Peer(address)`; the
-    /// unallocated Safe balance is keyed by `CapacityAllocator::Safe`; wxHOPR on the
-    /// node EOA (deposited, not yet swept into the Safe) is keyed by
-    /// `CapacityAllocator::NodeEoa`.  Each
+    /// Returns the data-throughput capacities of every wxHOPR stake the node can
+    /// draw on, as a [`super::strategy::CapacityAllocations`]: open outgoing
+    /// channels keyed by destination peer, the unallocated Safe balance, and
+    /// wxHOPR on the node EOA (deposited, not yet swept into the Safe).  Each
     /// [`super::strategy::Capacity`] holds the wxHOPR stake, the floor number
     /// of session frames it can fund at the current ticket price, and the
     /// corresponding raw byte capacity (`expected_messages × SESSION_MTU`).
     pub async fn describe_current_capacity_allocations(
         &self,
-    ) -> anyhow::Result<
-        std::collections::HashMap<super::strategy::CapacityAllocator, super::strategy::Capacity>,
-    > {
+    ) -> anyhow::Result<super::strategy::CapacityAllocations> {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
         let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
@@ -414,27 +410,20 @@ impl Edgli {
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        let mut map = std::collections::HashMap::new();
+        let mut peer_allocations = std::collections::HashMap::new();
         for c in channels
             .into_iter()
             .filter(|c| c.status == ChannelStatus::Open)
         {
             let capacity = super::strategy::compute_capacity(c.balance, ticket_price, win_prob)?;
-            map.insert(
-                super::strategy::CapacityAllocator::Peer(c.destination),
-                capacity,
-            );
+            peer_allocations.insert(c.destination, capacity);
         }
-        map.insert(
-            super::strategy::CapacityAllocator::Safe,
-            super::strategy::compute_capacity(safe_balance, ticket_price, win_prob)?,
-        );
-        map.insert(
-            super::strategy::CapacityAllocator::NodeEoa,
-            super::strategy::compute_capacity(node_wxhopr, ticket_price, win_prob)?,
-        );
 
-        Ok(map)
+        Ok(super::strategy::CapacityAllocations {
+            peer_allocations,
+            node: super::strategy::compute_capacity(node_wxhopr, ticket_price, win_prob)?,
+            safe: super::strategy::compute_capacity(safe_balance, ticket_price, win_prob)?,
+        })
     }
 
     /// Run a node with HOPR edge strategies integrated.
