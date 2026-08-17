@@ -64,7 +64,7 @@ pub use hopr_lib::api::types::{
 };
 
 pub use strategy::{
-    BalanceRecommendation, Capacity, CapacityAllocator, StartupCosts, compute_capacity,
+    BalanceRecommendation, Capacity, CapacityAllocations, StartupCosts, compute_capacity,
 };
 
 #[cfg(feature = "blokli")]
