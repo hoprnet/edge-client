@@ -339,6 +339,7 @@ impl Edgli {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
         let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
+        let max_fee_per_gas = crate::blokli::query_max_fee_per_gas(chain.client()).await?;
 
         let source = HasChainApi::identity(&*self.hopr).node_address;
         let all_channels = IncentiveChannelOperations::channels_from(&*self.hopr, source)
@@ -367,6 +368,7 @@ impl Edgli {
             missing,
             costs,
             cfg.channel_capacity,
+            max_fee_per_gas,
         )
     }
 
