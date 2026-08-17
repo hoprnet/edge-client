@@ -30,6 +30,44 @@ lazy_static::lazy_static! {
     pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.gnosisvpn.io".parse().unwrap();
 }
 
+/// Fallback gas price when Blokli reports none, in wei per gas — matches the
+/// connector's own `GasEstimation::default().max_fee_per_gas` (10 Gwei), the
+/// value it would sign transactions with in the same situation.
+const DEFAULT_MAX_FEE_PER_GAS: u128 = 10_000_000_000;
+
+/// Picks the EIP-1559 `max_fee_per_gas`, falling back to the legacy `gas_price`
+/// and then to [`DEFAULT_MAX_FEE_PER_GAS`] when neither is reported or parseable.
+pub(crate) fn resolve_max_fee_per_gas(
+    max_fee_per_gas: Option<&str>,
+    gas_price: Option<&str>,
+) -> u128 {
+    max_fee_per_gas
+        .and_then(|v| v.parse().ok())
+        .or_else(|| gas_price.and_then(|v| v.parse().ok()))
+        .unwrap_or(DEFAULT_MAX_FEE_PER_GAS)
+}
+
+/// Queries the chain's current `max_fee_per_gas` (wei per gas) from Blokli.
+///
+/// `hopr-chain-connector` parses these gas values but keeps them crate-private
+/// and does not surface them through `ChainValues`, so the raw Blokli query is
+/// the only way to reach them. A failed query is an error; a chain that simply
+/// reports no gas price falls back per [`resolve_max_fee_per_gas`].
+pub(crate) async fn query_max_fee_per_gas<C: BlokliQueryClient>(
+    client: &C,
+) -> anyhow::Result<u128> {
+    let info = client.query_chain_info().await?;
+    let resolved =
+        resolve_max_fee_per_gas(info.max_fee_per_gas.as_deref(), info.gas_price.as_deref());
+    tracing::debug!(
+        max_fee_per_gas = ?info.max_fee_per_gas,
+        gas_price = ?info.gas_price,
+        resolved,
+        "resolved chain gas price"
+    );
+    Ok(resolved)
+}
+
 /// Constructs a fully-wired [`IncentiveOperations`] handle backed by a Blokli client.
 ///
 /// This is the only public entry point for obtaining an `IncentiveOperations` impl —
@@ -77,6 +115,9 @@ pub trait IncentiveOperations: Send + Sync {
 
     /// Fetch current on-chain ticket pricing parameters.
     async fn ticket_stats(&self) -> anyhow::Result<TicketStats>;
+
+    /// Fetch the chain's current EIP-1559 `max_fee_per_gas`, in wei per gas.
+    async fn max_fee_per_gas(&self) -> anyhow::Result<u128>;
 
     /// Returns what this key-pair still owes before being fully up and running,
     /// verified against on-chain state: the one-time key-binding fee burned from
@@ -211,6 +252,10 @@ where
         })
     }
 
+    pub async fn max_fee_per_gas(&self) -> anyhow::Result<u128> {
+        query_max_fee_per_gas(self.connector.client()).await
+    }
+
     pub async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts> {
         let me = self.chain_key.public().to_address();
         let safe_deployed = self.retrieve_safe().await?.is_some();
@@ -255,6 +300,10 @@ where
         SafelessInteractor::ticket_stats(self).await
     }
 
+    async fn max_fee_per_gas(&self) -> anyhow::Result<u128> {
+        SafelessInteractor::max_fee_per_gas(self).await
+    }
+
     async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts> {
         SafelessInteractor::compute_costs_to_start(self).await
     }
@@ -282,6 +331,38 @@ pub struct SafeModuleDeploymentResult {
 mod tests {
     use super::*;
     use hopr_chain_connector::{errors::ConnectorError, testing::BlokliTestStateBuilder};
+
+    #[test]
+    fn resolve_max_fee_per_gas_prefers_eip1559_value() {
+        assert_eq!(
+            resolve_max_fee_per_gas(Some("2000000000"), Some("1000000000")),
+            2_000_000_000
+        );
+    }
+
+    #[test]
+    fn resolve_max_fee_per_gas_falls_back_to_legacy_gas_price() {
+        assert_eq!(
+            resolve_max_fee_per_gas(None, Some("1500000000")),
+            1_500_000_000
+        );
+        // An unparseable EIP-1559 value must not shadow a usable legacy one.
+        assert_eq!(
+            resolve_max_fee_per_gas(Some(""), Some("1500000000")),
+            1_500_000_000
+        );
+    }
+
+    #[test]
+    fn resolve_max_fee_per_gas_falls_back_to_default() {
+        // Neither reported, and unparseable values (which must not be treated as
+        // a free chain) both land on the connector's own default.
+        assert_eq!(resolve_max_fee_per_gas(None, None), DEFAULT_MAX_FEE_PER_GAS);
+        assert_eq!(
+            resolve_max_fee_per_gas(Some("not a number"), None),
+            DEFAULT_MAX_FEE_PER_GAS
+        );
+    }
 
     #[test]
     fn default_blokli_url_is_correct() {
