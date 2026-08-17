@@ -81,13 +81,13 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "kauki/test/transport/return-routing-origination-stall", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "release/4.0", features = [
   "session-client",
   "serde",
 ] }
 hopr-chain-connector = { version = "0.22.2", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.4.0" }
-hopr-strategy = { version = "0.28.0", git = "https://github.com/hoprnet/hopr-strategy", rev = "5fac611d95768a161aa972c24902070d3aad5f10", features = [
+hopr-strategy = { version = "0.28.0", features = [
   "strategy-channel-lifecycle",
 ] }
 hopr-ticket-manager = { version = "0.5.2" }

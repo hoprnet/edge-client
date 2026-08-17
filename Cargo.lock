@@ -4010,7 +4010,7 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-packet"
 version = "1.4.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "bimap",
  "const-hex",
@@ -4046,7 +4046,7 @@ dependencies = [
 [[package]]
 name = "hopr-lib"
 version = "4.0.4"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -4107,7 +4107,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-app"
 version = "1.0.1"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "hopr-crypto-packet",
  "hopr-types",
@@ -4120,7 +4120,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-hopr"
 version = "6.1.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4149,7 +4149,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-session"
 version = "1.5.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "aquamarine",
  "asynchronous-codec",
@@ -4180,7 +4180,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-start"
 version = "1.1.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "aquamarine",
  "flagset",
@@ -4195,7 +4195,8 @@ dependencies = [
 [[package]]
 name = "hopr-strategy"
 version = "0.28.0"
-source = "git+https://github.com/hoprnet/hopr-strategy?rev=5fac611d95768a161aa972c24902070d3aad5f10#5fac611d95768a161aa972c24902070d3aad5f10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b80cfdf4632f8ffc73ad4d5c9bfadaa14783c7f4bf44c7ac7e9940fcd03137"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4246,7 +4247,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport"
 version = "0.48.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "ahash",
  "anyhow",
@@ -4289,7 +4290,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-mixer"
 version = "0.4.1"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "futures",
  "futures-timer",
@@ -4328,7 +4329,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-probe"
 version = "0.8.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4354,7 +4355,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-session"
 version = "0.28.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4386,7 +4387,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-tag-allocator"
 version = "0.1.1"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ftest%2Ftransport%2Freturn-routing-origination-stall#3fc10e2701fbcd0f9f0eaffa1ed9e7bdc3930d3d"
+source = "git+https://github.com/hoprnet/hoprnet?branch=release%2F4.0#adefa298ade3d61c45f194000e4feca2cc073a26"
 dependencies = [
  "hopr-protocol-app",
  "serde",
