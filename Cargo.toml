@@ -85,16 +85,14 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "kauki/test/tr
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { version = "0.22.2", git = "https://github.com/hoprnet/hopr-impls", rev = "ad0fd7e4b35ac462846011ec7446fd404f5bcf44", features = [
-  "runtime-tokio",
-] }
-hopr-ct-full-network = { version = "0.4.0", git = "https://github.com/hoprnet/hopr-impls", rev = "ad0fd7e4b35ac462846011ec7446fd404f5bcf44" }
-hopr-strategy = { version = "0.28.0", git = "https://github.com/hoprnet/hopr-strategy", rev = "272f41000cd6e1bec9e2d08e2cd85f37aa804ea9", features = [
+hopr-chain-connector = { version = "0.22.2", features = ["runtime-tokio"] }
+hopr-ct-full-network = { version = "0.4.0" }
+hopr-strategy = { version = "0.28.0", git = "https://github.com/hoprnet/hopr-strategy", rev = "5fac611d95768a161aa972c24902070d3aad5f10", features = [
   "strategy-channel-lifecycle",
 ] }
-hopr-ticket-manager = { version = "0.5.2", git = "https://github.com/hoprnet/hopr-impls", rev = "ad0fd7e4b35ac462846011ec7446fd404f5bcf44" }
-hopr-network-graph = { version = "0.5.0", git = "https://github.com/hoprnet/hopr-impls", rev = "ad0fd7e4b35ac462846011ec7446fd404f5bcf44" }
-hopr-transport-p2p = { version = "0.9.5", git = "https://github.com/hoprnet/hopr-impls", rev = "ad0fd7e4b35ac462846011ec7446fd404f5bcf44" }
+hopr-ticket-manager = { version = "0.5.2" }
+hopr-network-graph = { version = "0.5.0" }
+hopr-transport-p2p = { version = "0.9.5" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -104,7 +102,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 
 [dev-dependencies]
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests.
-hopr-chain-connector = { version = "0.22.2", git = "https://github.com/hoprnet/hopr-impls", rev = "ad0fd7e4b35ac462846011ec7446fd404f5bcf44", features = [
+hopr-chain-connector = { version = "0.22.2", features = [
   "runtime-tokio",
   "testing",
 ] }
