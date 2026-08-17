@@ -414,7 +414,7 @@ mod tests {
             .with_balances([(node, XDaiBalance::new_base(10))])
             .with_balances([(recipient, HoprBalance::zero())])
             .with_balances([(recipient, XDaiBalance::zero())])
-            .with_hopr_network_chain_info("rotsee")
+            .with_hopr_network_chain_info("anvil-localhost")
             .build_dynamic_client(placeholder_module_addr())
     }
 
@@ -490,7 +490,7 @@ mod tests {
                 XDaiBalance::new_base(10),
                 HoprBalance::new_base(100),
             )
-            .with_hopr_network_chain_info("rotsee")
+            .with_hopr_network_chain_info("anvil-localhost")
             .build_dynamic_client(placeholder_module_addr());
         let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
 

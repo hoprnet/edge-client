@@ -71,6 +71,57 @@ jobs:
           if [[ "$HEAD_REPO" != "$BASE_REPO" ]]; then
             gh pr edit "$PR_NUMBER" --add-label "external"
           fi
+  validate-release-branch-deps:
+    name: Release branch dependencies
+    if: github.event_name == 'pull_request'
+    runs-on: depot-ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Every hoprnet git dependency must track a release branch
+        run: |
+          set -euo pipefail
+
+          # Cargo forbids `branch` and `rev` together, so the branch lives in the
+          # manifest and the resolved commit in the lock. A bare `rev` pin therefore
+          # loses the branch entirely, and nothing else notices: the build still
+          # succeeds against whatever commit was pinned, however stale, and the drift
+          # only surfaces as behaviour that does not match the release it claims.
+          fail=0
+
+          # Manifests: any line naming the hoprnet repo must carry branch = "release/...".
+          # Matched on `hoprnet/hoprnet` rather than a full URL literal, so a `.git` suffix or a
+          # different scheme still counts. The lock check below is the authoritative one -- it
+          # sees the resolved source however the manifest was spelled, including a multi-line
+          # [dependencies.hopr-lib] table this line-based scan would miss entirely.
+          while IFS= read -r line; do
+            case "${line}" in
+              *'branch = "release/'*) ;;
+              *) echo "::error::not on a release branch: ${line}"; fail=1 ;;
+            esac
+          done < <(grep -nE 'git *= *"[^"]*hoprnet/hoprnet' Cargo.toml || true)
+
+          # Lock: the resolved source must record the same, so a stale lock cannot
+          # quietly outlive a corrected manifest.
+          while IFS= read -r src; do
+            case "${src}" in
+              *'?branch=release%2F'*) ;;
+              *) echo "::error::lock entry is not from a release branch: ${src}"; fail=1 ;;
+            esac
+          done < <(grep -o 'source = "git+https://github.com/hoprnet/hoprnet[^"]*"' Cargo.lock | sort -u || true)
+
+          if [ "${fail}" -ne 0 ]; then
+            echo "::error::hoprnet dependencies must use branch = \"release/<x.y>\"; a bare rev pin is not accepted"
+            exit 1
+          fi
+
+          echo "All hoprnet git dependencies track a release branch:"
+          grep -n 'git = "https://github.com/hoprnet/hoprnet"' Cargo.toml || true
+          grep -o 'source = "git+https://github.com/hoprnet/hoprnet[^"]*"' Cargo.lock | sort -u || true
   checks:
     name: Check
     uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@d0cffaf9e9209c8eca00e8c74e82ac3f5f3cf7bb # workflow-checks-v2
