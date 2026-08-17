@@ -286,6 +286,8 @@ pub enum CapacityAllocator {
     Peer(Address),
     /// The unallocated wxHOPR balance held in the user's Safe contract.
     Safe,
+    /// wxHOPR held on the node EOA, not yet swept into the Safe.
+    NodeEoa,
 }
 
 /// Data-throughput capacity for a wxHOPR stake at the current ticket price.
@@ -353,9 +355,7 @@ pub(crate) fn compute_balance_recommendation(
 /// `win_prob` must be in `(0, 1]`; the same validation guard as [`compute_funding_config`] applies.
 ///
 /// Public so downstream consumers can compute the capacity of stakes edgli does not
-/// track itself (e.g. wxHOPR sitting on the node EOA) with the same math as
-/// `Edgli::describe_current_capacity_allocations`, until issue #141 moves the
-/// node-EOA capacity into edgli.
+/// track itself with the same math as `Edgli::describe_current_capacity_allocations`.
 pub fn compute_capacity(
     stake: HoprBalance,
     ticket_price: HoprBalance,

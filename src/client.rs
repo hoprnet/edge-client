@@ -375,7 +375,9 @@ impl Edgli {
     /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].
     ///
     /// Open outgoing channels are keyed by `CapacityAllocator::Peer(address)`; the
-    /// unallocated Safe balance is keyed by `CapacityAllocator::Safe`.  Each
+    /// unallocated Safe balance is keyed by `CapacityAllocator::Safe`; wxHOPR on the
+    /// node EOA (deposited, not yet swept into the Safe) is keyed by
+    /// `CapacityAllocator::NodeEoa`.  Each
     /// [`super::strategy::Capacity`] holds the wxHOPR stake, the floor number
     /// of session frames it can fund at the current ticket price, and the
     /// corresponding raw byte capacity (`expected_messages × SESSION_MTU`).
@@ -407,6 +409,11 @@ impl Edgli {
             None => HoprBalance::zero(),
         };
 
+        let node_wxhopr: HoprBalance = chain
+            .balance(node_address)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
         let mut map = std::collections::HashMap::new();
         for c in channels
             .into_iter()
@@ -421,6 +428,10 @@ impl Edgli {
         map.insert(
             super::strategy::CapacityAllocator::Safe,
             super::strategy::compute_capacity(safe_balance, ticket_price, win_prob)?,
+        );
+        map.insert(
+            super::strategy::CapacityAllocator::NodeEoa,
+            super::strategy::compute_capacity(node_wxhopr, ticket_price, win_prob)?,
         );
 
         Ok(map)
