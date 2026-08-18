@@ -29,6 +29,8 @@ pub use hopr_lib::exports::transport::FlowControlConfig;
 // `url` dependency, which would have to match this crate's version to unify.
 #[cfg(feature = "blokli")]
 pub use url::Url;
+// `AccountEntry::get_multiaddrs`, reachable via the chain API, exposes this type.
+pub use multiaddr;
 
 /// Returns a [`PathPlannerConfig`] optimised for low-latency path selection.
 ///
