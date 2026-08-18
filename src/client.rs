@@ -367,7 +367,7 @@ impl Edgli {
             win_prob,
             missing,
             costs,
-            cfg.channel_capacity,
+            cfg,
             max_fee_per_gas,
         )
     }
