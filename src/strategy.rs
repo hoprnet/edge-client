@@ -276,16 +276,16 @@ impl BalanceRecommendation {
     }
 }
 
-/// Data-throughput capacity for a stake of wxHOPR at the current ticket price.
-///
-/// Key for the map returned by
-/// [`crate::client::Edgli::describe_current_capacity_allocations`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CapacityAllocator {
-    /// An open outgoing payment channel to the given peer.
-    Peer(Address),
+/// Data-throughput capacities of every wxHOPR stake the node can draw on,
+/// returned by [`crate::client::Edgli::describe_current_capacity_allocations`].
+#[derive(Clone, Debug)]
+pub struct CapacityAllocations {
+    /// Open outgoing payment channels, keyed by destination peer.
+    pub peer_allocations: std::collections::HashMap<Address, Capacity>,
+    /// wxHOPR on the node EOA, not yet swept into the Safe.
+    pub node: Capacity,
     /// The unallocated wxHOPR balance held in the user's Safe contract.
-    Safe,
+    pub safe: Capacity,
 }
 
 /// Data-throughput capacity for a wxHOPR stake at the current ticket price.
