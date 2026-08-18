@@ -114,31 +114,22 @@ pub struct IncentiveConfiguration {
     #[default(None)]
     pub channel_capacity: Option<ByteSize>,
 
-    /// Data volume added to a channel's stake when it is topped up. Passed through verbatim
-    /// when set. Default: `None` — the strategy's own top-up capacity.
+    /// Data volume added to a channel's stake on top-up. Default: `None` — the strategy's own.
     #[default(None)]
     pub topup_capacity: Option<ByteSize>,
 
-    /// Channel balance, expressed as data capacity, below which a top-up is triggered.
-    /// Passed through verbatim when set. Default: `None` — the strategy's own threshold.
+    /// Channel balance (as data capacity) below which a top-up fires. Default: `None` — the strategy's own.
     #[default(None)]
     pub lower_capacity_threshold: Option<ByteSize>,
 
-    /// Minimum safe balance, expressed as data capacity, required before the strategy opens
-    /// or funds any channel.
-    ///
-    /// Setting this explicitly opts out of the [`MIN_SAFE_MULTIPLE`] floor normally derived
-    /// from [`channel_capacity`](Self::channel_capacity) — the value given here is used
-    /// as-is, so a figure below `2 × channel_capacity` trades away the safety margin that
-    /// floor exists for. Default: `None` — the derived floor.
+    /// Minimum safe balance (as data capacity) before opening/funding any channel. Set
+    /// explicitly to opt out of the [`MIN_SAFE_MULTIPLE`] × [`channel_capacity`](Self::channel_capacity)
+    /// floor. Default: `None` — the derived floor.
     #[default(None)]
     pub min_safe_capacity_required: Option<ByteSize>,
 
-    /// How each capacity field above converts to a wxHOPR stake.
-    ///
-    /// Feeds both this configuration's reactor ([`default_strategy_cfg`]) and its balance
-    /// recommendation ([`minimum_balance_recommendation`]) through the same
-    /// [`compute_funding_config`], so the two can't disagree about which mode is in effect.
+    /// How each capacity field above converts to a wxHOPR stake. Feeds both the reactor and
+    /// the balance recommendation via [`compute_funding_config`], so they can't disagree.
     /// Default: `None` — [`SIZING_MODE`].
     #[default(None)]
     pub sizing_mode: Option<CapacitySizingMode>,
@@ -190,14 +181,9 @@ fn resolve_funding(
     funding.resolve::<EdgePacketTransport>(ticket_price, win_prob)
 }
 
-/// [`FundingConfig`] for the sizing fields on `cfg`.
-///
-/// Each field set on `cfg` is passed through verbatim; anything left `None` keeps the
-/// strategy's own default. `min_safe_capacity_required` is the one exception when *unset*
-/// — see [`MIN_SAFE_MULTIPLE`] — but is otherwise honoured like the rest.
-///
-/// All resolve through `cfg.sizing_mode` (or [`SIZING_MODE`] when unset); [`resolve_funding`]
-/// converts them to wxHOPR.
+/// [`FundingConfig`] for the sizing fields on `cfg`: each is passed through verbatim, `None`
+/// keeps the strategy's default, and an unset `min_safe_capacity_required` gets the
+/// [`MIN_SAFE_MULTIPLE`] floor instead. [`resolve_funding`] converts the result to wxHOPR.
 pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<FundingConfig> {
     let defaults = FundingConfig::default();
     let initial_capacity = cfg.channel_capacity.unwrap_or(defaults.initial_capacity);
@@ -614,9 +600,8 @@ mod tests {
 
     #[test]
     fn funding_config_honours_an_explicit_min_safe_capacity_verbatim() {
-        // Unlike the derived floor (see funding_config_min_safe_covers_at_least_two_channels),
-        // an explicit value is not raised to 2x initial_capacity — the operator is opting out
-        // of that safety margin on purpose.
+        // Not raised to 2x initial_capacity like the derived floor — see
+        // funding_config_min_safe_covers_at_least_two_channels for that case.
         let cfg = compute_funding_config(&IncentiveConfiguration {
             channel_capacity: Some(ByteSize::mib(640)),
             min_safe_capacity_required: Some(ByteSize::mib(640)),
