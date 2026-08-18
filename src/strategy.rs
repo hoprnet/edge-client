@@ -351,10 +351,7 @@ pub(crate) fn compute_balance_recommendation(
 /// Compute the data-throughput capacity for a given wxHOPR stake at the current ticket price.
 ///
 /// `win_prob` must be in `(0, 1]`; the same validation guard as [`compute_funding_config`] applies.
-///
-/// Public so downstream consumers can compute the capacity of stakes edgli does not
-/// track itself with the same math as `Edgli::describe_current_capacity_allocations`.
-pub fn compute_capacity(
+pub(crate) fn compute_capacity(
     stake: HoprBalance,
     ticket_price: HoprBalance,
     win_prob: f64,

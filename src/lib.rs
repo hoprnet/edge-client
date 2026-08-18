@@ -63,9 +63,7 @@ pub use hopr_lib::api::types::{
     primitive::prelude::{Balance, XDai},
 };
 
-pub use strategy::{
-    BalanceRecommendation, Capacity, CapacityAllocations, StartupCosts, compute_capacity,
-};
+pub use strategy::{BalanceRecommendation, Capacity, CapacityAllocations, StartupCosts};
 
 #[cfg(feature = "blokli")]
 pub use strategy::minimum_balance_recommendation;
