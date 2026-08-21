@@ -30,28 +30,11 @@ use crate::endpoint::BlokliEndpoint;
 use crate::errors::EdgliError;
 
 /// The deposit address type this build's `HoprPixSpec` produces.
-///
-/// Naming this in the `build_non_anonymous` call below *is* the assertion that the deposit pool and
-/// the node's PIX spec agree: the builder is bound on `A: DepositAddressOf<PoolKeypair>`, which
-/// holds only for the address its own pool settles to. A mismatched pairing therefore stops at that
-/// call site with a message naming both the offending type and the features that fix it, instead of
-/// failing once per event at runtime having deposited nothing.
-///
-/// Which instantiation of `HoprPixSpec` is in play is decided by the *feature graph*, not by
-/// anything visible in this file — `hopr-lib/pix-secp256k1` versus its default `pix-bjj`, three
-/// crates away. The secp256k1 pool settles with a plain `HoprToken.transfer` signed by the node
-/// key, so it can only reach an Ethereum address; a Baby JubJub public key is a curve point, not an
-/// account, and no transfer can reach one.
 #[cfg(feature = "pix")]
 type SpecDepositAddress =
     <hopr_lib::exports::transport::HoprPixSpec as hopr_lib::exports::transport::PixSpec>::DepositAddress;
 
 /// The deposit pool this build selected, for the startup log line.
-///
-/// Every other guarantee about the pairing is compile-time, and a library consumer does not choose
-/// features at the point they read the log. This is the one thing that makes the choice visible at
-/// runtime — and the two pools differ in whether deposits are anonymous, so "which one is running"
-/// is not a detail.
 #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
 const PIX_POOL: &str = "non-anonymous-secp256k1";
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
@@ -469,12 +452,6 @@ impl Edgli {
     /// `base` with PIX switched on: the `UsePIX` capability added, and `pix_ssa_quota` filled from
     /// this node's own configuration.
     ///
-    /// One call rather than two fields the caller sets separately, because setting either alone is
-    /// a defect the node can only report once the Session is already being opened — and one of the
-    /// two directions is silent. A quota without the capability opens a Session the Exit relays
-    /// with no deposit expectation at all, while the caller believes it is paying; the capability
-    /// without a quota announces PIX with no negotiated parameters. Neither is representable here.
-    ///
     /// Every other field of `base` is passed through, so the caller keeps control of routing,
     /// SURB management and flow control.
     #[cfg(feature = "pix")]
@@ -534,19 +511,6 @@ impl Edgli {
                             max_deposit_tracking_time = ?sub_cfg.pool.max_deposit_tracking_time,
                             "enabling the PIX strategy"
                         );
-                        // One builder per pool rather than one call that dispatches: the pool is
-                        // named here, and `SpecDepositAddress` is the witness that it can settle
-                        // what this build's spec produces. `PixDepositAddress` is a runtime enum
-                        // over every scheme, so the strategy's narrowing to the pool's own address
-                        // type is a `TryFrom` it could only fail per-event at runtime, having
-                        // deposited nothing; the witness turns that into a compile error here. It
-                        // appears only in a bound, so it must be named.
-                        //
-                        // The arms are mutually exclusive by `compile_error!` in `strategy.rs`
-                        // rather than by the `not(...)` below alone — enabling both features
-                        // resolves `HoprPixSpec` to secp256k1 *successfully*, so precedence here
-                        // would silently build the visible pool for someone who asked for the
-                        // anonymous one.
                         #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
                         let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
                             .build_non_anonymous::<_, SpecDepositAddress>(

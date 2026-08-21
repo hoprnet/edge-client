@@ -148,16 +148,13 @@ node key — the one call the Safe payload generator does not route through the
 Safe module — so the wxHOPR comes off the node address, while `deploy_safe`
 sweeps that balance _into_ the Safe during onboarding, leaving it at zero.
 
-An operator running PIX therefore has to leave a wxHOPR float on the node
-address, sized against `price_per_byte × quota_per_ssa × expected SSA cycles`. A
-node that runs dry stops depositing and the Exit closes the Session on its
-deposit deadline, with nothing logged as an error at this end.
+An operator running PIX therefore has to leave a wxHOPR (and xDai for gas) float
+on the node address, sized against
+`price_per_byte × quota_per_ssa × expected SSA cycles`. A node that runs dry
+stops depositing, and the Exit closes the Session on its deposit deadline, with
+nothing logged as an error at this end.
 `Edgli::describe_current_capacity_allocations` reports the remaining float as
 its `node` allocation, which is the figure to watch.
-
-Moving deposits to the Safe is an upstream change — a Safe-routed transfer
-primitive in `hopr-types` and `hopr-chain-connector` — not something this crate
-can decide.
 
 Where `pix-curvy`'s funds will come from is not yet settled — its
 `deposit_funds_to` is unimplemented — so this section is about `pix-test` only.
