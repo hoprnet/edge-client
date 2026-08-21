@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+#[cfg(feature = "pix-secp256k1")]
+use std::time::Duration;
 
 use bytesize::ByteSize;
 use hopr_lib::api::node::PacketTransport;
@@ -65,8 +67,129 @@ const SIZING_MODE: CapacitySizingMode = CapacitySizingMode::Probabilistic {
 use hopr_lib::api::chain::{AccountSelector, ChainReadAccountOperations, ChainValues};
 
 /// Subset of strategies relevant to an edge node.
+///
+/// `#[non_exhaustive]` because [`Pix`](Self::Pix) is feature-gated: a downstream `match` would
+/// otherwise be exhaustive under one feature set and not under another, which makes turning
+/// `pix-secp256k1` on a breaking change for every consumer rather than an additive one.
+#[non_exhaustive]
 pub enum EdgeStrategyKind {
-    ChannelLifecycle(ChannelLifecycleConfig),
+    /// Boxed because [`ChannelLifecycleConfig`] is some 560 bytes against `Pix`'s few dozen, and
+    /// every element of a `MultiStrategyConfig` would otherwise be sized for the largest. `hoprd`
+    /// boxes the same variant of its own strategy enum for the same reason.
+    ChannelLifecycle(Box<ChannelLifecycleConfig>),
+    /// Pays the Exit for the traffic it delivers. See [`PixEntryConfig`].
+    #[cfg(feature = "pix-secp256k1")]
+    Pix(PixEntryConfig),
+}
+
+/// Entry-side PIX settlement knobs.
+///
+/// Only the fields an Entry reaches. The recovery store, the withdrawal batching window, the
+/// sweep's gas top-up and its retry budget are Exit-side and stay at their upstream defaults —
+/// which is safe rather than merely tidy. `HoprTransport::run_inner` gives an Entry node a PIX
+/// toolbox with the share generator and a *dummy* reconstructor, and never wires the Exit
+/// acknowledgement processing, so `PixEvent::PrivateKeyRecovered` — the only event that consults
+/// any of those fields — cannot fire on this node. There is nothing here for an operator to get
+/// wrong because there is nothing here that runs.
+///
+/// Defaults are read from the upstream types rather than restated, so a change to what PIX charges
+/// arrives here instead of being silently overridden by a stale copy.
+// The two cross-references below are code spans rather than intra-doc links on purpose:
+// `Edgli` and `blokli` need the `blokli` feature, which `pix-secp256k1` does not imply, so a
+// `--features pix-secp256k1` doc build would reject them as broken links.
+#[cfg(feature = "pix-secp256k1")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PixEntryConfig {
+    /// wxHOPR charged per byte of the agreed per-SSA quota. One deposit is
+    /// `price_per_byte × quota_per_ssa`, where the quota is
+    /// `polys_per_ssa × (shares_per_poly + surplus_shares) × PACKET_PAYLOAD_SIZE`.
+    ///
+    /// # Deposits are paid from the node's own account, not the Safe
+    ///
+    /// The deposit is a direct `HoprToken.transfer` signed by the node key: it is the one call the
+    /// Safe payload generator does not route through the Safe module. So the wxHOPR comes off the
+    /// node's own address, while `IncentiveOperations::deploy_safe` sweeps that balance *into* the
+    /// Safe during onboarding.
+    ///
+    /// An operator running PIX therefore has to leave a wxHOPR float on the node address, sized
+    /// against `price_per_byte × quota_per_ssa × expected SSA cycles`. A node that runs dry stops
+    /// depositing and the Exit closes the Session on its deposit deadline — with nothing logged as
+    /// an error at this end. `Edgli::describe_current_capacity_allocations` reports the remaining
+    /// float as its `node` allocation.
+    ///
+    /// Upstream default: 1 wxHOPR, which prices a default-dimensioned SSA far past any sane
+    /// ceiling. Set this against your own dimensions.
+    pub price_per_byte: HoprBalance,
+
+    /// Ceiling on a single SSA deposit.
+    ///
+    /// A computed deposit above this is refused outright rather than trimmed, which starves the
+    /// Session until the Exit's deposit deadline closes it. It is a guard against a
+    /// mis-dimensioned quota, not a budget.
+    ///
+    /// Upstream default: 100 wxHOPR.
+    pub max_ssa_allocation: HoprBalance,
+
+    /// Debounce window before a batch of pending deposits is flushed.
+    ///
+    /// Resets on each new event, so a burst is paid in one batched call. Upstream default: 500 ms.
+    pub deposit_buffer_period: Duration,
+
+    /// How long the pool keeps polling a stealth address for the deposit to land.
+    ///
+    /// Also sets the poll cadence, at a tenth of this. That has to stay comfortably below the peer
+    /// Exit's `max_deposit_wait + max_ssa_delivery_time`, or only the single immediate balance
+    /// check happens before the Exit gives up on the Session.
+    ///
+    /// Upstream default: 60 s.
+    pub max_deposit_tracking_time: Duration,
+
+    /// Attempts *in addition to* the first for a deposit transfer.
+    ///
+    /// Retrying is safe because every attempt re-reads the destination balance and sends nothing
+    /// if it already holds the amount. Upstream default: 3.
+    pub max_deposit_retries: usize,
+}
+
+#[cfg(feature = "pix-secp256k1")]
+impl Default for PixEntryConfig {
+    fn default() -> Self {
+        let strategy = hopr_strategy::pix::strategy::PixStrategyConfig::default();
+        let pool = hopr_strategy::pix::secp256k1::PoolConfig::default();
+        Self {
+            price_per_byte: strategy.price_per_byte,
+            max_ssa_allocation: strategy.max_ssa_allocation,
+            deposit_buffer_period: strategy.deposit_buffer_period,
+            max_deposit_tracking_time: pool.max_deposit_tracking_time,
+            max_deposit_retries: pool.max_deposit_retries,
+        }
+    }
+}
+
+#[cfg(feature = "pix-secp256k1")]
+impl PixEntryConfig {
+    /// The pool-agnostic half, with the Exit-side fields left at their upstream defaults.
+    ///
+    /// `pix_recovery_db_path` and `pix_recovery_password_env` must stay *both* unset: the strategy
+    /// refuses to build if exactly one of them is given, and an Entry has no recovered key to
+    /// persist either way.
+    pub(crate) fn strategy_config(&self) -> hopr_strategy::pix::strategy::PixStrategyConfig {
+        hopr_strategy::pix::strategy::PixStrategyConfig {
+            price_per_byte: self.price_per_byte,
+            max_ssa_allocation: self.max_ssa_allocation,
+            deposit_buffer_period: self.deposit_buffer_period,
+            ..Default::default()
+        }
+    }
+
+    /// The pool half, with the sweep's gas top-up and retry budget left at their upstream defaults.
+    pub(crate) fn pool_config(&self) -> hopr_strategy::pix::secp256k1::PoolConfig {
+        hopr_strategy::pix::secp256k1::PoolConfig {
+            max_deposit_tracking_time: self.max_deposit_tracking_time,
+            max_deposit_retries: self.max_deposit_retries,
+            ..Default::default()
+        }
+    }
 }
 
 /// Strategy configuration for an edge node reactor.
@@ -519,7 +642,7 @@ pub fn default_strategy_cfg(
         ..Default::default()
     };
     Ok(MultiStrategyConfig {
-        strategies: vec![EdgeStrategyKind::ChannelLifecycle(cfg)],
+        strategies: vec![EdgeStrategyKind::ChannelLifecycle(Box::new(cfg))],
     })
 }
 
@@ -870,7 +993,7 @@ mod tests {
             ..Default::default()
         };
         let cfg = MultiStrategyConfig {
-            strategies: vec![EdgeStrategyKind::ChannelLifecycle(lifecycle_cfg)],
+            strategies: vec![EdgeStrategyKind::ChannelLifecycle(Box::new(lifecycle_cfg))],
         };
         assert_eq!(cfg.strategies.len(), 1);
         assert!(matches!(
@@ -891,8 +1014,14 @@ mod tests {
             ..Default::default()
         };
         let cfg = default_strategy_cfg(&sizing).unwrap();
-        let EdgeStrategyKind::ChannelLifecycle(lifecycle_cfg) = &cfg.strategies[0];
-        let funding = &lifecycle_cfg.funding;
+        // A `match` rather than a `let`-`else`: the wildcard arm only exists when the enum has a
+        // second variant, and a `let`-`else` would have an unreachable `else` in the build where
+        // it does not.
+        let funding = match &cfg.strategies[0] {
+            EdgeStrategyKind::ChannelLifecycle(lifecycle_cfg) => &lifecycle_cfg.funding,
+            #[cfg(feature = "pix-secp256k1")]
+            _ => panic!("default_strategy_cfg must yield a ChannelLifecycle strategy"),
+        };
         assert_eq!(funding.initial_capacity, ByteSize::mib(640));
         assert_eq!(funding.topup_capacity, ByteSize::mib(384));
         assert_eq!(funding.lower_capacity_threshold, ByteSize::mib(128));
@@ -1189,5 +1318,70 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(eligibility.allowlist, Some(allowlist));
+    }
+
+    /// Every default is taken from upstream rather than restated, so this asserts the wiring
+    /// rather than five literals: a change to what PIX charges has to arrive here, and a
+    /// hand-copied constant that stopped tracking it would show up as a failure.
+    #[cfg(feature = "pix-secp256k1")]
+    #[test]
+    fn pix_entry_defaults_track_the_upstream_ones() {
+        let strategy = hopr_strategy::pix::strategy::PixStrategyConfig::default();
+        let pool = hopr_strategy::pix::secp256k1::PoolConfig::default();
+        let cfg = PixEntryConfig::default();
+
+        assert_eq!(cfg.price_per_byte, strategy.price_per_byte);
+        assert_eq!(cfg.max_ssa_allocation, strategy.max_ssa_allocation);
+        assert_eq!(cfg.deposit_buffer_period, strategy.deposit_buffer_period);
+        assert_eq!(
+            cfg.max_deposit_tracking_time,
+            pool.max_deposit_tracking_time
+        );
+        assert_eq!(cfg.max_deposit_retries, pool.max_deposit_retries);
+    }
+
+    /// The debounce windows are the ones to watch: a bare `serde(default)` on them upstream once
+    /// produced `Duration::default()` — 0 ns — rather than the 500 ms the type documents, which
+    /// disables batching silently.
+    #[cfg(feature = "pix-secp256k1")]
+    #[test]
+    fn pix_entry_overrides_reach_both_halves() {
+        let cfg = PixEntryConfig {
+            price_per_byte: "0.0001 wxHOPR".parse().unwrap(),
+            max_ssa_allocation: "10 wxHOPR".parse().unwrap(),
+            deposit_buffer_period: Duration::from_millis(250),
+            max_deposit_tracking_time: Duration::from_secs(30),
+            max_deposit_retries: 7,
+        };
+
+        let strategy = cfg.strategy_config();
+        assert_eq!(strategy.price_per_byte, "0.0001 wxHOPR".parse().unwrap());
+        assert_eq!(strategy.max_ssa_allocation, "10 wxHOPR".parse().unwrap());
+        assert_eq!(strategy.deposit_buffer_period, Duration::from_millis(250));
+
+        let pool = cfg.pool_config();
+        assert_eq!(pool.max_deposit_tracking_time, Duration::from_secs(30));
+        assert_eq!(pool.max_deposit_retries, 7);
+    }
+
+    /// The Exit-side fields an Entry never reaches must come out at their upstream defaults, and
+    /// the recovery pair must come out *both* unset in particular: `PixStrategy::build_with_pool`
+    /// refuses to build when exactly one of the two is given, so a half-filled pair would turn a
+    /// field this node has no use for into a startup failure.
+    #[cfg(feature = "pix-secp256k1")]
+    #[test]
+    fn pix_entry_leaves_the_exit_side_alone() {
+        let strategy = PixEntryConfig::default().strategy_config();
+        assert!(strategy.pix_recovery_db_path.is_none());
+        assert!(strategy.pix_recovery_password_env.is_none());
+        assert_eq!(
+            strategy.withdrawal_buffer_period,
+            hopr_strategy::pix::strategy::PixStrategyConfig::default().withdrawal_buffer_period
+        );
+
+        let pool = PixEntryConfig::default().pool_config();
+        let upstream = hopr_strategy::pix::secp256k1::PoolConfig::default();
+        assert_eq!(pool.gas_xdai_per_sweep, upstream.gas_xdai_per_sweep);
+        assert_eq!(pool.max_sweep_retries, upstream.max_sweep_retries);
     }
 }

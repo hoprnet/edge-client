@@ -29,6 +29,23 @@ use crate::endpoint::BlokliEndpoint;
 
 use crate::errors::EdgliError;
 
+/// The deposit address type this build's `HoprPixSpec` produces.
+///
+/// Naming this in the `build_non_anonymous` call below *is* the assertion that the deposit pool and
+/// the node's PIX spec agree: the builder is bound on `A: DepositAddressOf<PoolKeypair>`, which
+/// holds only for the address its own pool settles to. A mismatched pairing therefore stops at that
+/// call site with a message naming both the offending type and the features that fix it, instead of
+/// failing once per event at runtime having deposited nothing.
+///
+/// Which instantiation of `HoprPixSpec` is in play is decided by the *feature graph*, not by
+/// anything visible in this file — `hopr-lib/pix-secp256k1` versus its default `pix-bjj`, three
+/// crates away. The secp256k1 pool settles with a plain `HoprToken.transfer` signed by the node
+/// key, so it can only reach an Ethereum address; a Baby JubJub public key is a curve point, not an
+/// account, and no transfer can reach one.
+#[cfg(feature = "pix-secp256k1")]
+type SpecDepositAddress =
+    <hopr_lib::exports::transport::HoprPixSpec as hopr_lib::exports::transport::PixSpec>::DepositAddress;
+
 /// The concrete HOPR edge node type used by this client.
 pub type HoprEdgeClient = hopr_lib::Hopr<
     Arc<
@@ -438,6 +455,8 @@ impl Edgli {
         cfg: super::strategy::MultiStrategyConfig,
     ) -> anyhow::Result<AbortHandle> {
         use super::strategy::EdgeStrategyKind;
+        #[cfg(feature = "pix-secp256k1")]
+        use hopr_strategy::pix::strategy::PixStrategy;
         use hopr_strategy::{
             channel_lifecycle::ChannelLifecycleStrategy,
             strategy::{MultiStrategy, Strategy},
@@ -454,7 +473,30 @@ impl Edgli {
             .map(|kind| -> anyhow::Result<Box<dyn Strategy + Send>> {
                 match kind {
                     EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
-                        Ok(ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))?)
+                        Ok(ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::clone(&node))?)
+                    }
+                    #[cfg(feature = "pix-secp256k1")]
+                    EdgeStrategyKind::Pix(sub_cfg) => {
+                        // The pool is a build-time choice with no other runtime trace, so without
+                        // this line nothing in a log says which one a running node has.
+                        tracing::info!(
+                            pool = "non-anonymous-secp256k1",
+                            price_per_byte = %sub_cfg.price_per_byte,
+                            max_ssa_allocation = %sub_cfg.max_ssa_allocation,
+                            max_deposit_tracking_time = ?sub_cfg.max_deposit_tracking_time,
+                            "enabling the PIX strategy"
+                        );
+                        // Naming `SpecDepositAddress` *is* the check that this pool can settle
+                        // what this build's PIX spec produces. `PixDepositAddress` is a runtime
+                        // enum over every scheme, so the strategy's narrowing to the pool's own
+                        // address type is a `TryFrom` it could only fail per-event at runtime,
+                        // having deposited nothing; the witness parameter turns that into a
+                        // compile error here. It appears only in a bound, so it must be named.
+                        Ok(PixStrategy::new(sub_cfg.strategy_config())
+                            .build_non_anonymous::<_, SpecDepositAddress>(
+                                Arc::clone(&node),
+                                sub_cfg.pool_config(),
+                            )?)
                     }
                 }
             })
