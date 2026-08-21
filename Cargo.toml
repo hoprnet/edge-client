@@ -81,13 +81,30 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "release/4.0", features = [
+# Pinned to a `rev` rather than tracked on `release/4.0`, because PIX lives only on `master`
+# (as #8095) and that branch has none of it — not the protocol crate, not the transport wiring,
+# not `HoprSessionClientConfig::pix_ssa_quota`.
+#
+# The rev is the one `hoprd` pins, so the two clients that have to interoperate link the same
+# hopr-lib rather than two commits that merely look alike.
+#
+# Moving off `release/4.0` costs nothing: `git cherry` reports four release-only fixes (#8337,
+# #8346, #8348, #8350) as absent from `master`, but that is patch-id noise from the `Cargo.lock`
+# the PIX squash rewrote. Every source file those four touch is byte-identical between the two
+# trees, so `master` is a content superset.
+#
+# A `branch` ref would be the wrong replacement anyway: `master` moves, and every unrelated commit
+# on it would arrive here silently between one `cargo update` and the next.
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "7b46149bc32f0cdca76fd84e52c598b881c7d643", features = [
   "session-client",
   "serde",
 ] }
 hopr-chain-connector = { version = "0.22.2", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.4.0" }
-hopr-strategy = { version = "0.28.0", features = [
+# 1.0.2 for the `pix` module, which 0.28.0 does not have. Nothing else about the bump reaches this
+# crate: `channel_lifecycle` — the only module used here — is byte-identical between the two
+# releases, and the rest of the delta is the additive `pix` module.
+hopr-strategy = { version = "1.0.2", features = [
   "strategy-channel-lifecycle",
 ] }
 hopr-ticket-manager = { version = "0.5.2" }
