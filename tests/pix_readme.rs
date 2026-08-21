@@ -7,21 +7,25 @@
 //! `EdgeStrategyKind::Pix` is still constructible from outside despite the enum being
 //! `#[non_exhaustive]`. That attribute restricts matching rather than construction, which is worth
 //! pinning here, since the opposite would leave PIX documented and unusable.
-#![cfg(feature = "pix-secp256k1")]
+#![cfg(feature = "pix")]
 
 use edgli::hopr_lib::HoprSessionClientConfig;
 use edgli::strategy::{EdgeStrategyKind, IncentiveConfiguration, default_strategy_cfg};
-use edgli::{PixEntryConfig, pix_ssa_quota, quota_per_ssa};
+use edgli::{PixEntryConfig, PixEntryStrategy, pix_ssa_quota, quota_per_ssa};
 
 #[test]
 fn readme_pix_snippet_compiles_and_runs() -> anyhow::Result<()> {
-    // Pay: add the PIX strategy alongside the default channel-lifecycle one.
+    // Pay: add the PIX strategy alongside the default channel-lifecycle one. Only the pricing half
+    // is set here — `pool` is whichever pool the build selected, and its defaults are fine.
     let mut strategies = default_strategy_cfg(&IncentiveConfiguration::default())?;
     strategies
         .strategies
         .push(EdgeStrategyKind::Pix(PixEntryConfig {
-            price_per_byte: "0.0001 wxHOPR".parse()?,
-            max_ssa_allocation: "10 wxHOPR".parse()?,
+            strategy: PixEntryStrategy {
+                price_per_byte: "0.0001 wxHOPR".parse()?,
+                max_ssa_allocation: "10 wxHOPR".parse()?,
+                ..Default::default()
+            },
             ..Default::default()
         }));
     assert_eq!(strategies.strategies.len(), 2);

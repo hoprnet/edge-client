@@ -42,9 +42,20 @@ use crate::errors::EdgliError;
 /// crates away. The secp256k1 pool settles with a plain `HoprToken.transfer` signed by the node
 /// key, so it can only reach an Ethereum address; a Baby JubJub public key is a curve point, not an
 /// account, and no transfer can reach one.
-#[cfg(feature = "pix-secp256k1")]
+#[cfg(feature = "pix")]
 type SpecDepositAddress =
     <hopr_lib::exports::transport::HoprPixSpec as hopr_lib::exports::transport::PixSpec>::DepositAddress;
+
+/// The deposit pool this build selected, for the startup log line.
+///
+/// Every other guarantee about the pairing is compile-time, and a library consumer does not choose
+/// features at the point they read the log. This is the one thing that makes the choice visible at
+/// runtime — and the two pools differ in whether deposits are anonymous, so "which one is running"
+/// is not a detail.
+#[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+const PIX_POOL: &str = "non-anonymous-secp256k1";
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+const PIX_POOL: &str = "curvy";
 
 /// The concrete HOPR edge node type used by this client.
 pub type HoprEdgeClient = hopr_lib::Hopr<
@@ -450,7 +461,7 @@ impl Edgli {
     /// the wxHOPR float a Session will need.
     ///
     /// [`quota_per_ssa`]: crate::strategy::quota_per_ssa
-    #[cfg(feature = "pix-secp256k1")]
+    #[cfg(feature = "pix")]
     pub fn pix_ssa_quota(&self) -> anyhow::Result<hopr_lib::PixParams> {
         crate::strategy::pix_ssa_quota(self.hopr.config())
     }
@@ -466,7 +477,7 @@ impl Edgli {
     ///
     /// Every other field of `base` is passed through, so the caller keeps control of routing,
     /// SURB management and flow control.
-    #[cfg(feature = "pix-secp256k1")]
+    #[cfg(feature = "pix")]
     pub fn with_pix(
         &self,
         base: hopr_lib::HoprSessionClientConfig,
@@ -490,7 +501,7 @@ impl Edgli {
         cfg: super::strategy::MultiStrategyConfig,
     ) -> anyhow::Result<AbortHandle> {
         use super::strategy::EdgeStrategyKind;
-        #[cfg(feature = "pix-secp256k1")]
+        #[cfg(feature = "pix")]
         use hopr_strategy::pix::strategy::PixStrategy;
         use hopr_strategy::{
             channel_lifecycle::ChannelLifecycleStrategy,
@@ -510,28 +521,45 @@ impl Edgli {
                     EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
                         Ok(ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::clone(&node))?)
                     }
-                    #[cfg(feature = "pix-secp256k1")]
+                    #[cfg(feature = "pix")]
                     EdgeStrategyKind::Pix(sub_cfg) => {
                         // The pool is a build-time choice with no other runtime trace, so without
-                        // this line nothing in a log says which one a running node has.
+                        // this line nothing in a log says which one a running node has — and the
+                        // two differ in whether deposits are anonymous, which is not a difference
+                        // to leave un-logged.
                         tracing::info!(
-                            pool = "non-anonymous-secp256k1",
-                            price_per_byte = %sub_cfg.price_per_byte,
-                            max_ssa_allocation = %sub_cfg.max_ssa_allocation,
-                            max_deposit_tracking_time = ?sub_cfg.max_deposit_tracking_time,
+                            pool = PIX_POOL,
+                            price_per_byte = %sub_cfg.strategy.price_per_byte,
+                            max_ssa_allocation = %sub_cfg.strategy.max_ssa_allocation,
+                            max_deposit_tracking_time = ?sub_cfg.pool.max_deposit_tracking_time,
                             "enabling the PIX strategy"
                         );
-                        // Naming `SpecDepositAddress` *is* the check that this pool can settle
-                        // what this build's PIX spec produces. `PixDepositAddress` is a runtime
-                        // enum over every scheme, so the strategy's narrowing to the pool's own
-                        // address type is a `TryFrom` it could only fail per-event at runtime,
-                        // having deposited nothing; the witness parameter turns that into a
-                        // compile error here. It appears only in a bound, so it must be named.
-                        Ok(PixStrategy::new(sub_cfg.strategy_config())
+                        // One builder per pool rather than one call that dispatches: the pool is
+                        // named here, and `SpecDepositAddress` is the witness that it can settle
+                        // what this build's spec produces. `PixDepositAddress` is a runtime enum
+                        // over every scheme, so the strategy's narrowing to the pool's own address
+                        // type is a `TryFrom` it could only fail per-event at runtime, having
+                        // deposited nothing; the witness turns that into a compile error here. It
+                        // appears only in a bound, so it must be named.
+                        //
+                        // The arms are mutually exclusive by `compile_error!` in `strategy.rs`
+                        // rather than by the `not(...)` below alone — enabling both features
+                        // resolves `HoprPixSpec` to secp256k1 *successfully*, so precedence here
+                        // would silently build the visible pool for someone who asked for the
+                        // anonymous one.
+                        #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+                        let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
                             .build_non_anonymous::<_, SpecDepositAddress>(
-                                Arc::clone(&node),
-                                sub_cfg.pool_config(),
-                            )?)
+                            Arc::clone(&node),
+                            sub_cfg.pool.to_upstream(),
+                        )?;
+                        #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+                        let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
+                            .build_curvy::<_, SpecDepositAddress>(
+                            Arc::clone(&node),
+                            sub_cfg.pool.to_upstream(),
+                        )?;
+                        Ok(built)
                     }
                 }
             })
