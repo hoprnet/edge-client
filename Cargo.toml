@@ -54,6 +54,7 @@ blokli = ["dep:tokio", "dep:url"]
 # no runtime would compile to a client that silently has no PIX.
 pix-secp256k1 = [
   "runtime-tokio",
+  "dep:validator",
   "hopr-lib/pix-secp256k1",
   "hopr-strategy/strategy-pix-secp256k1",
 ]
@@ -102,6 +103,11 @@ opentelemetry-otlp = { version = "0.32.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
+# Only to call `Validate::validate` on the node's own PIX configuration before deriving a quota
+# from it, the way `hopr-transport` validates it before building the generator. Already unified at
+# this version across the graph (hopr-lib, hopr-transport, hopr-strategy and four more), so the
+# direct dependency adds nothing to compile.
+validator = { version = "0.21.0", optional = true }
 
 # Pinned to a `rev` rather than tracked on `release/4.0`, because PIX lives only on `master`
 # (as #8095) and that branch has none of it — not the protocol crate, not the transport wiring,

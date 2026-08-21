@@ -192,6 +192,68 @@ impl PixEntryConfig {
     }
 }
 
+/// This node's own PIX dimensions, as the [`PixParams`] a Session announces.
+///
+/// Read from the node's installed generator configuration (`protocol.pix`) and nothing else, which
+/// is the only source that can be right. The Exit is told these dimensions at Session start, and
+/// the node checks the announcement against the generator that will actually produce the shares —
+/// a Session whose two disagree is refused, so a quota a *caller* states is a quota that can go
+/// stale. There is nothing to state here.
+///
+/// Mirrors what `hopr-transport` does when it builds that generator, step for step, because the two
+/// have to agree:
+///
+/// - the configuration is validated first, so one the node would reject at startup is rejected here
+///   too rather than becoming a plausible-looking quota;
+/// - the three dimensions are narrowed with a checked conversion rather than an `as` cast, so a
+///   future widening of an upstream range surfaces as an error instead of a silently truncated but
+///   valid-looking dimension;
+/// - the surplus is read through `PixGlobalConfig::surplus_shares`, never off the `additional_shares`
+///   field. That field is `Option` because serde cannot default to a function of a sibling, so
+///   reading it directly is how an unset surplus silently becomes zero — no loss tolerance at all,
+///   and a quota the Exit will not recognise;
+/// - the suite comes from `HoprPixSpec`, so what is announced and what produces the shares are the
+///   same build-time choice.
+#[cfg(feature = "pix-secp256k1")]
+pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> anyhow::Result<hopr_lib::PixParams> {
+    use hopr_lib::exports::transport::HoprPixSpec;
+
+    let pix = &cfg.protocol.pix;
+    validator::Validate::validate(pix)
+        .map_err(|error| anyhow::anyhow!("invalid PIX configuration: {error}"))?;
+
+    fn narrow<T: TryFrom<usize>>(value: usize, field: &str) -> anyhow::Result<T> {
+        T::try_from(value).map_err(|_| anyhow::anyhow!("PIX {field} out of range: {value}"))
+    }
+
+    hopr_lib::PixParams::try_new_for::<HoprPixSpec>(
+        narrow(pix.num_ssa_parts, "num_ssa_parts")?,
+        narrow(pix.ssa_part_size, "ssa_part_size")?,
+        narrow(pix.surplus_shares(), "additional_shares")?,
+    )
+    .map_err(|error| anyhow::anyhow!("invalid PIX dimensions: {error}"))
+}
+
+/// Bytes of Exit → Entry traffic a single SSA deposit buys.
+///
+/// `polys_per_ssa × emitted_shares_per_poly × PACKET_PAYLOAD_SIZE`, matching what the Exit computes
+/// when it decides whether the offered quota is one it accepts. Multiply by
+/// [`PixEntryConfig::price_per_byte`] for the wxHOPR a single deposit costs, and by the number of
+/// SSA cycles a Session is expected to run for the float that Session needs.
+///
+/// Counts `emitted_shares_per_poly` — threshold *plus* surplus — rather than the threshold alone,
+/// and reads it off [`PixParams`] rather than re-deriving it. A polynomial leaves the generator's
+/// queue having emitted the surplus whether or not any share was lost, so it is service the Exit
+/// performs in every case and is charged for on purchase rather than on claim. Sizing against the
+/// threshold alone underpays by the surplus factor — at the shipped 1.25×, a fifth of all
+/// Exit → Entry traffic.
+#[cfg(feature = "pix-secp256k1")]
+pub fn quota_per_ssa(params: &hopr_lib::PixParams) -> u64 {
+    u64::from(params.polys_per_ssa())
+        * u64::from(params.emitted_shares_per_poly())
+        * hopr_lib::exports::transport::PACKET_PAYLOAD_SIZE as u64
+}
+
 /// Strategy configuration for an edge node reactor.
 pub struct MultiStrategyConfig {
     /// Ordered list of strategies to run concurrently.
@@ -1383,5 +1445,88 @@ mod tests {
         let upstream = hopr_strategy::pix::secp256k1::PoolConfig::default();
         assert_eq!(pool.gas_xdai_per_sweep, upstream.gas_xdai_per_sweep);
         assert_eq!(pool.max_sweep_retries, upstream.max_sweep_retries);
+    }
+
+    /// The quota is derived from the installed generator's three dimensions and this build's spec,
+    /// so it is the same value the node will check the Session's announcement against.
+    #[cfg(feature = "pix-secp256k1")]
+    #[test]
+    fn pix_ssa_quota_reads_the_nodes_own_dimensions() {
+        use hopr_lib::exports::transport::{HoprPixSpec, PixSpec};
+
+        let mut cfg = hopr_lib::config::HoprLibConfig::default();
+        cfg.protocol.pix.num_ssa_parts = 64;
+        cfg.protocol.pix.ssa_part_size = 16;
+        cfg.protocol.pix.additional_shares = Some(4);
+
+        let params = pix_ssa_quota(&cfg).unwrap();
+        assert_eq!(params.polys_per_ssa(), 64);
+        assert_eq!(params.shares_per_poly(), 16);
+        assert_eq!(params.surplus_shares(), 4);
+        // Not configurable — it is the build's spec, and announcing anything else would let the
+        // Session proceed while emitting shares the Exit cannot read.
+        assert_eq!(params.suite(), HoprPixSpec::PIX_SUITE);
+        assert_eq!(params.suite(), hopr_lib::LOCAL_PIX_SUITE);
+    }
+
+    /// `additional_shares` is `Option` only because serde cannot default to a function of a
+    /// sibling, so the unset case has to go through `surplus_shares()`. Reading the field directly
+    /// would announce zero surplus — no loss tolerance at all, and a quota the Exit computes
+    /// differently.
+    #[cfg(feature = "pix-secp256k1")]
+    #[test]
+    fn pix_ssa_quota_derives_an_unset_surplus_rather_than_zeroing_it() {
+        let mut cfg = hopr_lib::config::HoprLibConfig::default();
+        cfg.protocol.pix.additional_shares = None;
+
+        let params = pix_ssa_quota(&cfg).unwrap();
+        assert!(
+            params.surplus_shares() > 0,
+            "an unset surplus must be derived from ssa_part_size, not read as zero"
+        );
+        assert_eq!(
+            u64::from(params.surplus_shares()),
+            cfg.protocol.pix.surplus_shares() as u64,
+            "the derived surplus must be the one the generator will use"
+        );
+    }
+
+    /// A configuration the node would refuse at startup has to be refused here too. Rejecting it
+    /// rather than narrowing it is the point: `ssa_part_size` below the validator's minimum of 2
+    /// still fits a `u8`, so a cast would produce a dimension that looks valid and is not.
+    #[cfg(feature = "pix-secp256k1")]
+    #[test]
+    fn pix_ssa_quota_rejects_a_config_the_node_would_reject() {
+        let mut cfg = hopr_lib::config::HoprLibConfig::default();
+        cfg.protocol.pix.ssa_part_size = 1;
+        assert!(pix_ssa_quota(&cfg).is_err());
+
+        // Above `u8::MAX` and above the validator's own maximum: caught rather than truncated to
+        // a plausible 44.
+        let mut cfg = hopr_lib::config::HoprLibConfig::default();
+        cfg.protocol.pix.ssa_part_size = 300;
+        assert!(pix_ssa_quota(&cfg).is_err());
+    }
+
+    /// The surplus is inside the quota, because a cycle emits it whether or not a share is lost.
+    /// Leaving it out is what let an Entry take a fifth of the Exit → Entry traffic unbilled.
+    #[cfg(feature = "pix-secp256k1")]
+    #[test]
+    fn quota_per_ssa_prices_the_surplus() {
+        let payload = hopr_lib::exports::transport::PACKET_PAYLOAD_SIZE as u64;
+
+        let bare =
+            hopr_lib::PixParams::try_new_for::<hopr_lib::exports::transport::HoprPixSpec>(8, 4, 0)
+                .unwrap();
+        let insured =
+            hopr_lib::PixParams::try_new_for::<hopr_lib::exports::transport::HoprPixSpec>(8, 4, 2)
+                .unwrap();
+
+        assert_eq!(quota_per_ssa(&bare), 8 * 4 * payload);
+        assert_eq!(quota_per_ssa(&insured), 8 * (4 + 2) * payload);
+        assert!(
+            quota_per_ssa(&insured) > quota_per_ssa(&bare),
+            "a surplus the Exit delivers must be a surplus the Entry pays for"
+        );
     }
 }

@@ -443,6 +443,41 @@ impl Edgli {
         })
     }
 
+    /// This node's own PIX dimensions, as the `PixParams` a Session announces.
+    ///
+    /// Thin wrapper over [`crate::strategy::pix_ssa_quota`] on this node's configuration; see there
+    /// for why the dimensions are derived rather than supplied. Pair with [`quota_per_ssa`] to size
+    /// the wxHOPR float a Session will need.
+    ///
+    /// [`quota_per_ssa`]: crate::strategy::quota_per_ssa
+    #[cfg(feature = "pix-secp256k1")]
+    pub fn pix_ssa_quota(&self) -> anyhow::Result<hopr_lib::PixParams> {
+        crate::strategy::pix_ssa_quota(self.hopr.config())
+    }
+
+    /// `base` with PIX switched on: the `UsePIX` capability added, and `pix_ssa_quota` filled from
+    /// this node's own configuration.
+    ///
+    /// One call rather than two fields the caller sets separately, because setting either alone is
+    /// a defect the node can only report once the Session is already being opened — and one of the
+    /// two directions is silent. A quota without the capability opens a Session the Exit relays
+    /// with no deposit expectation at all, while the caller believes it is paying; the capability
+    /// without a quota announces PIX with no negotiated parameters. Neither is representable here.
+    ///
+    /// Every other field of `base` is passed through, so the caller keeps control of routing,
+    /// SURB management and flow control.
+    #[cfg(feature = "pix-secp256k1")]
+    pub fn with_pix(
+        &self,
+        base: hopr_lib::HoprSessionClientConfig,
+    ) -> anyhow::Result<hopr_lib::HoprSessionClientConfig> {
+        Ok(hopr_lib::HoprSessionClientConfig {
+            capabilities: base.capabilities | hopr_lib::SessionCapability::UsePIX,
+            pix_ssa_quota: Some(self.pix_ssa_quota()?),
+            ..base
+        })
+    }
+
     /// Run a node with HOPR edge strategies integrated.
     ///
     /// The default reactor runs a single [`ChannelLifecycleStrategy`] which
