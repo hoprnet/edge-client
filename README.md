@@ -83,12 +83,81 @@ See `src/client.rs` for `run_hopr_edge_node_with` (spawn helper) and
 `Edgli::run_reactor_from_cfg` (edge strategy reactor: channel funding,
 pending-close sweeping) when the `blokli` feature is enabled.
 
+### PIX
+
+PIX pays the Exit for the traffic it delivers. This node, as the Entry, deposits
+wxHOPR to a per-Session stealth address; the Exit reconstructs that address's
+key from the SSA shares its spent SURBs carried and sweeps the deposit into its
+Safe. Only the Entry half is implemented here — an edge client never terminates
+a Session, so it never reconstructs or sweeps anything.
+
+Build with `--features pix-secp256k1`, then opt a Session in _and_ run the
+deposit strategy. Both halves are needed: with only the strategy nothing
+announces PIX and no deposit is ever requested, and with only the opt-in the
+node announces PIX it cannot pay for and the Exit closes the Session on its
+deposit deadline.
+
+```rust,ignore
+use edgli::{PixEntryConfig, quota_per_ssa};
+use edgli::strategy::{EdgeStrategyKind, IncentiveConfiguration, default_strategy_cfg};
+use edgli::hopr_lib::HoprSessionClientConfig;
+
+// Pay: add the PIX strategy to the reactor.
+let mut strategies = default_strategy_cfg(&IncentiveConfiguration::default())?;
+strategies.strategies.push(EdgeStrategyKind::Pix(PixEntryConfig {
+    price_per_byte: "0.0001 wxHOPR".parse()?,
+    max_ssa_allocation: "10 wxHOPR".parse()?,
+    ..Default::default()
+}));
+let _reactor = edgli.run_reactor_from_cfg(strategies)?;
+
+// Ask: opt a Session in. The quota is read from this node's own `protocol.pix`
+// dimensions, so there is nothing to state and nothing to get out of step.
+let session_cfg = edgli.with_pix(HoprSessionClientConfig::default())?;
+
+// What one SSA cycle buys, for sizing the float below.
+let bytes_per_deposit = quota_per_ssa(&edgli.pix_ssa_quota()?);
+```
+
+The generator dimensions themselves live in `protocol.pix` of the
+`HoprLibConfig` passed to `Edgli::new`, alongside the rest of the node
+configuration. Leave `additional_shares` unset unless you have measured your
+return-path loss: unset derives a surplus from the threshold, and the surplus is
+billed — a cycle emits it whether or not a share is lost, so it is insurance
+charged on purchase rather than on claim.
+
+#### Deposits are paid from the node's own account, not the Safe
+
+The deposit is a direct `HoprToken.transfer` signed by the node key. It is the
+one call the Safe payload generator does not route through the Safe module, so
+the wxHOPR comes off the node address — while `deploy_safe` sweeps that balance
+_into_ the Safe during onboarding, leaving it at zero.
+
+An operator running PIX therefore has to leave a wxHOPR float on the node
+address, sized against `price_per_byte × quota_per_ssa × expected SSA cycles`. A
+node that runs dry stops depositing and the Exit closes the Session on its
+deposit deadline, with nothing logged as an error at this end.
+`Edgli::describe_current_capacity_allocations` reports the remaining float as
+its `node` allocation, which is the figure to watch.
+
+Moving deposits to the Safe is an upstream change — a Safe-routed transfer
+primitive in `hopr-types` and `hopr-chain-connector` — not something this crate
+can decide.
+
+#### Not for production
+
+`pix-secp256k1` selects the non-anonymous deposit pool, whose operations are
+fully visible on-chain; upstream marks it accordingly. It is the only pool
+implemented — the Baby JubJub alternative is a stub whose methods panic — so
+there is currently no production PIX path, here or in `hoprd`.
+
 ### Feature flags
 
 | flag            | default | effect                                                    |
 | --------------- | :-----: | --------------------------------------------------------- |
 | `runtime-tokio` |   yes   | Tokio runtime integration                                 |
 | `blokli`        |   yes   | Blokli-backed trustful blockchain connector               |
+| `pix-secp256k1` |   no    | Entry-side PIX, secp256k1 deposit pool (see above)        |
 | `telemetry`     |   no    | OpenTelemetry OTLP export                                 |
 | `testing`       |   no    | Test-only helpers from `hopr-lib`                         |
 | `prof`          |   no    | `tokio-console` subscriber (needs `--cfg tokio_unstable`) |
@@ -99,10 +168,13 @@ library modules.
 
 ## Testing
 
-Unit tests (lib `#[cfg(test)]` modules + `tests/mixer_config.rs`):
+Unit tests (lib `#[cfg(test)]` modules + the `tests/` binaries):
 
 ```bash
 nix develop -c cargo nextest run
+
+# PIX code is behind a non-default feature, so it needs naming
+nix develop -c cargo nextest run --features pix-secp256k1
 ```
 
 Full check suite (clippy, rustdoc, audit, licenses, tests) via Nix:
