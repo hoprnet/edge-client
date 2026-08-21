@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+#[cfg(feature = "pix")]
+use std::time::Duration;
 
 use bytesize::ByteSize;
 use hopr_lib::api::node::PacketTransport;
@@ -64,9 +66,294 @@ const SIZING_MODE: CapacitySizingMode = CapacitySizingMode::Probabilistic {
 #[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
 use hopr_lib::api::chain::{AccountSelector, ChainReadAccountOperations, ChainValues};
 
+// The two pools settle to different deposit-address types, and `HoprPixSpec` has exactly one.
+// Enabling both is not merely redundant: `hopr-crypto-packet` selects the secp arm with
+// `cfg(any(feature = "pix-secp256k1", not(feature = "pix-bjj")))`, so secp256k1 wins on addition
+// and the build resolves to Ethereum addresses — silently, and *successfully*, because the curvy
+// builder below is cfg'd out rather than mistyped. An operator who asked for the anonymous pool
+// would get the fully-visible one with nothing to indicate it. Nothing in the type system catches
+// that, which is what this is for.
+#[cfg(all(feature = "pix-test", feature = "pix-curvy"))]
+compile_error!(
+    "the `pix-test` and `pix-curvy` features are mutually exclusive: they select conflicting \
+     `hopr-lib/pix-*` features and `HoprPixSpec` has one deposit-address type. Enabling both \
+     resolves to secp256k1 without an error, so a build asking for Baby JubJub would settle to \
+     visible Ethereum addresses instead. Enable exactly one."
+);
+// `pix` on its own selects no pool, so `hopr_strategy::pix::{secp256k1, curvy}` does not resolve
+// and the build fails with a handful of unresolved names that say nothing about the feature that
+// is missing.
+#[cfg(all(feature = "pix", not(any(feature = "pix-test", feature = "pix-curvy"))))]
+compile_error!(
+    "the `pix` feature selects no deposit pool on its own and is not meant to be enabled \
+     directly. Enable `pix-curvy` (Baby JubJub, anonymous — currently a stub) or `pix-test` \
+     (secp256k1, visible on-chain, for tests and demos), each of which turns on `pix` as well."
+);
+
 /// Subset of strategies relevant to an edge node.
+///
+/// `#[non_exhaustive]` because [`Pix`](Self::Pix) is feature-gated: a downstream `match` would
+/// otherwise be exhaustive under one feature set and not under another, which makes turning `pix`
+/// on a breaking change for every consumer rather than an additive one.
+#[non_exhaustive]
 pub enum EdgeStrategyKind {
-    ChannelLifecycle(ChannelLifecycleConfig),
+    /// Boxed because [`ChannelLifecycleConfig`] is some 560 bytes against `Pix`'s few dozen, and
+    /// every element of a `MultiStrategyConfig` would otherwise be sized for the largest. `hoprd`
+    /// boxes the same variant of its own strategy enum for the same reason.
+    ChannelLifecycle(Box<ChannelLifecycleConfig>),
+    /// Pays the Exit for the traffic it delivers. See [`PixEntryConfig`].
+    #[cfg(feature = "pix")]
+    Pix(PixEntryConfig),
+}
+
+/// Entry-side PIX settlement configuration.
+///
+/// Two halves rather than one flat set, mirroring the split upstream draws and for the same
+/// reason: [`PixEntryStrategy`] is pricing, which every pool shares, and [`PixEntryPool`] is the
+/// selected pool's own knobs, which the two pools share *nothing* of by design. Keeping them apart
+/// is what lets this outer type stay the same whichever pool the build selected — and what stops a
+/// value meant for one pool reaching the other.
+#[cfg(feature = "pix")]
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PixEntryConfig {
+    /// Pricing and the per-deposit ceiling. Pool-agnostic.
+    pub strategy: PixEntryStrategy,
+    /// The selected deposit pool's own knobs.
+    pub pool: PixEntryPool,
+}
+
+/// Pool-agnostic PIX settlement knobs: what a Session costs and how deposits are batched.
+///
+/// Only the fields an Entry reaches. The recovery store and the withdrawal batching window are
+/// Exit-side and stay at their upstream defaults — which is safe rather than merely tidy.
+/// `HoprTransport::run_inner` gives an Entry node a PIX toolbox with the share generator and a
+/// *dummy* reconstructor, and never wires the Exit acknowledgement processing, so
+/// `PixEvent::PrivateKeyRecovered` — the only event that consults either — cannot fire on this
+/// node. There is nothing here for an operator to get wrong because there is nothing here that
+/// runs.
+///
+/// Defaults are read from the upstream type rather than restated, so a change to what PIX charges
+/// arrives here instead of being silently overridden by a stale copy.
+// The two cross-references below are code spans rather than intra-doc links on purpose:
+// `Edgli` and `blokli` need the `blokli` feature, which `pix` does not imply, so a
+// `--features pix-test` doc build would reject them as broken links.
+#[cfg(feature = "pix")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PixEntryStrategy {
+    /// wxHOPR charged per byte of the agreed per-SSA quota. One deposit is
+    /// `price_per_byte × quota_per_ssa`, where the quota is
+    /// `polys_per_ssa × (shares_per_poly + surplus_shares) × PACKET_PAYLOAD_SIZE`.
+    ///
+    /// # Deposits are paid from the node's own account, not the Safe
+    ///
+    /// The deposit is a direct `HoprToken.transfer` signed by the node key: it is the one call the
+    /// Safe payload generator does not route through the Safe module. So the wxHOPR comes off the
+    /// node's own address, while `IncentiveOperations::deploy_safe` sweeps that balance *into* the
+    /// Safe during onboarding.
+    ///
+    /// An operator running PIX therefore has to leave a wxHOPR float on the node address, sized
+    /// against `price_per_byte × quota_per_ssa × expected SSA cycles`. A node that runs dry stops
+    /// depositing and the Exit closes the Session on its deposit deadline — with nothing logged as
+    /// an error at this end. `Edgli::describe_current_capacity_allocations` reports the remaining
+    /// float as its `node` allocation.
+    ///
+    /// Upstream default: 1 wxHOPR, which prices a default-dimensioned SSA far past any sane
+    /// ceiling. Set this against your own dimensions.
+    pub price_per_byte: HoprBalance,
+
+    /// Ceiling on a single SSA deposit.
+    ///
+    /// A computed deposit above this is refused outright rather than trimmed, which starves the
+    /// Session until the Exit's deposit deadline closes it. It is a guard against a
+    /// mis-dimensioned quota, not a budget.
+    ///
+    /// Upstream default: 100 wxHOPR.
+    pub max_ssa_allocation: HoprBalance,
+
+    /// Debounce window before a batch of pending deposits is flushed.
+    ///
+    /// Resets on each new event, so a burst is paid in one batched call. Upstream default: 500 ms.
+    pub deposit_buffer_period: Duration,
+}
+
+#[cfg(feature = "pix")]
+impl Default for PixEntryStrategy {
+    fn default() -> Self {
+        let upstream = hopr_strategy::pix::strategy::PixStrategyConfig::default();
+        Self {
+            price_per_byte: upstream.price_per_byte,
+            max_ssa_allocation: upstream.max_ssa_allocation,
+            deposit_buffer_period: upstream.deposit_buffer_period,
+        }
+    }
+}
+
+#[cfg(feature = "pix")]
+impl PixEntryStrategy {
+    /// The upstream form, with the Exit-side fields left at their defaults.
+    ///
+    /// `pix_recovery_db_path` and `pix_recovery_password_env` must stay *both* unset: the strategy
+    /// refuses to build if exactly one of them is given, and an Entry has no recovered key to
+    /// persist either way.
+    pub(crate) fn to_upstream(&self) -> hopr_strategy::pix::strategy::PixStrategyConfig {
+        hopr_strategy::pix::strategy::PixStrategyConfig {
+            price_per_byte: self.price_per_byte,
+            max_ssa_allocation: self.max_ssa_allocation,
+            deposit_buffer_period: self.deposit_buffer_period,
+            ..Default::default()
+        }
+    }
+}
+
+/// Entry-side knobs of the **secp256k1** deposit pool (`pix-test`).
+///
+/// Defined per pool rather than shared, because upstream is emphatic that the two pools' configs
+/// have nothing in common: a retry budget is a fact about resubmitting a transaction to a chain
+/// that may drop it, and whether that is even meaningful for the Baby JubJub pool "is not yet
+/// decided". A single type with the union of both would invite exactly the analogy upstream warns
+/// against.
+///
+/// `gas_xdai_per_sweep` and `max_sweep_retries` are absent for the usual reason: both belong to the
+/// sweep, which an Entry never performs.
+#[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PixEntryPool {
+    /// How long the pool keeps polling a stealth address for the deposit to land.
+    ///
+    /// Also sets the poll cadence, at a tenth of this. That has to stay comfortably below the peer
+    /// Exit's `max_deposit_wait + max_ssa_delivery_time`, or only the single immediate balance
+    /// check happens before the Exit gives up on the Session.
+    ///
+    /// Upstream default: 60 s.
+    pub max_deposit_tracking_time: Duration,
+
+    /// Attempts *in addition to* the first for a deposit transfer.
+    ///
+    /// Retrying is safe because every attempt re-reads the destination balance and sends nothing
+    /// if it already holds the amount. Upstream default: 3.
+    pub max_deposit_retries: usize,
+}
+
+#[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+impl Default for PixEntryPool {
+    fn default() -> Self {
+        let upstream = hopr_strategy::pix::secp256k1::PoolConfig::default();
+        Self {
+            max_deposit_tracking_time: upstream.max_deposit_tracking_time,
+            max_deposit_retries: upstream.max_deposit_retries,
+        }
+    }
+}
+
+#[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+impl PixEntryPool {
+    /// The upstream form, with the sweep's gas top-up and retry budget left at their defaults.
+    pub(crate) fn to_upstream(&self) -> hopr_strategy::pix::secp256k1::PoolConfig {
+        hopr_strategy::pix::secp256k1::PoolConfig {
+            max_deposit_tracking_time: self.max_deposit_tracking_time,
+            max_deposit_retries: self.max_deposit_retries,
+            ..Default::default()
+        }
+    }
+}
+
+/// Entry-side knobs of the **Baby JubJub** deposit pool (`pix-curvy`).
+///
+/// One field, because upstream's `CurvyDepositPoolConfig` has one: it carries "only what the
+/// `DepositPool` contract itself forces — a pool owns the deadline on the future it returns from
+/// `notify_deposit`" and stays otherwise empty until the settlement design says what belongs there.
+/// Nothing here is Exit-side, so unlike the secp256k1 pool there is nothing to leave out.
+///
+/// Expect this to grow when the pool is implemented.
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PixEntryPool {
+    /// How long the pool waits for the deposit before resolving to an error.
+    ///
+    /// Upstream default: 60 s.
+    pub max_deposit_tracking_time: Duration,
+}
+
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+impl Default for PixEntryPool {
+    fn default() -> Self {
+        let upstream = hopr_strategy::pix::curvy::PoolConfig::default();
+        Self {
+            max_deposit_tracking_time: upstream.max_deposit_tracking_time,
+        }
+    }
+}
+
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+impl PixEntryPool {
+    /// The upstream form. Every field is carried, since none of them is Exit-side.
+    pub(crate) fn to_upstream(&self) -> hopr_strategy::pix::curvy::PoolConfig {
+        hopr_strategy::pix::curvy::PoolConfig {
+            max_deposit_tracking_time: self.max_deposit_tracking_time,
+        }
+    }
+}
+
+/// This node's own PIX dimensions, as the [`PixParams`] a Session announces.
+///
+/// Read from the node's installed generator configuration (`protocol.pix`) and nothing else, which
+/// is the only source that can be right. The Exit is told these dimensions at Session start, and
+/// the node checks the announcement against the generator that will actually produce the shares —
+/// a Session whose two disagree is refused, so a quota a *caller* states is a quota that can go
+/// stale. There is nothing to state here.
+///
+/// Mirrors what `hopr-transport` does when it builds that generator, step for step, because the two
+/// have to agree:
+///
+/// - the configuration is validated first, so one the node would reject at startup is rejected here
+///   too rather than becoming a plausible-looking quota;
+/// - the three dimensions are narrowed with a checked conversion rather than an `as` cast, so a
+///   future widening of an upstream range surfaces as an error instead of a silently truncated but
+///   valid-looking dimension;
+/// - the surplus is read through `PixGlobalConfig::surplus_shares`, never off the `additional_shares`
+///   field. That field is `Option` because serde cannot default to a function of a sibling, so
+///   reading it directly is how an unset surplus silently becomes zero — no loss tolerance at all,
+///   and a quota the Exit will not recognise;
+/// - the suite comes from `HoprPixSpec`, so what is announced and what produces the shares are the
+///   same build-time choice.
+#[cfg(feature = "pix")]
+pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> anyhow::Result<hopr_lib::PixParams> {
+    use hopr_lib::exports::transport::HoprPixSpec;
+
+    let pix = &cfg.protocol.pix;
+    validator::Validate::validate(pix)
+        .map_err(|error| anyhow::anyhow!("invalid PIX configuration: {error}"))?;
+
+    fn narrow<T: TryFrom<usize>>(value: usize, field: &str) -> anyhow::Result<T> {
+        T::try_from(value).map_err(|_| anyhow::anyhow!("PIX {field} out of range: {value}"))
+    }
+
+    hopr_lib::PixParams::try_new_for::<HoprPixSpec>(
+        narrow(pix.num_ssa_parts, "num_ssa_parts")?,
+        narrow(pix.ssa_part_size, "ssa_part_size")?,
+        narrow(pix.surplus_shares(), "additional_shares")?,
+    )
+    .map_err(|error| anyhow::anyhow!("invalid PIX dimensions: {error}"))
+}
+
+/// Bytes of Exit → Entry traffic a single SSA deposit buys.
+///
+/// `polys_per_ssa × emitted_shares_per_poly × PACKET_PAYLOAD_SIZE`, matching what the Exit computes
+/// when it decides whether the offered quota is one it accepts. Multiply by
+/// [`PixEntryConfig::price_per_byte`] for the wxHOPR a single deposit costs, and by the number of
+/// SSA cycles a Session is expected to run for the float that Session needs.
+///
+/// Counts `emitted_shares_per_poly` — threshold *plus* surplus — rather than the threshold alone,
+/// and reads it off [`PixParams`] rather than re-deriving it. A polynomial leaves the generator's
+/// queue having emitted the surplus whether or not any share was lost, so it is service the Exit
+/// performs in every case and is charged for on purchase rather than on claim. Sizing against the
+/// threshold alone underpays by the surplus factor — at the shipped 1.25×, a fifth of all
+/// Exit → Entry traffic.
+#[cfg(feature = "pix")]
+pub fn quota_per_ssa(params: &hopr_lib::PixParams) -> u64 {
+    u64::from(params.polys_per_ssa())
+        * u64::from(params.emitted_shares_per_poly())
+        * hopr_lib::exports::transport::PACKET_PAYLOAD_SIZE as u64
 }
 
 /// Strategy configuration for an edge node reactor.
@@ -519,7 +806,7 @@ pub fn default_strategy_cfg(
         ..Default::default()
     };
     Ok(MultiStrategyConfig {
-        strategies: vec![EdgeStrategyKind::ChannelLifecycle(cfg)],
+        strategies: vec![EdgeStrategyKind::ChannelLifecycle(Box::new(cfg))],
     })
 }
 
@@ -870,7 +1157,7 @@ mod tests {
             ..Default::default()
         };
         let cfg = MultiStrategyConfig {
-            strategies: vec![EdgeStrategyKind::ChannelLifecycle(lifecycle_cfg)],
+            strategies: vec![EdgeStrategyKind::ChannelLifecycle(Box::new(lifecycle_cfg))],
         };
         assert_eq!(cfg.strategies.len(), 1);
         assert!(matches!(
@@ -891,8 +1178,14 @@ mod tests {
             ..Default::default()
         };
         let cfg = default_strategy_cfg(&sizing).unwrap();
-        let EdgeStrategyKind::ChannelLifecycle(lifecycle_cfg) = &cfg.strategies[0];
-        let funding = &lifecycle_cfg.funding;
+        // A `match` rather than a `let`-`else`: the wildcard arm only exists when the enum has a
+        // second variant, and a `let`-`else` would have an unreachable `else` in the build where
+        // it does not.
+        let funding = match &cfg.strategies[0] {
+            EdgeStrategyKind::ChannelLifecycle(lifecycle_cfg) => &lifecycle_cfg.funding,
+            #[cfg(feature = "pix")]
+            _ => panic!("default_strategy_cfg must yield a ChannelLifecycle strategy"),
+        };
         assert_eq!(funding.initial_capacity, ByteSize::mib(640));
         assert_eq!(funding.topup_capacity, ByteSize::mib(384));
         assert_eq!(funding.lower_capacity_threshold, ByteSize::mib(128));
@@ -1189,5 +1482,229 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(eligibility.allowlist, Some(allowlist));
+    }
+
+    /// Every default is taken from upstream rather than restated, so this asserts the wiring
+    /// rather than a handful of literals: a change to what PIX charges has to arrive here, and a
+    /// hand-copied constant that stopped tracking it would show up as a failure.
+    ///
+    /// Pool-agnostic half only — the pool half is asserted per pool below, since the two pools
+    /// share no fields.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn pix_entry_strategy_defaults_track_the_upstream_ones() {
+        let upstream = hopr_strategy::pix::strategy::PixStrategyConfig::default();
+        let cfg = PixEntryStrategy::default();
+
+        assert_eq!(cfg.price_per_byte, upstream.price_per_byte);
+        assert_eq!(cfg.max_ssa_allocation, upstream.max_ssa_allocation);
+        assert_eq!(cfg.deposit_buffer_period, upstream.deposit_buffer_period);
+    }
+
+    /// `max_deposit_tracking_time` is the one field both pools carry, because the `DepositPool`
+    /// contract forces it. Asserted through whichever pool this build selected, so the test holds
+    /// for either without knowing which.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn pix_entry_pool_default_tracking_time_is_upstreams() {
+        assert_eq!(
+            PixEntryPool::default().max_deposit_tracking_time,
+            std::time::Duration::from_secs(60),
+            "both upstream pools default this to 60s; a change there must surface here"
+        );
+    }
+
+    /// secp256k1 carries a retry budget the Baby JubJub pool does not, which is why the pool half
+    /// is a separate type per pool rather than one union.
+    #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+    #[test]
+    fn pix_entry_pool_defaults_track_the_secp_pool() {
+        let upstream = hopr_strategy::pix::secp256k1::PoolConfig::default();
+        let cfg = PixEntryPool::default();
+        assert_eq!(
+            cfg.max_deposit_tracking_time,
+            upstream.max_deposit_tracking_time
+        );
+        assert_eq!(cfg.max_deposit_retries, upstream.max_deposit_retries);
+
+        // ...and an override reaches upstream rather than being dropped on the way.
+        let overridden = PixEntryPool {
+            max_deposit_tracking_time: Duration::from_secs(30),
+            max_deposit_retries: 7,
+        }
+        .to_upstream();
+        assert_eq!(
+            overridden.max_deposit_tracking_time,
+            Duration::from_secs(30)
+        );
+        assert_eq!(overridden.max_deposit_retries, 7);
+    }
+
+    /// The Baby JubJub pool has exactly one knob today. If upstream grows it while implementing
+    /// settlement, this is where that shows up.
+    #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+    #[test]
+    fn pix_entry_pool_defaults_track_the_curvy_pool() {
+        let upstream = hopr_strategy::pix::curvy::PoolConfig::default();
+        assert_eq!(
+            PixEntryPool::default().max_deposit_tracking_time,
+            upstream.max_deposit_tracking_time
+        );
+
+        // ...and an override reaches upstream rather than being dropped on the way.
+        let overridden = PixEntryPool {
+            max_deposit_tracking_time: Duration::from_secs(30),
+        }
+        .to_upstream();
+        assert_eq!(
+            overridden.max_deposit_tracking_time,
+            Duration::from_secs(30)
+        );
+    }
+
+    /// The debounce windows are the ones to watch: a bare `serde(default)` on them upstream once
+    /// produced `Duration::default()` — 0 ns — rather than the 500 ms the type documents, which
+    /// disables batching silently.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn pix_entry_strategy_overrides_reach_upstream() {
+        let strategy = PixEntryStrategy {
+            price_per_byte: "0.0001 wxHOPR".parse().unwrap(),
+            max_ssa_allocation: "10 wxHOPR".parse().unwrap(),
+            deposit_buffer_period: Duration::from_millis(250),
+        }
+        .to_upstream();
+
+        assert_eq!(strategy.price_per_byte, "0.0001 wxHOPR".parse().unwrap());
+        assert_eq!(strategy.max_ssa_allocation, "10 wxHOPR".parse().unwrap());
+        assert_eq!(strategy.deposit_buffer_period, Duration::from_millis(250));
+    }
+
+    /// The two halves are independent: overriding one must not disturb the other's defaults.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn pix_entry_halves_do_not_disturb_each_other() {
+        let cfg = PixEntryConfig {
+            strategy: PixEntryStrategy {
+                price_per_byte: "0.0001 wxHOPR".parse().unwrap(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(cfg.pool, PixEntryPool::default());
+        assert_eq!(
+            cfg.strategy.max_ssa_allocation,
+            PixEntryStrategy::default().max_ssa_allocation
+        );
+    }
+
+    /// The Exit-side fields an Entry never reaches must come out at their upstream defaults, and
+    /// the recovery pair must come out *both* unset in particular: `PixStrategy::build_with_pool`
+    /// refuses to build when exactly one of the two is given, so a half-filled pair would turn a
+    /// field this node has no use for into a startup failure.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn pix_entry_leaves_the_exit_side_alone() {
+        let strategy = PixEntryStrategy::default().to_upstream();
+        assert!(strategy.pix_recovery_db_path.is_none());
+        assert!(strategy.pix_recovery_password_env.is_none());
+        assert_eq!(
+            strategy.withdrawal_buffer_period,
+            hopr_strategy::pix::strategy::PixStrategyConfig::default().withdrawal_buffer_period
+        );
+    }
+
+    /// The secp256k1 pool is the only one with Exit-side fields to leave out; the Baby JubJub one
+    /// has none, so there is no equivalent for it.
+    #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+    #[test]
+    fn pix_entry_pool_leaves_the_sweep_alone() {
+        let pool = PixEntryPool::default().to_upstream();
+        let upstream = hopr_strategy::pix::secp256k1::PoolConfig::default();
+        assert_eq!(pool.gas_xdai_per_sweep, upstream.gas_xdai_per_sweep);
+        assert_eq!(pool.max_sweep_retries, upstream.max_sweep_retries);
+    }
+
+    /// The quota is derived from the installed generator's three dimensions and this build's spec,
+    /// so it is the same value the node will check the Session's announcement against.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn pix_ssa_quota_reads_the_nodes_own_dimensions() {
+        use hopr_lib::exports::transport::{HoprPixSpec, PixSpec};
+
+        let mut cfg = hopr_lib::config::HoprLibConfig::default();
+        cfg.protocol.pix.num_ssa_parts = 64;
+        cfg.protocol.pix.ssa_part_size = 16;
+        cfg.protocol.pix.additional_shares = Some(4);
+
+        let params = pix_ssa_quota(&cfg).unwrap();
+        assert_eq!(params.polys_per_ssa(), 64);
+        assert_eq!(params.shares_per_poly(), 16);
+        assert_eq!(params.surplus_shares(), 4);
+        // Not configurable — it is the build's spec, and announcing anything else would let the
+        // Session proceed while emitting shares the Exit cannot read.
+        assert_eq!(params.suite(), HoprPixSpec::PIX_SUITE);
+        assert_eq!(params.suite(), hopr_lib::LOCAL_PIX_SUITE);
+    }
+
+    /// `additional_shares` is `Option` only because serde cannot default to a function of a
+    /// sibling, so the unset case has to go through `surplus_shares()`. Reading the field directly
+    /// would announce zero surplus — no loss tolerance at all, and a quota the Exit computes
+    /// differently.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn pix_ssa_quota_derives_an_unset_surplus_rather_than_zeroing_it() {
+        let mut cfg = hopr_lib::config::HoprLibConfig::default();
+        cfg.protocol.pix.additional_shares = None;
+
+        let params = pix_ssa_quota(&cfg).unwrap();
+        assert!(
+            params.surplus_shares() > 0,
+            "an unset surplus must be derived from ssa_part_size, not read as zero"
+        );
+        assert_eq!(
+            u64::from(params.surplus_shares()),
+            cfg.protocol.pix.surplus_shares() as u64,
+            "the derived surplus must be the one the generator will use"
+        );
+    }
+
+    /// A configuration the node would refuse at startup has to be refused here too. Rejecting it
+    /// rather than narrowing it is the point: `ssa_part_size` below the validator's minimum of 2
+    /// still fits a `u8`, so a cast would produce a dimension that looks valid and is not.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn pix_ssa_quota_rejects_a_config_the_node_would_reject() {
+        let mut cfg = hopr_lib::config::HoprLibConfig::default();
+        cfg.protocol.pix.ssa_part_size = 1;
+        assert!(pix_ssa_quota(&cfg).is_err());
+
+        // Above `u8::MAX` and above the validator's own maximum: caught rather than truncated to
+        // a plausible 44.
+        let mut cfg = hopr_lib::config::HoprLibConfig::default();
+        cfg.protocol.pix.ssa_part_size = 300;
+        assert!(pix_ssa_quota(&cfg).is_err());
+    }
+
+    /// The surplus is inside the quota, because a cycle emits it whether or not a share is lost.
+    /// Leaving it out is what let an Entry take a fifth of the Exit → Entry traffic unbilled.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn quota_per_ssa_prices_the_surplus() {
+        let payload = hopr_lib::exports::transport::PACKET_PAYLOAD_SIZE as u64;
+
+        let bare =
+            hopr_lib::PixParams::try_new_for::<hopr_lib::exports::transport::HoprPixSpec>(8, 4, 0)
+                .unwrap();
+        let insured =
+            hopr_lib::PixParams::try_new_for::<hopr_lib::exports::transport::HoprPixSpec>(8, 4, 2)
+                .unwrap();
+
+        assert_eq!(quota_per_ssa(&bare), 8 * 4 * payload);
+        assert_eq!(quota_per_ssa(&insured), 8 * (4 + 2) * payload);
+        assert!(
+            quota_per_ssa(&insured) > quota_per_ssa(&bare),
+            "a surplus the Exit delivers must be a surplus the Entry pays for"
+        );
     }
 }

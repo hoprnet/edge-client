@@ -293,6 +293,40 @@
               }
             );
 
+            # Both PIX pools are clippy'd rather than merely built, unlike the three neighbours
+            # above. Those are subsets of the default feature set, so the `clippy` derivation
+            # already lints every line they compile; the PIX features are not in `default`, so
+            # without these their code would never be linted at all. Layered on the default set
+            # rather than `--no-default-features`, because that is the combination anyone enabling
+            # PIX will actually build -- the strategy is wired into the reactor, which needs
+            # `blokli`.
+            #
+            # Two stages rather than one because the pools are mutually exclusive: they select
+            # conflicting `hopr-lib/pix-*` features and a `compile_error!` rejects both together.
+            # The curvy pool is a stub whose methods panic, so its stage proves the *wiring*
+            # compiles and stays linted -- not that deposits work.
+            #
+            # `cargoArtifacts` is built from the default features, so these stages recompile the
+            # dependencies `strategy-pix` adds (redb, scrypt, chacha20poly1305, subtle, backon).
+            # That is the cost of covering a non-default feature and there is no cheaper way.
+            feature-pix-test = craneLib.cargoClippy (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-test";
+              }
+            );
+
+            feature-pix-curvy = craneLib.cargoClippy (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-curvy";
+              }
+            );
+
             # Audit dependencies
             audit = craneLib.cargoAudit {
               inherit src advisory-db;

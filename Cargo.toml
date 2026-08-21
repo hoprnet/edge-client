@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "4.1.0"
+version = "5.0.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -35,6 +35,33 @@ telemetry = [
 ]
 testing = ["hopr-lib/testing"]
 blokli = ["dep:tokio", "dep:url"]
+
+# PIX pays the Exit for the traffic it delivers: this node, as the Entry, deposits wxHOPR to a
+# per-Session stealth address whose key the Exit reconstructs from the SSA shares its spent SURBs
+# carried.
+#
+# Pulls `runtime-tokio` because the PIX strategy needs the tokio runtime; a build with a pool but no
+# runtime would compile to a client that silently has no PIX.
+pix = ["runtime-tokio", "dep:validator"]
+
+# secp256k1 deposit addresses — **tests and demos only.**
+#
+# Mutual exclusive with pix-curvy
+pix-test = [
+  "pix",
+  "hopr-lib/pix-secp256k1",
+  "hopr-strategy/strategy-pix-secp256k1",
+]
+
+# Baby JubJub deposit addresses — the anonymous Curvy pool, and the eventual production one.
+#
+# **Currently a stub: a build with this feature starts and serves normally, and panics on the first
+# PIX deposit.** The wiring is carried here anyway so that it is compiled and linted on every PR
+# rather than written blind once the settlement logic lands — the same reason `hoprd` ships its
+# equivalent. Its panic names `pix-test` as the working alternative.
+#
+# Mutually exclusive with pix-test
+pix-curvy = ["pix", "hopr-lib/pix-bjj", "hopr-strategy/strategy-pix-curvy"]
 
 # tokio-console profiling of the `edgli` binary (see init_logger in src/main.rs). Build with
 # the `tracer` profile so TRACE-level task spans stay compiled in (see [profile.tracer]):
@@ -80,16 +107,16 @@ opentelemetry-otlp = { version = "0.32.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
+validator = { version = "0.21.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "release/4.0", features = [
+# Pinned to a `rev` rather than tracked on `release/4.0`, because PIX lives only on `master`
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "7b46149bc32f0cdca76fd84e52c598b881c7d643", features = [
   "session-client",
   "serde",
 ] }
 hopr-chain-connector = { version = "0.22.2", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.4.0" }
-hopr-strategy = { version = "0.28.0", features = [
-  "strategy-channel-lifecycle",
-] }
+hopr-strategy = { version = "1.0.2", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.5.2" }
 hopr-network-graph = { version = "0.5.0" }
 hopr-transport-p2p = { version = "0.9.5" }
