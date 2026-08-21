@@ -293,6 +293,25 @@
               }
             );
 
+            # PIX is clippy'd rather than merely built, unlike its three neighbours above. Those
+            # are subsets of the default feature set, so the `clippy` derivation already lints
+            # every line they compile; `pix-secp256k1` is not in `default`, so without this its
+            # code would never be linted at all. On top of the default set rather than
+            # `--no-default-features`, because that is the combination anyone enabling PIX will
+            # actually build -- the strategy is wired into the reactor, which needs `blokli`.
+            #
+            # `cargoArtifacts` is built from the default features, so this stage recompiles the
+            # dependencies `strategy-pix` adds (redb, scrypt, chacha20poly1305, subtle, backon).
+            # That is the cost of covering a non-default feature and there is no cheaper way.
+            feature-pix = craneLib.cargoClippy (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-secp256k1";
+              }
+            );
+
             # Audit dependencies
             audit = craneLib.cargoAudit {
               inherit src advisory-db;
