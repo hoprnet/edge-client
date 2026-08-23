@@ -140,6 +140,16 @@
             # MY_CUSTOM_VAR = "some value";
           };
 
+          # Shared by every `cargoDoc` check below.
+          #
+          # This one lint rather than `-D warnings`, because a dangling doc link is a mistake --
+          # rustdoc names the item it could not find -- whereas the crate currently carries six
+          # `private_intra_doc_links` warnings that are deliberate: they point public docs at the
+          # private constants and helpers that explain a number, which is worth more to a reader
+          # than a link that renders. Denying all warnings would force those six to be either
+          # deleted or made public, and neither is an improvement.
+          denyBrokenDocLinks = "--deny rustdoc::broken_intra_doc_links";
+
           # Build *just* the cargo dependencies (of the entire workspace),
           # so we can reuse all of that work (e.g. via cachix) when running in CI
           # It is *highly* recommended to use something like cargo-hakari to avoid
@@ -262,6 +272,34 @@
               commonArgs
               // {
                 inherit cargoArtifacts;
+                RUSTDOCFLAGS = denyBrokenDocLinks;
+              }
+            );
+
+            # The PIX doc comments are the densest in the crate and the only ones no other check
+            # reads. `docs` above builds the default feature set, so every `#[cfg(feature = "pix")]`
+            # item is absent from it; the `feature-pix-*` stages below are `cargoClippy`, and
+            # broken intra-doc links are a *rustdoc* lint that clippy never evaluates. Without
+            # these two stages a dangling doc link anywhere in the PIX surface ships unnoticed --
+            # which is exactly how three of them did.
+            #
+            # Two stages for the same reason the clippy pair is two: the pools are mutually
+            # exclusive, and each documents a different `PixEntryPool`.
+            docs-pix-test = craneLib.cargoDoc (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                RUSTDOCFLAGS = denyBrokenDocLinks;
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-test";
+              }
+            );
+
+            docs-pix-curvy = craneLib.cargoDoc (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                RUSTDOCFLAGS = denyBrokenDocLinks;
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-curvy";
               }
             );
 

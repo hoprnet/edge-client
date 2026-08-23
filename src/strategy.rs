@@ -92,9 +92,12 @@ compile_error!(
 
 /// Subset of strategies relevant to an edge node.
 ///
-/// `#[non_exhaustive]` because [`Pix`](Self::Pix) is feature-gated: a downstream `match` would
-/// otherwise be exhaustive under one feature set and not under another, which makes turning `pix`
-/// on a breaking change for every consumer rather than an additive one.
+/// `#[non_exhaustive]` because the `Pix` variant below is feature-gated: a downstream `match`
+/// would otherwise be exhaustive under one feature set and not under another, which makes turning
+/// `pix` on a breaking change for every consumer rather than an additive one.
+///
+/// Named rather than linked for that same reason — a link to it would itself resolve only under
+/// `pix`, and so would break the doc build that the `docs-pix-*` checks exist to keep clean.
 #[non_exhaustive]
 pub enum EdgeStrategyKind {
     /// Boxed because [`ChannelLifecycleConfig`] is some 560 bytes against `Pix`'s few dozen, and
@@ -294,7 +297,7 @@ impl PixEntryPool {
     }
 }
 
-/// This node's own PIX dimensions, as the [`PixParams`] a Session announces.
+/// This node's own PIX dimensions, as the [`PixParams`](hopr_lib::PixParams) a Session announces.
 ///
 /// Read from the node's installed generator configuration (`protocol.pix`) and nothing else, which
 /// is the only source that can be right. The Exit is told these dimensions at Session start, and
@@ -340,15 +343,15 @@ pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> anyhow::Result<ho
 ///
 /// `polys_per_ssa × emitted_shares_per_poly × PACKET_PAYLOAD_SIZE`, matching what the Exit computes
 /// when it decides whether the offered quota is one it accepts. Multiply by
-/// [`PixEntryConfig::price_per_byte`] for the wxHOPR a single deposit costs, and by the number of
+/// [`PixEntryStrategy::price_per_byte`] for the wxHOPR a single deposit costs, and by the number of
 /// SSA cycles a Session is expected to run for the float that Session needs.
 ///
 /// Counts `emitted_shares_per_poly` — threshold *plus* surplus — rather than the threshold alone,
-/// and reads it off [`PixParams`] rather than re-deriving it. A polynomial leaves the generator's
-/// queue having emitted the surplus whether or not any share was lost, so it is service the Exit
-/// performs in every case and is charged for on purchase rather than on claim. Sizing against the
-/// threshold alone underpays by the surplus factor — at the shipped 1.25×, a fifth of all
-/// Exit → Entry traffic.
+/// and reads it off [`PixParams`](hopr_lib::PixParams) rather than re-deriving it. A polynomial
+/// leaves the generator's queue having emitted the surplus whether or not any share was lost, so
+/// it is service the Exit performs in every case and is charged for on purchase rather than on
+/// claim. Sizing against the threshold alone underpays by the surplus factor — at the shipped
+/// 1.25×, a fifth of all Exit → Entry traffic.
 #[cfg(feature = "pix")]
 pub fn quota_per_ssa(params: &hopr_lib::PixParams) -> u64 {
     u64::from(params.polys_per_ssa())

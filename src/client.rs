@@ -468,8 +468,9 @@ impl Edgli {
 
     /// Run a node with HOPR edge strategies integrated.
     ///
-    /// The default reactor runs a single [`ChannelLifecycleStrategy`] which
-    /// owns open / fund / close / finalize for outgoing payment channels.
+    /// The default reactor runs a single
+    /// [`ChannelLifecycleStrategy`](hopr_strategy::channel_lifecycle::ChannelLifecycleStrategy)
+    /// which owns open / fund / close / finalize for outgoing payment channels.
     ///
     /// Returns an [`AbortHandle`] that stops the strategy reactor when aborted.
     #[cfg(feature = "blokli")]

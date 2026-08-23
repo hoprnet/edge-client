@@ -91,7 +91,9 @@ pub struct TicketStats {
     pub ticket_price: Balance<WxHOPR>,
     /// Minimum winning probability enforced by the network.
     ///
-    /// Call `.as_f64()` (via [`hopr_lib::UnitaryFloatOps`]) to convert to f64.
+    /// Call `.as_f64()` (via
+    /// [`UnitaryFloatOps`](hopr_lib::api::types::primitive::prelude::UnitaryFloatOps)) to convert
+    /// to f64.
     pub winning_probability: WinningProbability,
 }
 
