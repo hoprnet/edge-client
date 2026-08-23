@@ -1505,15 +1505,25 @@ mod tests {
     }
 
     /// `max_deposit_tracking_time` is the one field both pools carry, because the `DepositPool`
-    /// contract forces it. Asserted through whichever pool this build selected, so the test holds
-    /// for either without knowing which.
+    /// contract forces it — and both default it to the same 60 s.
+    ///
+    /// Deliberately a copied literal rather than a read from upstream, which is the opposite of
+    /// what the two per-pool tests below do, and narrower than they are. Those already assert the
+    /// wiring for the selected pool; reading upstream here would only repeat them. What the
+    /// literal pins instead is *cross-pool agreement*: this test is `cfg(feature = "pix")`, so
+    /// between the two feature stages CI runs it once per pool against the same number. Should the
+    /// pools ever diverge on the field the contract forces both to carry, one stage fails.
+    ///
+    /// So a change upstream surfaces here as a failure to update this constant, not as a tracking
+    /// error. That is the intended reading: the number is shipped behaviour, asserted twice.
     #[cfg(feature = "pix")]
     #[test]
-    fn pix_entry_pool_default_tracking_time_is_upstreams() {
+    fn pix_entry_pool_tracking_time_agrees_across_pools() {
         assert_eq!(
             PixEntryPool::default().max_deposit_tracking_time,
             std::time::Duration::from_secs(60),
-            "both upstream pools default this to 60s; a change there must surface here"
+            "both pools must default this to the same 60s; if upstream moved it, move it here \
+             too — and check the other pool moved with it"
         );
     }
 

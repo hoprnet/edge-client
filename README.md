@@ -223,8 +223,8 @@ owns:
 - **executor-yield profiling** (tokio-console + Perfetto traces).
 
 This crate keeps only fast, self-contained unit tests (no network, no external
-binaries): the inline `#[cfg(test)]` modules in `src/` and
-`tests/mixer_config.rs`.
+binaries): the inline `#[cfg(test)]` modules in `src/` and the binaries in
+`tests/`.
 
 ## Architecture
 
