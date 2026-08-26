@@ -140,14 +140,7 @@
             # MY_CUSTOM_VAR = "some value";
           };
 
-          # Shared by every `cargoDoc` check below.
-          #
-          # This one lint rather than `-D warnings`, because a dangling doc link is a mistake --
-          # rustdoc names the item it could not find -- whereas the crate currently carries six
-          # `private_intra_doc_links` warnings that are deliberate: they point public docs at the
-          # private constants and helpers that explain a number, which is worth more to a reader
-          # than a link that renders. Denying all warnings would force those six to be either
-          # deleted or made public, and neither is an improvement.
+          # Deny only broken-link warnings -- crate deliberately keeps 6 private-intra-doc-link warnings pointing at non-public constants.
           denyBrokenDocLinks = "--deny rustdoc::broken_intra_doc_links";
 
           # Build *just* the cargo dependencies (of the entire workspace),
@@ -276,15 +269,7 @@
               }
             );
 
-            # The PIX doc comments are the densest in the crate and the only ones no other check
-            # reads. `docs` above builds the default feature set, so every `#[cfg(feature = "pix")]`
-            # item is absent from it; the `feature-pix-*` stages below are `cargoClippy`, and
-            # broken intra-doc links are a *rustdoc* lint that clippy never evaluates. Without
-            # these two stages a dangling doc link anywhere in the PIX surface ships unnoticed --
-            # which is exactly how three of them did.
-            #
-            # Two stages for the same reason the clippy pair is two: the pools are mutually
-            # exclusive, and each documents a different `PixEntryPool`.
+            # rustdoc's broken-link check for the PIX feature surface, which the default-feature docs build and clippy both skip.
             docs-pix-test = craneLib.cargoDoc (
               commonArgs
               // {
@@ -331,22 +316,7 @@
               }
             );
 
-            # Both PIX pools are clippy'd rather than merely built, unlike the three neighbours
-            # above. Those are subsets of the default feature set, so the `clippy` derivation
-            # already lints every line they compile; the PIX features are not in `default`, so
-            # without these their code would never be linted at all. Layered on the default set
-            # rather than `--no-default-features`, because that is the combination anyone enabling
-            # PIX will actually build -- the strategy is wired into the reactor, which needs
-            # `blokli`.
-            #
-            # Two stages rather than one because the pools are mutually exclusive: they select
-            # conflicting `hopr-lib/pix-*` features and a `compile_error!` rejects both together.
-            # The curvy pool is a stub whose methods panic, so its stage proves the *wiring*
-            # compiles and stays linted -- not that deposits work.
-            #
-            # `cargoArtifacts` is built from the default features, so these stages recompile the
-            # dependencies `strategy-pix` adds (redb, scrypt, chacha20poly1305, subtle, backon).
-            # That is the cost of covering a non-default feature and there is no cheaper way.
+            # Clippy the two (mutually exclusive) PIX pools on top of the default features -- they aren't in `default` so nothing else lints them.
             feature-pix-test = craneLib.cargoClippy (
               commonArgs
               // {

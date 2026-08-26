@@ -15,8 +15,7 @@ use edgli::{PixEntryConfig, PixEntryStrategy, pix_ssa_quota, quota_per_ssa};
 
 #[test]
 fn readme_pix_snippet_compiles_and_runs() -> anyhow::Result<()> {
-    // Pay: add the PIX strategy alongside the default channel-lifecycle one. Only the pricing half
-    // is set here — `pool` is whichever pool the build selected, and its defaults are fine.
+    // Pay: add the PIX strategy; only pricing is set here, pool defaults are fine.
     let mut strategies = default_strategy_cfg(&IncentiveConfiguration::default())?;
     strategies
         .strategies
@@ -30,8 +29,7 @@ fn readme_pix_snippet_compiles_and_runs() -> anyhow::Result<()> {
         }));
     assert_eq!(strategies.strategies.len(), 2);
 
-    // Ask: `Edgli::with_pix` and `Edgli::pix_ssa_quota` need a live node, but both are thin
-    // wrappers over the free function below, which is the half that decides the answer.
+    // Ask: with_pix/pix_ssa_quota need a live node; both wrap the free function below.
     let cfg = edgli::hopr_lib::config::HoprLibConfig::default();
     let params = pix_ssa_quota(&cfg)?;
     assert!(

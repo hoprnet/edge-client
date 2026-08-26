@@ -501,10 +501,7 @@ impl Edgli {
                     }
                     #[cfg(feature = "pix")]
                     EdgeStrategyKind::Pix(sub_cfg) => {
-                        // The pool is a build-time choice with no other runtime trace, so without
-                        // this line nothing in a log says which one a running node has — and the
-                        // two differ in whether deposits are anonymous, which is not a difference
-                        // to leave un-logged.
+                        // Only trace of which pool this build picked, and anonymity differs between them -- worth logging.
                         tracing::info!(
                             pool = PIX_POOL,
                             price_per_byte = %sub_cfg.strategy.price_per_byte,

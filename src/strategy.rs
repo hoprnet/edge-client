@@ -66,13 +66,7 @@ const SIZING_MODE: CapacitySizingMode = CapacitySizingMode::Probabilistic {
 #[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
 use hopr_lib::api::chain::{AccountSelector, ChainReadAccountOperations, ChainValues};
 
-// The two pools settle to different deposit-address types, and `HoprPixSpec` has exactly one.
-// Enabling both is not merely redundant: `hopr-crypto-packet` selects the secp arm with
-// `cfg(any(feature = "pix-secp256k1", not(feature = "pix-bjj")))`, so secp256k1 wins on addition
-// and the build resolves to Ethereum addresses — silently, and *successfully*, because the curvy
-// builder below is cfg'd out rather than mistyped. An operator who asked for the anonymous pool
-// would get the fully-visible one with nothing to indicate it. Nothing in the type system catches
-// that, which is what this is for.
+// Guards against silently resolving to secp256k1 when both pools are enabled -- the type system doesn't catch it.
 #[cfg(all(feature = "pix-test", feature = "pix-curvy"))]
 compile_error!(
     "the `pix-test` and `pix-curvy` features are mutually exclusive: they select conflicting \
@@ -80,9 +74,7 @@ compile_error!(
      resolves to secp256k1 without an error, so a build asking for Baby JubJub would settle to \
      visible Ethereum addresses instead. Enable exactly one."
 );
-// `pix` on its own selects no pool, so `hopr_strategy::pix::{secp256k1, curvy}` does not resolve
-// and the build fails with a handful of unresolved names that say nothing about the feature that
-// is missing.
+// Bare `pix` selects no pool, so the resulting unresolved-name errors wouldn't say why.
 #[cfg(all(feature = "pix", not(any(feature = "pix-test", feature = "pix-curvy"))))]
 compile_error!(
     "the `pix` feature selects no deposit pool on its own and is not meant to be enabled \
@@ -137,9 +129,7 @@ pub struct PixEntryConfig {
 ///
 /// Defaults are read from the upstream type rather than restated, so a change to what PIX charges
 /// arrives here instead of being silently overridden by a stale copy.
-// The two cross-references below are code spans rather than intra-doc links on purpose:
-// `Edgli` and `blokli` need the `blokli` feature, which `pix` does not imply, so a
-// `--features pix-test` doc build would reject them as broken links.
+// Code spans, not intra-doc links: `Edgli`/`blokli` need the `blokli` feature, which a `pix-test`-only doc build wouldn't have.
 #[cfg(feature = "pix")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PixEntryStrategy {
@@ -1181,9 +1171,7 @@ mod tests {
             ..Default::default()
         };
         let cfg = default_strategy_cfg(&sizing).unwrap();
-        // A `match` rather than a `let`-`else`: the wildcard arm only exists when the enum has a
-        // second variant, and a `let`-`else` would have an unreachable `else` in the build where
-        // it does not.
+        // let-else's wildcard arm isn't reachable under every feature set
         let funding = match &cfg.strategies[0] {
             EdgeStrategyKind::ChannelLifecycle(lifecycle_cfg) => &lifecycle_cfg.funding,
             #[cfg(feature = "pix")]
@@ -1654,8 +1642,7 @@ mod tests {
         assert_eq!(params.polys_per_ssa(), 64);
         assert_eq!(params.shares_per_poly(), 16);
         assert_eq!(params.surplus_shares(), 4);
-        // Not configurable — it is the build's spec, and announcing anything else would let the
-        // Session proceed while emitting shares the Exit cannot read.
+        // The build's spec, not configurable -- anything else would emit shares the Exit can't read.
         assert_eq!(params.suite(), HoprPixSpec::PIX_SUITE);
         assert_eq!(params.suite(), hopr_lib::LOCAL_PIX_SUITE);
     }
@@ -1692,8 +1679,7 @@ mod tests {
         cfg.protocol.pix.ssa_part_size = 1;
         assert!(pix_ssa_quota(&cfg).is_err());
 
-        // Above `u8::MAX` and above the validator's own maximum: caught rather than truncated to
-        // a plausible 44.
+        // Above u8::MAX and the validator's max: must error, not truncate to a plausible 44.
         let mut cfg = hopr_lib::config::HoprLibConfig::default();
         cfg.protocol.pix.ssa_part_size = 300;
         assert!(pix_ssa_quota(&cfg).is_err());
