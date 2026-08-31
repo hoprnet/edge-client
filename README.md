@@ -153,8 +153,8 @@ section described.)
 
 That is the account `deploy_safe` sweeps the node's balance into during
 onboarding, so the float is already where it needs to be and there is nothing
-extra to fund. The node account still needs xDai — it pays every transaction
-fee — but no wxHOPR.
+extra to fund. The node account still needs xDai — it pays every transaction fee
+— but no wxHOPR.
 
 What the change does introduce is contention: the channel-lifecycle strategy
 stakes and tops up channels from the same Safe. Two knobs bound it, and PIX
@@ -169,10 +169,10 @@ starves rather than errors when either binds:
 
 A Safe that runs dry, or a budget that is reached, stops depositing — and the
 Exit closes the Session on its deposit deadline, with nothing logged as an error
-at this end. `Edgli::describe_current_capacity_allocations` reports the remaining
-float as its `safe` allocation, which is the figure to watch. Size the float
-against `price_per_byte × quota_per_ssa × expected SSA cycles`, plus whatever the
-channels need.
+at this end. `Edgli::describe_current_capacity_allocations` reports the
+remaining float as its `safe` allocation, which is the figure to watch. Size the
+float against `price_per_byte × quota_per_ssa × expected SSA cycles`, plus
+whatever the channels need.
 
 Where `pix-curvy`'s funds will come from is not yet settled — its
 `deposit_funds_to` is unimplemented — so this section is about `pix-test` only.
