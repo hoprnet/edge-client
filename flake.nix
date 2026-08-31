@@ -296,6 +296,8 @@
             # Audit dependencies
             audit = craneLib.cargoAudit {
               inherit src advisory-db;
+              # smartstring is unmaintained (RUSTSEC-2026-0249) with no patched version available
+              cargoAuditExtraArgs = "--ignore RUSTSEC-2026-0249";
             };
 
             # Audit licenses
