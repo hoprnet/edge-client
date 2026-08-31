@@ -141,20 +141,38 @@ return-path loss: unset derives a surplus from the threshold, and the surplus is
 billed — a cycle emits it whether or not a share is lost, so it is insurance
 charged on purchase rather than on claim.
 
-#### Deposits are paid from the node's own account, not the Safe
+#### Deposits are paid by the Safe, alongside the channel stakes
 
-Under `pix-test`. The deposit is a direct `HoprToken.transfer` signed by the
-node key — the one call the Safe payload generator does not route through the
-Safe module — so the wxHOPR comes off the node address, while `deploy_safe`
-sweeps that balance _into_ the Safe during onboarding, leaving it at zero.
+Under `pix-test`. A deposit goes out through
+`ChainWriteAccountOperations::withdraw`, and since hopr-types 4.0.0
+`SafePayloadGenerator::transfer` wraps every transfer in the Safe module's
+`execTransactionFromModule` — so the node key signs and pays the gas, and the
+wxHOPR comes out of the Safe. (Until then that transfer was direct and the
+deposit left the node's own account, which is what earlier revisions of this
+section described.)
 
-An operator running PIX therefore has to leave a wxHOPR (and xDai for gas) float
-on the node address, sized against
-`price_per_byte × quota_per_ssa × expected SSA cycles`. A node that runs dry
-stops depositing, and the Exit closes the Session on its deposit deadline, with
-nothing logged as an error at this end.
-`Edgli::describe_current_capacity_allocations` reports the remaining float as
-its `node` allocation, which is the figure to watch.
+That is the account `deploy_safe` sweeps the node's balance into during
+onboarding, so the float is already where it needs to be and there is nothing
+extra to fund. The node account still needs xDai — it pays every transaction
+fee — but no wxHOPR.
+
+What the change does introduce is contention: the channel-lifecycle strategy
+stakes and tops up channels from the same Safe. Two knobs bound it, and PIX
+starves rather than errors when either binds:
+
+- `PixEntryPool::min_safe_hopr_reserve` — wxHOPR the Safe must still hold after
+  a deposit. Upstream defaults it to zero on the grounds that the Safe's balance
+  _is_ the deposit float; set it to the channel budget you need kept.
+- `PixEntryStrategy::max_spend_per_window` — aggregate wxHOPR committed to
+  deposits per rolling window, sized as a runaway detector rather than a
+  throttle. The ledger is in memory, so a restart forgives the window.
+
+A Safe that runs dry, or a budget that is reached, stops depositing — and the
+Exit closes the Session on its deposit deadline, with nothing logged as an error
+at this end. `Edgli::describe_current_capacity_allocations` reports the remaining
+float as its `safe` allocation, which is the figure to watch. Size the float
+against `price_per_byte × quota_per_ssa × expected SSA cycles`, plus whatever the
+channels need.
 
 Where `pix-curvy`'s funds will come from is not yet settled — its
 `deposit_funds_to` is unimplemented — so this section is about `pix-test` only.

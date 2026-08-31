@@ -137,18 +137,25 @@ pub struct PixEntryStrategy {
     /// `price_per_byte × quota_per_ssa`, where the quota is
     /// `polys_per_ssa × (shares_per_poly + surplus_shares) × PACKET_PAYLOAD_SIZE`.
     ///
-    /// # Deposits are paid from the node's own account, not the Safe
+    /// # Deposits are paid by the Safe
     ///
-    /// The deposit is a direct `HoprToken.transfer` signed by the node key: it is the one call the
-    /// Safe payload generator does not route through the Safe module. So the wxHOPR comes off the
-    /// node's own address, while `IncentiveOperations::deploy_safe` sweeps that balance *into* the
-    /// Safe during onboarding.
+    /// A deposit goes out through `ChainWriteAccountOperations::withdraw`, and since hopr-types
+    /// 4.0.0 `SafePayloadGenerator::transfer` wraps every transfer in the Safe module's
+    /// `execTransactionFromModule`. The node key signs and pays the gas; the wxHOPR comes out of
+    /// the Safe. (It was the node's own account until then, which is what earlier revisions of this
+    /// documentation said.)
     ///
-    /// An operator running PIX therefore has to leave a wxHOPR float on the node address, sized
-    /// against `price_per_byte × quota_per_ssa × expected SSA cycles`. A node that runs dry stops
-    /// depositing and the Exit closes the Session on its deposit deadline — with nothing logged as
-    /// an error at this end. `Edgli::describe_current_capacity_allocations` reports the remaining
-    /// float as its `node` allocation.
+    /// That is the account `IncentiveOperations::deploy_safe` sweeps the node's balance into during
+    /// onboarding, so the float is where it already is and there is nothing extra to fund. It is
+    /// also the account the channel-lifecycle strategy stakes channels from, which is the one thing
+    /// to size against: see `PixEntryPool::min_safe_hopr_reserve` for the floor that keeps PIX from
+    /// spending the channel budget. (A code span rather than a link: that field exists only under
+    /// `pix-test`, and this type is compiled for both pools.)
+    ///
+    /// A Safe that runs dry stops depositing and the Exit closes the Session on its deposit
+    /// deadline — with nothing logged as an error at this end.
+    /// `Edgli::describe_current_capacity_allocations` reports the remaining float as its `safe`
+    /// allocation.
     ///
     /// Upstream default: 1 wxHOPR, which prices a default-dimensioned SSA far past any sane
     /// ceiling. Set this against your own dimensions.
@@ -163,6 +170,31 @@ pub struct PixEntryStrategy {
     /// Upstream default: 100 wxHOPR.
     pub max_ssa_allocation: HoprBalance,
 
+    /// Aggregate wxHOPR the strategy will commit to deposits within any [`Self::spend_window`].
+    /// Zero disables the limit.
+    ///
+    /// [`Self::max_ssa_allocation`] bounds one deposit; this bounds all of them together, which is
+    /// the only one of the two that bounds *spend*. Distinct PIX ids to distinct addresses each
+    /// pass the dedupe and the per-address ceiling, so without an aggregate a runaway or hostile
+    /// event stream is funded until the Safe is empty.
+    ///
+    /// A deposit that would cross it is refused and the event dropped — not retried when the window
+    /// rolls forward — so it behaves like running dry: the Session starves and the Exit closes it on
+    /// its deposit deadline. Size it as a runaway detector rather than a throttle.
+    ///
+    /// The ledger behind it is in memory, so a restart forgives the window. It bounds a burst, not
+    /// lifetime spend; `PixEntryPool::min_safe_hopr_reserve` is the balance floor that survives
+    /// restarts.
+    ///
+    /// Upstream default: 10 000 wxHOPR — 100 deposits at the default `max_ssa_allocation`.
+    pub max_spend_per_window: HoprBalance,
+
+    /// Length of the rolling window for [`Self::max_spend_per_window`].
+    ///
+    /// Rolling rather than fixed: there is no reset instant for a burst to line up with. Upstream
+    /// default: 1 hour.
+    pub spend_window: Duration,
+
     /// Debounce window before a batch of pending deposits is flushed.
     ///
     /// Resets on each new event, so a burst is paid in one batched call. Upstream default: 500 ms.
@@ -176,6 +208,8 @@ impl Default for PixEntryStrategy {
         Self {
             price_per_byte: upstream.price_per_byte,
             max_ssa_allocation: upstream.max_ssa_allocation,
+            max_spend_per_window: upstream.max_spend_per_window,
+            spend_window: upstream.spend_window,
             deposit_buffer_period: upstream.deposit_buffer_period,
         }
     }
@@ -192,6 +226,8 @@ impl PixEntryStrategy {
         hopr_strategy::pix::strategy::PixStrategyConfig {
             price_per_byte: self.price_per_byte,
             max_ssa_allocation: self.max_ssa_allocation,
+            max_spend_per_window: self.max_spend_per_window,
+            spend_window: self.spend_window,
             deposit_buffer_period: self.deposit_buffer_period,
             ..Default::default()
         }
@@ -206,8 +242,12 @@ impl PixEntryStrategy {
 /// decided". A single type with the union of both would invite exactly the analogy upstream warns
 /// against.
 ///
-/// `gas_xdai_per_sweep` and `max_sweep_retries` are absent for the usual reason: both belong to the
-/// sweep, which an Entry never performs.
+/// `gas_xdai_per_sweep`, `min_node_xdai_reserve` and `max_sweep_retries` are absent for the usual
+/// reason: all three belong to the sweep, which an Entry never performs. `blokli_url` and
+/// `tx_timeout_multiplier` are absent for the same reason once removed — they configure the
+/// short-lived EOA connectors the pool builds, and the only two movements that use them are the
+/// sweep and its gas top-up. A deposit goes through the node's own connector, so an Entry never
+/// dials that endpoint and its placeholder default is never reached.
 #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PixEntryPool {
@@ -225,15 +265,28 @@ pub struct PixEntryPool {
     /// Retrying is safe because every attempt re-reads the destination balance and sends nothing
     /// if it already holds the amount. Upstream default: 3.
     pub max_deposit_retries: usize,
+
+    /// wxHOPR the Safe must still hold after a deposit; a deposit that would breach it is refused.
+    ///
+    /// Carried rather than left at its default — unusually for a floor, since upstream's is zero on
+    /// the grounds that the Safe's wxHOPR *is* the deposit float and nothing else spends it. On an
+    /// edge node that is not true: the channel-lifecycle strategy stakes and tops up channels from
+    /// the same Safe, so without a floor a busy Session drains the balance those channels are
+    /// funded from and the node stops relaying — having paid for quota it can no longer use.
+    ///
+    /// Set it to the channel budget the node must keep. Upstream default: 0, which lets PIX spend
+    /// the Safe to nothing.
+    pub min_safe_hopr_reserve: HoprBalance,
 }
 
 #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
 impl Default for PixEntryPool {
     fn default() -> Self {
-        let upstream = hopr_strategy::pix::secp256k1::PoolConfig::default();
+        let upstream = hopr_strategy::pix::pools::plain::PoolConfig::default();
         Self {
             max_deposit_tracking_time: upstream.max_deposit_tracking_time,
             max_deposit_retries: upstream.max_deposit_retries,
+            min_safe_hopr_reserve: upstream.min_safe_hopr_reserve,
         }
     }
 }
@@ -241,10 +294,11 @@ impl Default for PixEntryPool {
 #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
 impl PixEntryPool {
     /// The upstream form, with the sweep's gas top-up and retry budget left at their defaults.
-    pub(crate) fn to_upstream(&self) -> hopr_strategy::pix::secp256k1::PoolConfig {
-        hopr_strategy::pix::secp256k1::PoolConfig {
+    pub(crate) fn to_upstream(&self) -> hopr_strategy::pix::pools::plain::PoolConfig {
+        hopr_strategy::pix::pools::plain::PoolConfig {
             max_deposit_tracking_time: self.max_deposit_tracking_time,
             max_deposit_retries: self.max_deposit_retries,
+            min_safe_hopr_reserve: self.min_safe_hopr_reserve,
             ..Default::default()
         }
     }
@@ -270,7 +324,7 @@ pub struct PixEntryPool {
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
 impl Default for PixEntryPool {
     fn default() -> Self {
-        let upstream = hopr_strategy::pix::curvy::PoolConfig::default();
+        let upstream = hopr_strategy::pix::pools::curvy::PoolConfig::default();
         Self {
             max_deposit_tracking_time: upstream.max_deposit_tracking_time,
         }
@@ -280,8 +334,8 @@ impl Default for PixEntryPool {
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
 impl PixEntryPool {
     /// The upstream form. Every field is carried, since none of them is Exit-side.
-    pub(crate) fn to_upstream(&self) -> hopr_strategy::pix::curvy::PoolConfig {
-        hopr_strategy::pix::curvy::PoolConfig {
+    pub(crate) fn to_upstream(&self) -> hopr_strategy::pix::pools::curvy::PoolConfig {
+        hopr_strategy::pix::pools::curvy::PoolConfig {
             max_deposit_tracking_time: self.max_deposit_tracking_time,
         }
     }
@@ -1520,18 +1574,20 @@ mod tests {
     #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
     #[test]
     fn pix_entry_pool_defaults_track_the_secp_pool() {
-        let upstream = hopr_strategy::pix::secp256k1::PoolConfig::default();
+        let upstream = hopr_strategy::pix::pools::plain::PoolConfig::default();
         let cfg = PixEntryPool::default();
         assert_eq!(
             cfg.max_deposit_tracking_time,
             upstream.max_deposit_tracking_time
         );
         assert_eq!(cfg.max_deposit_retries, upstream.max_deposit_retries);
+        assert_eq!(cfg.min_safe_hopr_reserve, upstream.min_safe_hopr_reserve);
 
         // ...and an override reaches upstream rather than being dropped on the way.
         let overridden = PixEntryPool {
             max_deposit_tracking_time: Duration::from_secs(30),
             max_deposit_retries: 7,
+            min_safe_hopr_reserve: "200 wxHOPR".parse().unwrap(),
         }
         .to_upstream();
         assert_eq!(
@@ -1539,6 +1595,24 @@ mod tests {
             Duration::from_secs(30)
         );
         assert_eq!(overridden.max_deposit_retries, 7);
+        assert_eq!(
+            overridden.min_safe_hopr_reserve,
+            "200 wxHOPR".parse().unwrap()
+        );
+    }
+
+    /// Upstream defaults this floor to zero on the grounds that the Safe's wxHOPR *is* the deposit
+    /// float. On an edge node it is also the channel budget, so the default being carried through
+    /// rather than quietly raised is the thing to know: an operator who wants channels protected
+    /// has to say so.
+    #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+    #[test]
+    fn pix_entry_pool_does_not_reserve_safe_hopr_by_default() {
+        assert!(
+            PixEntryPool::default().min_safe_hopr_reserve.is_zero(),
+            "the default must stay upstream's zero; raising it here would silently refuse deposits \
+             on a node whose Safe is funded for exactly the float it was given"
+        );
     }
 
     /// The Baby JubJub pool has exactly one knob today. If upstream grows it while implementing
@@ -1546,7 +1620,7 @@ mod tests {
     #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
     #[test]
     fn pix_entry_pool_defaults_track_the_curvy_pool() {
-        let upstream = hopr_strategy::pix::curvy::PoolConfig::default();
+        let upstream = hopr_strategy::pix::pools::curvy::PoolConfig::default();
         assert_eq!(
             PixEntryPool::default().max_deposit_tracking_time,
             upstream.max_deposit_tracking_time
@@ -1572,13 +1646,37 @@ mod tests {
         let strategy = PixEntryStrategy {
             price_per_byte: "0.0001 wxHOPR".parse().unwrap(),
             max_ssa_allocation: "10 wxHOPR".parse().unwrap(),
+            max_spend_per_window: "50 wxHOPR".parse().unwrap(),
+            spend_window: Duration::from_secs(900),
             deposit_buffer_period: Duration::from_millis(250),
         }
         .to_upstream();
 
         assert_eq!(strategy.price_per_byte, "0.0001 wxHOPR".parse().unwrap());
         assert_eq!(strategy.max_ssa_allocation, "10 wxHOPR".parse().unwrap());
+        assert_eq!(strategy.max_spend_per_window, "50 wxHOPR".parse().unwrap());
+        assert_eq!(strategy.spend_window, Duration::from_secs(900));
         assert_eq!(strategy.deposit_buffer_period, Duration::from_millis(250));
+    }
+
+    /// The aggregate budget is the one field here whose default is load-bearing in a way the others'
+    /// are not: zero would disable the ceiling entirely, so a run-away event stream would be funded
+    /// until the Safe is empty. Upstream's default is a figure, and it has to arrive intact.
+    #[cfg(feature = "pix")]
+    #[test]
+    fn pix_entry_strategy_carries_a_non_zero_spend_budget_by_default() {
+        let upstream = hopr_strategy::pix::strategy::PixStrategyConfig::default();
+        let cfg = PixEntryStrategy::default();
+        assert_eq!(cfg.max_spend_per_window, upstream.max_spend_per_window);
+        assert_eq!(cfg.spend_window, upstream.spend_window);
+        assert!(
+            !cfg.max_spend_per_window.is_zero(),
+            "zero disables the aggregate ceiling; the default must remain a real budget"
+        );
+        assert!(
+            !cfg.spend_window.is_zero(),
+            "a zero window would make every deposit its own budget"
+        );
     }
 
     /// The two halves are independent: overriding one must not disturb the other's defaults.
@@ -1621,9 +1719,13 @@ mod tests {
     #[test]
     fn pix_entry_pool_leaves_the_sweep_alone() {
         let pool = PixEntryPool::default().to_upstream();
-        let upstream = hopr_strategy::pix::secp256k1::PoolConfig::default();
+        let upstream = hopr_strategy::pix::pools::plain::PoolConfig::default();
         assert_eq!(pool.gas_xdai_per_sweep, upstream.gas_xdai_per_sweep);
         assert_eq!(pool.max_sweep_retries, upstream.max_sweep_retries);
+        assert_eq!(pool.min_node_xdai_reserve, upstream.min_node_xdai_reserve);
+        // The pool's own EOA connectors, which only the sweep opens -- so the placeholder `blokli_url` staying one is correct, not an oversight.
+        assert_eq!(pool.blokli_url, upstream.blokli_url);
+        assert_eq!(pool.tx_timeout_multiplier, upstream.tx_timeout_multiplier);
     }
 
     /// The quota is derived from the installed generator's three dimensions and this build's spec,
