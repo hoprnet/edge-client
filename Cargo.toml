@@ -92,12 +92,12 @@ url = { version = "2.5.8", optional = true }
 validator = { version = "0.21.0", optional = true }
 
 # Pinned to a `rev` rather than tracked on `release/4.0`, because PIX lives only on `master`
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "3188d8ee6b351934f7464960a79bf199e2151940", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "87f0e07d505527253b278fc7372b9601afb921d2", features = [
   "session-client",
   "serde",
 ] }
 # Copied verbatim from the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
-hopr-chain-connector = { version = "0.25.0", features = ["runtime-tokio"] }
+hopr-chain-connector = { version = "0.26.0", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.6.0" }
 hopr-strategy = { version = "4.0.0", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.7.0" }
@@ -112,12 +112,10 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 
 [dev-dependencies]
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.
-hopr-chain-connector = { version = "0.25.0", features = [
+hopr-chain-connector = { version = "0.26.0", features = [
   "runtime-tokio",
   "testing",
 ] }
-# Unused here; pins the resolver. hopr-types 4.0.1 broke `ParsedHoprChainAction::Withdraw*` in a patch release and hopr-utilities 0.12.0 -- the emulator `hopr-chain-connector/testing` reaches -- does not compile against it. 4.0.0 is what hoprnet declares and hoprd locks; its `payload` half is identical, so no PIX behaviour rides on this. Dev-only, so a downstream consumer stays free to resolve 4.0.1.
-hopr-types = "=4.0.0"
 # `full` for the async unit tests in src/ (#[tokio::test], spawn, time, sync).
 tokio = { version = "1.53.1", features = ["full"] }
 
