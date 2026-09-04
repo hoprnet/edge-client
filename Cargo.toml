@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "4.1.1"
+version = "5.0.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -35,6 +35,15 @@ telemetry = [
 ]
 testing = ["hopr-lib/testing"]
 blokli = ["dep:tokio", "dep:url"]
+
+# PIX settlement: Entry deposits wxHOPR per Session. Pulls runtime-tokio, which the strategy needs to run.
+pix = ["runtime-tokio", "dep:validator"]
+
+# secp256k1 deposit addresses -- tests/demos only; mutually exclusive with pix-curvy.
+pix-test = ["pix", "hopr-lib/pix-secp256k1", "hopr-strategy/strategy-pix-test"]
+
+# Baby JubJub (anonymous) deposit addresses -- stub, panics on first deposit; wired now so it stays linted; mutually exclusive with pix-test.
+pix-curvy = ["pix", "hopr-lib/pix-bjj", "hopr-strategy/strategy-pix-curvy"]
 
 # tokio-console profiling of the `edgli` binary (see init_logger in src/main.rs). Build with
 # the `tracer` profile so TRACE-level task spans stay compiled in (see [profile.tracer]):
@@ -80,19 +89,20 @@ opentelemetry-otlp = { version = "0.32.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
+validator = { version = "0.21.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "release/4.0", features = [
+# Pinned to a `rev` rather than tracked on `release/4.0`, because PIX lives only on `master`
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "85e698a726710e205e8f76f4df7ad52debd2ff86", features = [
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { version = "0.22.2", features = ["runtime-tokio"] }
-hopr-ct-full-network = { version = "0.4.0" }
-hopr-strategy = { version = "0.28.0", features = [
-  "strategy-channel-lifecycle",
-] }
-hopr-ticket-manager = { version = "0.5.2" }
-hopr-network-graph = { version = "0.5.0" }
-hopr-transport-p2p = { version = "0.9.5" }
+# Copied verbatim from the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
+hopr-chain-connector = { version = "0.26.0", features = ["runtime-tokio"] }
+hopr-ct-full-network = { version = "0.6.0" }
+hopr-strategy = { version = "4.0.0", features = ["strategy-channel-lifecycle"] }
+hopr-ticket-manager = { version = "0.7.0" }
+hopr-network-graph = { version = "0.7.0" }
+hopr-transport-p2p = { version = "0.11.0" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -101,8 +111,8 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-# `testing` provides the blokli test emulator used by the src/blokli.rs unit tests.
-hopr-chain-connector = { version = "0.22.2", features = [
+# `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.
+hopr-chain-connector = { version = "0.26.0", features = [
   "runtime-tokio",
   "testing",
 ] }

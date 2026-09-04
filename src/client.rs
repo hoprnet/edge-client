@@ -29,6 +29,17 @@ use crate::endpoint::BlokliEndpoint;
 
 use crate::errors::EdgliError;
 
+/// The deposit address type this build's `HoprPixSpec` produces.
+#[cfg(feature = "pix")]
+type SpecDepositAddress =
+    <hopr_lib::exports::transport::HoprPixSpec as hopr_lib::exports::transport::PixSpec>::DepositAddress;
+
+/// The deposit pool this build selected, for the startup log line.
+#[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+const PIX_POOL: &str = "non-anonymous-secp256k1";
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+const PIX_POOL: &str = "curvy";
+
 /// The concrete HOPR edge node type used by this client.
 pub type HoprEdgeClient = hopr_lib::Hopr<
     Arc<
@@ -151,6 +162,16 @@ pub struct Edgli {
     hopr: Arc<HoprEdgeClient>,
     /// The node's packet-layer public key, stored at construction for peer-ID access.
     packet_public_key: OffchainPublicKey,
+    /// The node's chain keypair, which the plain PIX deposit pool signs with.
+    ///
+    /// Held because the pool cannot get it any other way: `HoprEdgeClient` keeps a
+    /// `NodeOnchainIdentity`, not the keypair, and exposes no accessor. Storing it is what keeps
+    /// [`Edgli::run_reactor_from_cfg`] from having to take a private key as an argument.
+    ///
+    /// Gated on the pool that reads it rather than on `pix`, so a `pix-curvy` build does not carry
+    /// a key nothing in it can use — that pool settles to Baby JubJub addresses and signs nothing.
+    #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+    chain_key: ChainKeypair,
 }
 
 impl std::ops::Deref for Edgli {
@@ -301,6 +322,8 @@ impl Edgli {
         Ok(Self {
             hopr: node,
             packet_public_key,
+            #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+            chain_key: hopr_keys.chain_key,
         })
     }
 
@@ -426,10 +449,40 @@ impl Edgli {
         })
     }
 
+    /// This node's own PIX dimensions, as the `PixParams` a Session announces.
+    ///
+    /// Thin wrapper over [`crate::strategy::pix_ssa_quota`] on this node's configuration; see there
+    /// for why the dimensions are derived rather than supplied. Pair with [`quota_per_ssa`] to size
+    /// the wxHOPR float a Session will need.
+    ///
+    /// [`quota_per_ssa`]: crate::strategy::quota_per_ssa
+    #[cfg(feature = "pix")]
+    pub fn pix_ssa_quota(&self) -> anyhow::Result<hopr_lib::PixParams> {
+        crate::strategy::pix_ssa_quota(self.hopr.config())
+    }
+
+    /// `base` with PIX switched on: the `UsePIX` capability added, and `pix_ssa_quota` filled from
+    /// this node's own configuration.
+    ///
+    /// Every other field of `base` is passed through, so the caller keeps control of routing,
+    /// SURB management and flow control.
+    #[cfg(feature = "pix")]
+    pub fn with_pix(
+        &self,
+        base: hopr_lib::HoprSessionClientConfig,
+    ) -> anyhow::Result<hopr_lib::HoprSessionClientConfig> {
+        Ok(hopr_lib::HoprSessionClientConfig {
+            capabilities: base.capabilities | hopr_lib::SessionCapability::UsePIX,
+            pix_ssa_quota: Some(self.pix_ssa_quota()?),
+            ..base
+        })
+    }
+
     /// Run a node with HOPR edge strategies integrated.
     ///
-    /// The default reactor runs a single [`ChannelLifecycleStrategy`] which
-    /// owns open / fund / close / finalize for outgoing payment channels.
+    /// The default reactor runs a single
+    /// [`ChannelLifecycleStrategy`](hopr_strategy::channel_lifecycle::ChannelLifecycleStrategy)
+    /// which owns open / fund / close / finalize for outgoing payment channels.
     ///
     /// Returns an [`AbortHandle`] that stops the strategy reactor when aborted.
     #[cfg(feature = "blokli")]
@@ -438,6 +491,8 @@ impl Edgli {
         cfg: super::strategy::MultiStrategyConfig,
     ) -> anyhow::Result<AbortHandle> {
         use super::strategy::EdgeStrategyKind;
+        #[cfg(feature = "pix")]
+        use hopr_strategy::pix::strategy::PixStrategy;
         use hopr_strategy::{
             channel_lifecycle::ChannelLifecycleStrategy,
             strategy::{MultiStrategy, Strategy},
@@ -454,7 +509,33 @@ impl Edgli {
             .map(|kind| -> anyhow::Result<Box<dyn Strategy + Send>> {
                 match kind {
                     EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
-                        Ok(ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))?)
+                        Ok(ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::clone(&node))?)
+                    }
+                    #[cfg(feature = "pix")]
+                    EdgeStrategyKind::Pix(sub_cfg) => {
+                        // Only trace of which pool this build picked, and anonymity differs between them -- worth logging.
+                        tracing::info!(
+                            pool = PIX_POOL,
+                            price_per_byte = %sub_cfg.strategy.price_per_byte,
+                            max_ssa_allocation = %sub_cfg.strategy.max_ssa_allocation,
+                            max_deposit_tracking_time = ?sub_cfg.pool.max_deposit_tracking_time,
+                            "enabling the PIX strategy"
+                        );
+                        // The pool checks `chain_key` against the node's identity at build time; it signs the sweep's gas top-up, which cannot go through the Safe module.
+                        #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+                        let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
+                            .build_non_anonymous::<_, SpecDepositAddress>(
+                            Arc::clone(&node),
+                            self.chain_key.clone(),
+                            sub_cfg.pool.to_upstream(),
+                        )?;
+                        #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+                        let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
+                            .build_curvy::<_, SpecDepositAddress>(
+                            Arc::clone(&node),
+                            sub_cfg.pool.to_upstream(),
+                        )?;
+                        Ok(built)
                     }
                 }
             })

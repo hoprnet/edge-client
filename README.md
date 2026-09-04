@@ -83,12 +83,118 @@ See `src/client.rs` for `run_hopr_edge_node_with` (spawn helper) and
 `Edgli::run_reactor_from_cfg` (edge strategy reactor: channel funding,
 pending-close sweeping) when the `blokli` feature is enabled.
 
+### PIX
+
+PIX pays the Exit for the traffic it delivers. This node, as the Entry, deposits
+wxHOPR to a per-Session stealth address; the Exit reconstructs that address's
+key from the SSA shares its spent SURBs carried and sweeps the deposit into its
+Safe. Only the Entry half is implemented here — an edge client never terminates
+a Session, so it never reconstructs or sweeps anything.
+
+Pick exactly one deposit pool and build with it, then opt a Session in _and_ run
+the deposit strategy. Both halves are needed: with only the strategy nothing
+announces PIX and no deposit is ever requested, and with only the opt-in the
+node announces PIX it cannot pay for and the Exit closes the Session on its
+deposit deadline.
+
+| feature     | deposit address    | status                                                    |
+| ----------- | ------------------ | --------------------------------------------------------- |
+| `pix-curvy` | Baby JubJub        | **stub** — starts and serves, panics on the first deposit |
+| `pix-test`  | Ethereum (visible) | works; **tests and demos only**, forfeits PIX's anonymity |
+
+They are mutually exclusive — enabling both is a compile error, because
+`hopr-lib` resolves the conflict in favour of secp256k1 _silently_, so a build
+asking for the anonymous pool would settle to visible addresses with nothing to
+say so. `pix` on its own is the umbrella both turn on; enabling it alone selects
+no pool and is also a compile error.
+
+```rust,ignore
+use edgli::{PixEntryConfig, PixEntryStrategy, quota_per_ssa};
+use edgli::strategy::{EdgeStrategyKind, IncentiveConfiguration, default_strategy_cfg};
+use edgli::hopr_lib::HoprSessionClientConfig;
+
+// Pay: add the PIX strategy to the reactor. `strategy` is pricing and is the same whichever pool
+// the build selected; `pool` is that pool's own knobs, and its defaults are usually fine.
+let mut strategies = default_strategy_cfg(&IncentiveConfiguration::default())?;
+strategies.strategies.push(EdgeStrategyKind::Pix(PixEntryConfig {
+    strategy: PixEntryStrategy {
+        price_per_byte: "0.0001 wxHOPR".parse()?,
+        max_ssa_allocation: "10 wxHOPR".parse()?,
+        ..Default::default()
+    },
+    ..Default::default()
+}));
+let _reactor = edgli.run_reactor_from_cfg(strategies)?;
+
+// Ask: opt a Session in. The quota is read from this node's own `protocol.pix`
+// dimensions, so there is nothing to state and nothing to get out of step.
+let session_cfg = edgli.with_pix(HoprSessionClientConfig::default())?;
+
+// What one SSA cycle buys, for sizing the float below.
+let bytes_per_deposit = quota_per_ssa(&edgli.pix_ssa_quota()?);
+```
+
+The generator dimensions themselves live in `protocol.pix` of the
+`HoprLibConfig` passed to `Edgli::new`, alongside the rest of the node
+configuration. Leave `additional_shares` unset unless you have measured your
+return-path loss: unset derives a surplus from the threshold, and the surplus is
+billed — a cycle emits it whether or not a share is lost, so it is insurance
+charged on purchase rather than on claim.
+
+#### Deposits are paid by the Safe, alongside the channel stakes
+
+Under `pix-test`. A deposit goes out through
+`ChainWriteAccountOperations::withdraw`, and since hopr-types 4.0.0
+`SafePayloadGenerator::transfer` wraps every transfer in the Safe module's
+`execTransactionFromModule` — so the node key signs and pays the gas, and the
+wxHOPR comes out of the Safe. (Until then that transfer was direct and the
+deposit left the node's own account, which is what earlier revisions of this
+section described.)
+
+That is the account `deploy_safe` sweeps the node's balance into during
+onboarding, so the float is already where it needs to be and there is nothing
+extra to fund. The node account still needs xDai — it pays every transaction fee
+— but no wxHOPR.
+
+What the change does introduce is contention: the channel-lifecycle strategy
+stakes and tops up channels from the same Safe. Two knobs bound it, and PIX
+starves rather than errors when either binds:
+
+- `PixEntryPool::min_safe_hopr_reserve` — wxHOPR the Safe must still hold after
+  a deposit. Upstream defaults it to zero on the grounds that the Safe's balance
+  _is_ the deposit float; set it to the channel budget you need kept.
+- `PixEntryStrategy::max_spend_per_window` — aggregate wxHOPR committed to
+  deposits per rolling window, sized as a runaway detector rather than a
+  throttle. The ledger is in memory, so a restart forgives the window.
+
+A Safe that runs dry, or a budget that is reached, stops depositing — and the
+Exit closes the Session on its deposit deadline, with nothing logged as an error
+at this end. `Edgli::describe_current_capacity_allocations` reports the
+remaining float as its `safe` allocation, which is the figure to watch. Size the
+float against `price_per_byte × quota_per_ssa × expected SSA cycles`, plus
+whatever the channels need.
+
+Where `pix-curvy`'s funds will come from is not yet settled — its
+`deposit_funds_to` is unimplemented — so this section is about `pix-test` only.
+
+#### Not for production
+
+Neither pool is deployable today. `pix-test` works but settles fully visibly
+on-chain, forfeiting the anonymity PIX exists to provide; `pix-curvy` is the
+anonymous one and is a stub whose methods panic. So there is currently no
+production PIX path, here or in `hoprd`. The `pix-curvy` wiring is carried
+anyway, compiled and linted on every PR, so that when the settlement logic lands
+upstream this crate needs a dependency bump rather than a design.
+
 ### Feature flags
 
 | flag            | default | effect                                                    |
 | --------------- | :-----: | --------------------------------------------------------- |
 | `runtime-tokio` |   yes   | Tokio runtime integration                                 |
 | `blokli`        |   yes   | Blokli-backed trustful blockchain connector               |
+| `pix`           |   no    | Entry-side PIX; umbrella, selects no pool on its own      |
+| `pix-test`      |   no    | PIX with the secp256k1 pool — tests and demos (see above) |
+| `pix-curvy`     |   no    | PIX with the Baby JubJub pool — stub (see above)          |
 | `telemetry`     |   no    | OpenTelemetry OTLP export                                 |
 | `testing`       |   no    | Test-only helpers from `hopr-lib`                         |
 | `prof`          |   no    | `tokio-console` subscriber (needs `--cfg tokio_unstable`) |
@@ -99,10 +205,14 @@ library modules.
 
 ## Testing
 
-Unit tests (lib `#[cfg(test)]` modules + `tests/mixer_config.rs`):
+Unit tests (lib `#[cfg(test)]` modules + the `tests/` binaries):
 
 ```bash
 nix develop -c cargo nextest run
+
+# PIX code is behind non-default features, so it needs naming
+nix develop -c cargo nextest run --features pix-test
+nix develop -c cargo nextest run --features pix-curvy
 ```
 
 Full check suite (clippy, rustdoc, audit, licenses, tests) via Nix:
@@ -131,8 +241,8 @@ owns:
 - **executor-yield profiling** (tokio-console + Perfetto traces).
 
 This crate keeps only fast, self-contained unit tests (no network, no external
-binaries): the inline `#[cfg(test)]` modules in `src/` and
-`tests/mixer_config.rs`.
+binaries): the inline `#[cfg(test)]` modules in `src/` and the binaries in
+`tests/`.
 
 ## Architecture
 

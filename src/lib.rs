@@ -25,6 +25,14 @@ pub use hopr_lib::exports::transport::path::PathPlannerConfig;
 // Re-exported so consumers can set per-session flow control (the `flow_control`
 // field of `HoprSessionClientConfig`) without reaching into `hopr_lib` internals.
 pub use hopr_lib::exports::transport::FlowControlConfig;
+// PIX session surface for consumers, plus SessionCapability (also needed for Segmentation/retransmission) which was previously only reachable via hopr_lib::.
+#[cfg(feature = "pix")]
+pub use hopr_lib::{InvalidPixParams, LOCAL_PIX_SUITE, PixParams, SessionCapability};
+// Entry-side share generator dimensions, so protocol.pix doesn't need the full exports::transport::config path.
+#[cfg(feature = "pix")]
+pub use hopr_lib::exports::transport::config::PixGlobalConfig;
+#[cfg(feature = "pix")]
+pub use strategy::{PixEntryConfig, PixEntryPool, PixEntryStrategy, pix_ssa_quota, quota_per_ssa};
 // Re-exported so consumers constructing a `BlokliEndpoint` do not need their own
 // `url` dependency, which would have to match this crate's version to unify.
 #[cfg(feature = "blokli")]

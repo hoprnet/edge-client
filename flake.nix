@@ -140,6 +140,9 @@
             # MY_CUSTOM_VAR = "some value";
           };
 
+          # Deny only broken-link warnings -- crate deliberately keeps 6 private-intra-doc-link warnings pointing at non-public constants.
+          denyBrokenDocLinks = "--deny rustdoc::broken_intra_doc_links";
+
           # Build *just* the cargo dependencies (of the entire workspace),
           # so we can reuse all of that work (e.g. via cachix) when running in CI
           # It is *highly* recommended to use something like cargo-hakari to avoid
@@ -262,6 +265,26 @@
               commonArgs
               // {
                 inherit cargoArtifacts;
+                RUSTDOCFLAGS = denyBrokenDocLinks;
+              }
+            );
+
+            # rustdoc's broken-link check for the PIX feature surface, which the default-feature docs build and clippy both skip.
+            docs-pix-test = craneLib.cargoDoc (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                RUSTDOCFLAGS = denyBrokenDocLinks;
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-test";
+              }
+            );
+
+            docs-pix-curvy = craneLib.cargoDoc (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                RUSTDOCFLAGS = denyBrokenDocLinks;
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-curvy";
               }
             );
 
@@ -290,6 +313,25 @@
                 inherit cargoArtifacts;
                 cargoExtraArgs =
                   (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features blokli";
+              }
+            );
+
+            # Clippy the two (mutually exclusive) PIX pools on top of the default features -- they aren't in `default` so nothing else lints them.
+            feature-pix-test = craneLib.cargoClippy (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-test";
+              }
+            );
+
+            feature-pix-curvy = craneLib.cargoClippy (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-curvy";
               }
             );
 
