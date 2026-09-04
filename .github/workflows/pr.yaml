@@ -73,7 +73,21 @@ jobs:
           fi
   validate-release-branch-deps:
     name: Release branch dependencies
-    if: github.event_name == 'pull_request'
+    # Only PRs onto a `release/*` branch, which is where tracking a hoprnet release branch is the
+    # rule. Development elsewhere has to be able to pin a rev: hoprnet does not publish `hopr-lib`,
+    # so work that depends on an unreleased change has a git rev and nothing else until a release
+    # branch carries it.
+    #
+    # This is a job-level `if`, not a workflow-level branch filter, and the difference matters
+    # because the `main` ruleset lists this check among its required ones: a conditionally skipped
+    # job still reports, and a skipped report satisfies a required check, whereas a workflow
+    # filtered out never reports at all and would leave every PR waiting on a status that cannot
+    # arrive.
+    #
+    # Note there is no `release/*` ruleset on this repository, so with this condition the check
+    # informs rather than gates. Making it gate means adding one that requires it.
+    if: >-
+      github.event_name == 'pull_request' && startsWith(github.base_ref, 'release/')
     runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
