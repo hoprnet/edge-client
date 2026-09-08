@@ -91,8 +91,7 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 url = { version = "2.5.8", optional = true }
 validator = { version = "0.21.0", optional = true }
 
-# Pinned to a `rev` rather than tracked on `release/4.0`, because PIX lives only on `master`
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "85e698a726710e205e8f76f4df7ad52debd2ff86", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "57b5e6792391ef6d10c0029bcea274ee188be1cf", features = [
   "session-client",
   "serde",
 ] }
