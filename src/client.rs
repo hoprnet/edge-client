@@ -29,6 +29,17 @@ use crate::endpoint::BlokliEndpoint;
 
 use crate::errors::EdgliError;
 
+/// The deposit address type this build's `HoprPixSpec` produces.
+#[cfg(feature = "pix")]
+type SpecDepositAddress =
+    <hopr_lib::exports::transport::HoprPixSpec as hopr_lib::exports::transport::PixSpec>::DepositAddress;
+
+/// The deposit pool this build selected, for the startup log line.
+#[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+const PIX_POOL: &str = "non-anonymous-secp256k1";
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+const PIX_POOL: &str = "curvy";
+
 /// The concrete HOPR edge node type used by this client.
 pub type HoprEdgeClient = hopr_lib::Hopr<
     Arc<
@@ -151,6 +162,16 @@ pub struct Edgli {
     hopr: Arc<HoprEdgeClient>,
     /// The node's packet-layer public key, stored at construction for peer-ID access.
     packet_public_key: OffchainPublicKey,
+    /// The node's chain keypair, which the plain PIX deposit pool signs with.
+    ///
+    /// Held because the pool cannot get it any other way: `HoprEdgeClient` keeps a
+    /// `NodeOnchainIdentity`, not the keypair, and exposes no accessor. Storing it is what keeps
+    /// [`Edgli::run_reactor_from_cfg`] from having to take a private key as an argument.
+    ///
+    /// Gated on the pool that reads it rather than on `pix`, so a `pix-curvy` build does not carry
+    /// a key nothing in it can use — that pool settles to Baby JubJub addresses and signs nothing.
+    #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+    chain_key: ChainKeypair,
 }
 
 impl std::ops::Deref for Edgli {
@@ -301,6 +322,8 @@ impl Edgli {
         Ok(Self {
             hopr: node,
             packet_public_key,
+            #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+            chain_key: hopr_keys.chain_key,
         })
     }
 
@@ -368,6 +391,7 @@ impl Edgli {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
         let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
+        let max_fee_per_gas = crate::blokli::query_max_fee_per_gas(chain.client()).await?;
 
         let source = HasChainApi::identity(&*self.hopr).node_address;
         let all_channels = IncentiveChannelOperations::channels_from(&*self.hopr, source)
@@ -395,22 +419,21 @@ impl Edgli {
             win_prob,
             missing,
             costs,
-            cfg.channel_capacity,
+            cfg,
+            max_fee_per_gas,
         )
     }
 
-    /// Returns a map of data-throughput capacities keyed by [`super::strategy::CapacityAllocator`].
-    ///
-    /// Open outgoing channels are keyed by `CapacityAllocator::Peer(address)`; the
-    /// unallocated Safe balance is keyed by `CapacityAllocator::Safe`.  Each
+    /// Returns the data-throughput capacities of every wxHOPR stake the node can
+    /// draw on, as a [`super::strategy::CapacityAllocations`]: open outgoing
+    /// channels keyed by destination peer, the unallocated Safe balance, and
+    /// wxHOPR on the node EOA (deposited, not yet swept into the Safe).  Each
     /// [`super::strategy::Capacity`] holds the wxHOPR stake, the floor number
     /// of session frames it can fund at the current ticket price, and the
     /// corresponding raw byte capacity (`expected_messages × SESSION_MTU`).
     pub async fn describe_current_capacity_allocations(
         &self,
-    ) -> anyhow::Result<
-        std::collections::HashMap<super::strategy::CapacityAllocator, super::strategy::Capacity>,
-    > {
+    ) -> anyhow::Result<super::strategy::CapacityAllocations> {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
         let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
@@ -434,29 +457,61 @@ impl Edgli {
             None => HoprBalance::zero(),
         };
 
-        let mut map = std::collections::HashMap::new();
+        let node_wxhopr: HoprBalance = chain
+            .balance(node_address)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let mut peer_allocations = std::collections::HashMap::new();
         for c in channels
             .into_iter()
             .filter(|c| c.status == ChannelStatus::Open)
         {
             let capacity = super::strategy::compute_capacity(c.balance, ticket_price, win_prob)?;
-            map.insert(
-                super::strategy::CapacityAllocator::Peer(c.destination),
-                capacity,
-            );
+            peer_allocations.insert(c.destination, capacity);
         }
-        map.insert(
-            super::strategy::CapacityAllocator::Safe,
-            super::strategy::compute_capacity(safe_balance, ticket_price, win_prob)?,
-        );
 
-        Ok(map)
+        Ok(super::strategy::CapacityAllocations {
+            peer_allocations,
+            node: super::strategy::compute_capacity(node_wxhopr, ticket_price, win_prob)?,
+            safe: super::strategy::compute_capacity(safe_balance, ticket_price, win_prob)?,
+        })
+    }
+
+    /// This node's own PIX dimensions, as the `PixParams` a Session announces.
+    ///
+    /// Thin wrapper over [`crate::strategy::pix_ssa_quota`] on this node's configuration; see there
+    /// for why the dimensions are derived rather than supplied. Pair with [`quota_per_ssa`] to size
+    /// the wxHOPR float a Session will need.
+    ///
+    /// [`quota_per_ssa`]: crate::strategy::quota_per_ssa
+    #[cfg(feature = "pix")]
+    pub fn pix_ssa_quota(&self) -> anyhow::Result<hopr_lib::PixParams> {
+        crate::strategy::pix_ssa_quota(self.hopr.config())
+    }
+
+    /// `base` with PIX switched on: the `UsePIX` capability added, and `pix_ssa_quota` filled from
+    /// this node's own configuration.
+    ///
+    /// Every other field of `base` is passed through, so the caller keeps control of routing,
+    /// SURB management and flow control.
+    #[cfg(feature = "pix")]
+    pub fn with_pix(
+        &self,
+        base: hopr_lib::HoprSessionClientConfig,
+    ) -> anyhow::Result<hopr_lib::HoprSessionClientConfig> {
+        Ok(hopr_lib::HoprSessionClientConfig {
+            capabilities: base.capabilities | hopr_lib::SessionCapability::UsePIX,
+            pix_ssa_quota: Some(self.pix_ssa_quota()?),
+            ..base
+        })
     }
 
     /// Run a node with HOPR edge strategies integrated.
     ///
-    /// The default reactor runs a single [`ChannelLifecycleStrategy`] which
-    /// owns open / fund / close / finalize for outgoing payment channels.
+    /// The default reactor runs a single
+    /// [`ChannelLifecycleStrategy`](hopr_strategy::channel_lifecycle::ChannelLifecycleStrategy)
+    /// which owns open / fund / close / finalize for outgoing payment channels.
     ///
     /// Returns an [`AbortHandle`] that stops the strategy reactor when aborted.
     #[cfg(feature = "blokli")]
@@ -465,6 +520,8 @@ impl Edgli {
         cfg: super::strategy::MultiStrategyConfig,
     ) -> anyhow::Result<AbortHandle> {
         use super::strategy::EdgeStrategyKind;
+        #[cfg(feature = "pix")]
+        use hopr_strategy::pix::strategy::PixStrategy;
         use hopr_strategy::{
             channel_lifecycle::ChannelLifecycleStrategy,
             strategy::{MultiStrategy, Strategy},
@@ -472,13 +529,42 @@ impl Edgli {
 
         let node = self.hopr.clone();
 
+        // `build` became fallible in hopr-strategy 0.26. Propagate rather than unwrap: a strategy
+        // that failed to construct would otherwise leave the reactor running with nothing driving
+        // channel lifecycle, which looks like a healthy node that never opens a channel.
         let strategies = cfg
             .strategies
             .into_iter()
             .map(|kind| -> anyhow::Result<Box<dyn Strategy + Send>> {
                 match kind {
                     EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
-                        Ok(ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))?)
+                        Ok(ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::clone(&node))?)
+                    }
+                    #[cfg(feature = "pix")]
+                    EdgeStrategyKind::Pix(sub_cfg) => {
+                        // Only trace of which pool this build picked, and anonymity differs between them -- worth logging.
+                        tracing::info!(
+                            pool = PIX_POOL,
+                            price_per_byte = %sub_cfg.strategy.price_per_byte,
+                            max_ssa_allocation = %sub_cfg.strategy.max_ssa_allocation,
+                            max_deposit_tracking_time = ?sub_cfg.pool.max_deposit_tracking_time,
+                            "enabling the PIX strategy"
+                        );
+                        // The pool checks `chain_key` against the node's identity at build time; it signs the sweep's gas top-up, which cannot go through the Safe module.
+                        #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+                        let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
+                            .build_non_anonymous::<_, SpecDepositAddress>(
+                            Arc::clone(&node),
+                            self.chain_key.clone(),
+                            sub_cfg.pool.to_upstream(),
+                        )?;
+                        #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+                        let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
+                            .build_curvy::<_, SpecDepositAddress>(
+                            Arc::clone(&node),
+                            sub_cfg.pool.to_upstream(),
+                        )?;
+                        Ok(built)
                     }
                 }
             })

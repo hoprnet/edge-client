@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "4.0.0"
+version = "5.0.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -34,12 +34,16 @@ telemetry = [
   # "dep:tracing-opentelemetry",
 ]
 testing = ["hopr-lib/testing"]
-blokli = [
-  "dep:tokio",
-  "dep:url",
-  "dep:serde",
-  "dep:serde_json",
-]
+blokli = ["dep:tokio", "dep:url", "dep:serde", "dep:serde_json"]
+
+# PIX settlement: Entry deposits wxHOPR per Session. Pulls runtime-tokio, which the strategy needs to run.
+pix = ["runtime-tokio", "dep:validator"]
+
+# secp256k1 deposit addresses -- tests/demos only; mutually exclusive with pix-curvy.
+pix-test = ["pix", "hopr-lib/pix-secp256k1", "hopr-strategy/strategy-pix-test"]
+
+# Baby JubJub (anonymous) deposit addresses -- stub, panics on first deposit; wired now so it stays linted; mutually exclusive with pix-test.
+pix-curvy = ["pix", "hopr-lib/pix-bjj", "hopr-strategy/strategy-pix-curvy"]
 
 # tokio-console profiling of the `edgli` binary (see init_logger in src/main.rs). Build with
 # the `tracer` profile so TRACE-level task spans stay compiled in (see [profile.tracer]):
@@ -87,24 +91,20 @@ opentelemetry-otlp = { version = "0.32.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
+validator = { version = "0.21.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "5b1cd68806ee33dcfb50dfed3b4a2866825f8f68", features = [
+# Pinned to a `rev` rather than tracked on `release/4.0`, because PIX lives only on `master`
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "85e698a726710e205e8f76f4df7ad52debd2ff86", features = [
   "session-client",
   "serde",
 ] }
-# Pinned via git, matching hoprnet's own workspace pin: crates.io hopr-chain-connector
-# does not yet publish the service registry read support (ChainReadServiceOperations)
-# that edge-client's `discovery` module needs.
-hopr-chain-connector = { git = "https://github.com/hoprnet/hopr-impls", rev = "f5c44b245f7a52679185acbf244152c5fd5c2199", features = [
-  "runtime-tokio",
-] }
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hopr-impls", rev = "f5c44b245f7a52679185acbf244152c5fd5c2199", default-features = false }
-hopr-strategy = { version = "0.25.0", features = [
-  "strategy-channel-lifecycle",
-] }
-hopr-ticket-manager = { git = "https://github.com/hoprnet/hopr-impls", rev = "f5c44b245f7a52679185acbf244152c5fd5c2199" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", rev = "f5c44b245f7a52679185acbf244152c5fd5c2199", default-features = false }
-hopr-transport-p2p = { git = "https://github.com/hoprnet/hopr-impls", rev = "f5c44b245f7a52679185acbf244152c5fd5c2199" }
+# Copied verbatim from the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
+hopr-chain-connector = { version = "0.26.0", features = ["runtime-tokio"] }
+hopr-ct-full-network = { version = "0.6.0" }
+hopr-strategy = { version = "4.0.0", features = ["strategy-channel-lifecycle"] }
+hopr-ticket-manager = { version = "0.7.0" }
+hopr-network-graph = { version = "0.7.0" }
+hopr-transport-p2p = { version = "0.11.0" }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
@@ -115,8 +115,8 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-# `testing` provides the blokli test emulator used by the src/blokli.rs unit tests.
-hopr-chain-connector = { git = "https://github.com/hoprnet/hopr-impls", rev = "f5c44b245f7a52679185acbf244152c5fd5c2199", features = [
+# `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.
+hopr-chain-connector = { version = "0.26.0", features = [
   "runtime-tokio",
   "testing",
 ] }
@@ -125,15 +125,6 @@ tokio = { version = "1.53.1", features = ["full"] }
 
 [build-dependencies]
 anyhow = "1.0.104"
-
-[patch.crates-io]
-# `hopr-strategy` (crates.io) still depends on the crates.io hopr-types/hopr-api, which predate
-# the service registry work and duplicate types (Address, Balance<C>, ...) and traits
-# (ActionableEventSource, PacketTransport, ...) against the git-pinned versions that
-# hopr-chain-connector/hopr-lib pull in above. Redirect both to the same git revs so Cargo unifies
-# the whole graph onto one copy of each.
-hopr-types = { git = "https://github.com/hoprnet/hopr-types", rev = "2a3bb391f1f98475d033b105c69090d050aaff0c" }
-hopr-api = { git = "https://github.com/hoprnet/hopr-api", rev = "7c26c0bee697d33529dc9412c271ce6c8d726fc1" }
 
 # tokio-console build target for the `prof` binary. hopr-lib forces
 # `tracing/release_max_level_debug`, which compiles out TRACE callsites (incl. tokio's task
