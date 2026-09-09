@@ -22,10 +22,8 @@ use crate::endpoint::BlokliEndpoint;
 /// `gvpn:exit` metadata, versioned per `design-service-registry-v3.md` §3.2 (in-band schema
 /// discriminator; each service type documents its own encoding).
 ///
-/// The `version` discriminator itself is read separately by [`parse_exit_node_metadata`] and so is
-/// not a field here. Unrecognized top-level keys are ignored rather than rejected: the registry is
-/// permissionless and metadata is free-form, so tolerating unknown keys keeps a future additive
-/// field from invalidating every entry against an older client.
+/// `version` is read by [`parse_exit_node_metadata`]; unknown keys are tolerated so an additive
+/// field cannot invalidate every entry for older clients.
 #[derive(Deserialize)]
 struct ExitNodeMetadataV1 {
     /// Where the exit node's gvpn-server process listens on its private overlay: the HTTP
@@ -51,11 +49,8 @@ enum MetadataDecodeError {
     UnsupportedVersion(u64),
 }
 
-/// Decodes the metadata blob, reading the `version` discriminator *before* the payload.
-///
-/// Order matters: deserializing the payload first would report a future schema version that
-/// renames or retypes a field as generic corruption, so the discriminator would never get to do
-/// its job.
+/// Reads `version` before the payload so a future schema version is reported as unsupported
+/// rather than as generic corruption.
 fn parse_exit_node_metadata(bytes: &[u8]) -> Result<ExitNodeMetadataV1, MetadataDecodeError> {
     let value: serde_json::Value = serde_json::from_slice(bytes)?;
     let version = value
@@ -141,9 +136,8 @@ where
             }
         })
         .collect();
-    // Logged as a ratio, not per entry: the registry is permissionless, so some malformed entries
-    // are the expected steady state and a per-entry warning is unactionable noise. Only the
-    // accepted/skipped ratio separates that from our own decoder having broken.
+    // A ratio, not per entry: malformed entries are normal in a permissionless registry, so only
+    // accepted-vs-skipped reveals our own decoder breaking.
     tracing::info!(
         accepted = nodes.len(),
         skipped = total - nodes.len(),
@@ -371,11 +365,8 @@ mod tests {
         .unwrap()
     }
 
-    /// The exact blob published by a registered exit node on piz-palu-dev, whitespace included.
-    ///
-    /// Hardcoded rather than built with `json!` on purpose: every other fixture here only proves
-    /// the decoder agrees with itself, which is how a total mismatch with the real on-chain shape
-    /// went unnoticed.
+    /// The exact blob published on piz-palu-dev, hardcoded because fixtures built here only ever
+    /// prove the decoder agrees with itself.
     const REAL_ON_CHAIN_METADATA: &str = r#"{
     "version":1,
     "gnosis_vpn_server":"172.30.0.1:8000",
@@ -447,8 +438,7 @@ mod tests {
         Ok(())
     }
 
-    /// A v2 payload that shares no field layout with v1, so it can only be rejected by the
-    /// version check running before the payload is deserialized.
+    /// Shares no field layout with v1, so only the version check running first can reject it.
     #[tokio::test]
     async fn list_exit_nodes_skips_unsupported_schema_version() -> anyhow::Result<()> {
         let metadata = serde_json::to_vec(&serde_json::json!({
@@ -514,8 +504,7 @@ mod tests {
         Ok(())
     }
 
-    /// Unknown top-level keys are tolerated, but a `meta` map whose values are not strings is not
-    /// the free-form shape this schema promises, so the entry is rejected outright.
+    /// Unknown top-level keys are tolerated, but a non-string `meta` value is not the promised shape.
     #[tokio::test]
     async fn list_exit_nodes_skips_non_string_meta_values() -> anyhow::Result<()> {
         let metadata = serde_json::to_vec(&serde_json::json!({
@@ -557,8 +546,7 @@ mod tests {
         Ok(())
     }
 
-    /// A blob carrying no `version` at all, which is what the previously expected
-    /// `schema_version` layout now looks like from this decoder's side.
+    /// What the previously expected `schema_version` layout now looks like to this decoder.
     #[tokio::test]
     async fn list_exit_nodes_skips_metadata_without_a_version() -> anyhow::Result<()> {
         let metadata = serde_json::to_vec(&serde_json::json!({
