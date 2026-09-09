@@ -21,9 +21,13 @@ use crate::endpoint::BlokliEndpoint;
 
 /// `gvpn:exit` metadata, versioned per `design-service-registry-v3.md` §3.2 (in-band schema
 /// discriminator; each service type documents its own encoding).
+///
+/// The `version` discriminator itself is read separately by [`parse_exit_node_metadata`] and so is
+/// not a field here. Unrecognized top-level keys are ignored rather than rejected: the registry is
+/// permissionless and metadata is free-form, so tolerating unknown keys keeps a future additive
+/// field from invalidating every entry against an older client.
 #[derive(Deserialize)]
 struct ExitNodeMetadataV1 {
-    schema_version: u32,
     /// Where the exit node's gvpn-server process listens on its private overlay: the HTTP
     /// registration API and the bridge-mode session forwarding target.
     gnosis_vpn_server: SocketAddr,
@@ -32,8 +36,8 @@ struct ExitNodeMetadataV1 {
     /// server, so a well-formed entry always has one.
     wireguard_server: SocketAddr,
     /// Free-form labels the operator publishes (e.g. location), mirroring gnosis_vpn-client's
-    /// existing config `meta` tags.
-    #[serde(flatten)]
+    /// existing config `meta` tags. Absent means the operator published no labels.
+    #[serde(default)]
     meta: HashMap<String, String>,
 }
 
@@ -41,18 +45,27 @@ struct ExitNodeMetadataV1 {
 enum MetadataDecodeError {
     #[error("malformed gvpn:exit metadata: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("gvpn:exit metadata has no numeric `version` field")]
+    MissingVersion,
     #[error("unsupported gvpn:exit metadata schema version {0}")]
-    UnsupportedVersion(u32),
+    UnsupportedVersion(u64),
 }
 
+/// Decodes the metadata blob, reading the `version` discriminator *before* the payload.
+///
+/// Order matters: deserializing the payload first would report a future schema version that
+/// renames or retypes a field as generic corruption, so the discriminator would never get to do
+/// its job.
 fn parse_exit_node_metadata(bytes: &[u8]) -> Result<ExitNodeMetadataV1, MetadataDecodeError> {
-    let metadata: ExitNodeMetadataV1 = serde_json::from_slice(bytes)?;
-    if metadata.schema_version != 1 {
-        return Err(MetadataDecodeError::UnsupportedVersion(
-            metadata.schema_version,
-        ));
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let version = value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(MetadataDecodeError::MissingVersion)?;
+    if version != 1 {
+        return Err(MetadataDecodeError::UnsupportedVersion(version));
     }
-    Ok(metadata)
+    Ok(serde_json::from_value(value)?)
 }
 
 /// A `gvpn:exit` node, decoded from its on-chain registry entry.
@@ -114,19 +127,29 @@ where
         .with_live_only(true);
 
     let entries: Vec<ServiceEntry> = reader.stream_services(selector)?.collect().await;
-    Ok(entries
+    let total = entries.len();
+    let nodes: Vec<ExitNodeInfo> = entries
         .into_iter()
         .filter_map(|entry| {
             let node = entry.node;
             match decode(entry) {
                 Ok(entry) => Some(entry),
                 Err(error) => {
-                    tracing::warn!(%error, %node, "skipping exit node with malformed metadata");
+                    tracing::debug!(%error, %node, "skipping exit node with malformed metadata");
                     None
                 }
             }
         })
-        .collect())
+        .collect();
+    // Logged as a ratio, not per entry: the registry is permissionless, so some malformed entries
+    // are the expected steady state and a per-entry warning is unactionable noise. Only the
+    // accepted/skipped ratio separates that from our own decoder having broken.
+    tracing::info!(
+        accepted = nodes.len(),
+        skipped = total - nodes.len(),
+        "fetched gvpn:exit registry entries"
+    );
+    Ok(nodes)
 }
 
 /// What changed about a `gvpn:exit` registry entry.
@@ -183,7 +206,7 @@ fn decode_event(event: ChainEvent) -> Option<ExitNodeUpdate> {
     Some(match decode(entry) {
         Ok(entry) => ExitNodeUpdate::Upsert { kind, entry },
         Err(error) => {
-            tracing::warn!(%error, %node, "removing exit node with malformed metadata");
+            tracing::debug!(%error, %node, "removing exit node with malformed metadata");
             ExitNodeUpdate::Remove {
                 node,
                 reason: ExitNodeRemovalReason::InvalidMetadata,
@@ -340,13 +363,25 @@ mod tests {
 
     fn valid_metadata() -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
-            "schema_version": 1,
+            "version": 1,
             "gnosis_vpn_server": "172.30.0.1:8000",
             "wireguard_server": "172.30.0.1:51820",
-            "location": "Germany",
+            "meta": { "location": "Germany" },
         }))
         .unwrap()
     }
+
+    /// The exact blob published by a registered exit node on piz-palu-dev, whitespace included.
+    ///
+    /// Hardcoded rather than built with `json!` on purpose: every other fixture here only proves
+    /// the decoder agrees with itself, which is how a total mismatch with the real on-chain shape
+    /// went unnoticed.
+    const REAL_ON_CHAIN_METADATA: &str = r#"{
+    "version":1,
+    "gnosis_vpn_server":"172.30.0.1:8000",
+    "wireguard_server":"172.30.0.1:51820",
+    "meta":{"location":"London","flag":"GB"}
+  }"#;
 
     fn entry_with_metadata(node: [u8; 20], metadata: Vec<u8>) -> anyhow::Result<ServiceEntry> {
         let registered_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
@@ -412,10 +447,122 @@ mod tests {
         Ok(())
     }
 
+    /// A v2 payload that shares no field layout with v1, so it can only be rejected by the
+    /// version check running before the payload is deserialized.
     #[tokio::test]
     async fn list_exit_nodes_skips_unsupported_schema_version() -> anyhow::Result<()> {
         let metadata = serde_json::to_vec(&serde_json::json!({
-            "schema_version": 2,
+            "version": 2,
+            "endpoints": { "bridge": "172.30.0.1:8000", "wg": "172.30.0.1:51820" },
+        }))?;
+        let client = BlokliTestStateBuilder::default()
+            .with_services([entry_with_metadata(NODE, metadata)?])
+            .with_deployed_safes([safe_with_nodes(&[NODE])])
+            .build_static_client();
+
+        let nodes = list_exit_nodes_with_client(client).await?;
+
+        assert!(nodes.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_exit_nodes_decodes_the_real_on_chain_blob() -> anyhow::Result<()> {
+        let client = BlokliTestStateBuilder::default()
+            .with_services([entry_with_metadata(
+                NODE,
+                REAL_ON_CHAIN_METADATA.as_bytes().to_vec(),
+            )?])
+            .with_deployed_safes([safe_with_nodes(&[NODE])])
+            .build_static_client();
+
+        let nodes = list_exit_nodes_with_client(client).await?;
+
+        assert_eq!(1, nodes.len());
+        assert_eq!(
+            "172.30.0.1:8000".parse::<SocketAddr>()?,
+            nodes[0].gnosis_vpn_server
+        );
+        assert_eq!(
+            "172.30.0.1:51820".parse::<SocketAddr>()?,
+            nodes[0].wireguard_server
+        );
+        assert_eq!(Some(&"London".to_string()), nodes[0].meta.get("location"));
+        assert_eq!(Some(&"GB".to_string()), nodes[0].meta.get("flag"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_exit_nodes_accepts_an_entry_without_meta() -> anyhow::Result<()> {
+        let metadata = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "gnosis_vpn_server": "172.30.0.1:8000",
+            "wireguard_server": "172.30.0.1:51820",
+        }))?;
+        let client = BlokliTestStateBuilder::default()
+            .with_services([entry_with_metadata(NODE, metadata)?])
+            .with_deployed_safes([safe_with_nodes(&[NODE])])
+            .build_static_client();
+
+        let nodes = list_exit_nodes_with_client(client).await?;
+
+        assert_eq!(1, nodes.len());
+        assert!(nodes[0].meta.is_empty());
+
+        Ok(())
+    }
+
+    /// Unknown top-level keys are tolerated, but a `meta` map whose values are not strings is not
+    /// the free-form shape this schema promises, so the entry is rejected outright.
+    #[tokio::test]
+    async fn list_exit_nodes_skips_non_string_meta_values() -> anyhow::Result<()> {
+        let metadata = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "gnosis_vpn_server": "172.30.0.1:8000",
+            "wireguard_server": "172.30.0.1:51820",
+            "meta": { "location": { "city": "London" } },
+        }))?;
+        let client = BlokliTestStateBuilder::default()
+            .with_services([entry_with_metadata(NODE, metadata)?])
+            .with_deployed_safes([safe_with_nodes(&[NODE])])
+            .build_static_client();
+
+        let nodes = list_exit_nodes_with_client(client).await?;
+
+        assert!(nodes.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_exit_nodes_tolerates_unknown_top_level_keys() -> anyhow::Result<()> {
+        let metadata = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "gnosis_vpn_server": "172.30.0.1:8000",
+            "wireguard_server": "172.30.0.1:51820",
+            "meta": { "location": "Germany" },
+            "future_additive_field": 42,
+        }))?;
+        let client = BlokliTestStateBuilder::default()
+            .with_services([entry_with_metadata(NODE, metadata)?])
+            .with_deployed_safes([safe_with_nodes(&[NODE])])
+            .build_static_client();
+
+        let nodes = list_exit_nodes_with_client(client).await?;
+
+        assert_eq!(1, nodes.len());
+
+        Ok(())
+    }
+
+    /// A blob carrying no `version` at all, which is what the previously expected
+    /// `schema_version` layout now looks like from this decoder's side.
+    #[tokio::test]
+    async fn list_exit_nodes_skips_metadata_without_a_version() -> anyhow::Result<()> {
+        let metadata = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
             "gnosis_vpn_server": "172.30.0.1:8000",
             "wireguard_server": "172.30.0.1:51820",
         }))?;
@@ -434,7 +581,7 @@ mod tests {
     #[tokio::test]
     async fn list_exit_nodes_skips_missing_wireguard_server() -> anyhow::Result<()> {
         let metadata = serde_json::to_vec(&serde_json::json!({
-            "schema_version": 1,
+            "version": 1,
             "gnosis_vpn_server": "172.30.0.1:8000",
         }))?;
         let client = BlokliTestStateBuilder::default()
