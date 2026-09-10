@@ -34,7 +34,7 @@ telemetry = [
   # "dep:tracing-opentelemetry",
 ]
 testing = ["hopr-lib/testing"]
-blokli = ["dep:tokio", "dep:url"]
+blokli = ["dep:tokio", "dep:url", "dep:serde", "dep:serde_json"]
 
 # PIX settlement: Entry deposits wxHOPR per Session. Pulls runtime-tokio, which the strategy needs to run.
 pix = ["runtime-tokio", "dep:validator"]
@@ -70,6 +70,8 @@ thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = [
   "rt-multi-thread",
   "macros",
+  "sync",
+  "time",
   "tracing",
 ], optional = true }
 tracing = { version = "0.1.44", features = ["release_max_level_debug"] }
@@ -102,6 +104,8 @@ hopr-strategy = { version = "4.0.0", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.7.0" }
 hopr-network-graph = { version = "0.7.0" }
 hopr-transport-p2p = { version = "0.11.0" }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
