@@ -35,8 +35,24 @@ struct ExitNodeMetadataV1 {
     wireguard_server: SocketAddr,
     /// Free-form labels the operator publishes (e.g. location), mirroring gnosis_vpn-client's
     /// existing config `meta` tags. Absent means the operator published no labels.
+    ///
+    /// Held as `Value` so a non-string label cannot reject the whole entry; [`stringify_meta`]
+    /// flattens it.
     #[serde(default)]
-    meta: HashMap<String, String>,
+    meta: HashMap<String, serde_json::Value>,
+}
+
+/// Renders free-form labels as strings, keeping every key.
+///
+/// A label is metadata about a node, never a reason to discard one, so a non-string value is
+/// carried as its JSON text rather than failing the entry.
+fn stringify_meta(meta: HashMap<String, serde_json::Value>) -> HashMap<String, String> {
+    meta.into_iter()
+        .map(|(key, value)| match value {
+            serde_json::Value::String(text) => (key, text),
+            other => (key, other.to_string()),
+        })
+        .collect()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,7 +106,7 @@ fn decode(entry: ServiceEntry) -> Result<ExitNodeInfo, MetadataDecodeError> {
         safe: entry.safe,
         gnosis_vpn_server: metadata.gnosis_vpn_server,
         wireguard_server: metadata.wireguard_server,
-        meta: metadata.meta,
+        meta: stringify_meta(metadata.meta),
         registered_at: entry.registered_at,
         updated_at: entry.updated_at,
     })
@@ -504,14 +520,19 @@ mod tests {
         Ok(())
     }
 
-    /// Unknown top-level keys are tolerated, but a non-string `meta` value is not the promised shape.
+    /// A label's JSON type says nothing about whether the node works, so every key is kept.
     #[tokio::test]
-    async fn list_exit_nodes_skips_non_string_meta_values() -> anyhow::Result<()> {
+    async fn list_exit_nodes_keeps_non_string_meta_values_as_text() -> anyhow::Result<()> {
         let metadata = serde_json::to_vec(&serde_json::json!({
             "version": 1,
             "gnosis_vpn_server": "172.30.0.1:8000",
             "wireguard_server": "172.30.0.1:51820",
-            "meta": { "location": { "city": "London" } },
+            "meta": {
+                "location": "London",
+                "port": 51820,
+                "beta": true,
+                "coords": { "lat": 51.5 },
+            },
         }))?;
         let client = BlokliTestStateBuilder::default()
             .with_services([entry_with_metadata(NODE, metadata)?])
@@ -520,7 +541,12 @@ mod tests {
 
         let nodes = list_exit_nodes_with_client(client).await?;
 
-        assert!(nodes.is_empty());
+        assert_eq!(1, nodes.len());
+        let meta = &nodes[0].meta;
+        assert_eq!(Some(&"London".to_string()), meta.get("location"));
+        assert_eq!(Some(&"51820".to_string()), meta.get("port"));
+        assert_eq!(Some(&"true".to_string()), meta.get("beta"));
+        assert_eq!(Some(&r#"{"lat":51.5}"#.to_string()), meta.get("coords"));
 
         Ok(())
     }
