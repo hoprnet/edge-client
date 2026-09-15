@@ -129,6 +129,11 @@ jobs:
           grep -o 'source = "git+https://github.com/hoprnet/hoprnet[^"]*"' Cargo.lock | sort -u || true
   checks:
     name: Check
+    # Skip in the merge queue: a conditionally-skipped job still reports (as
+    # skipped = passing), so the required check stays green without re-running the
+    # suite in the queue. The queue's only real work is the Integration throughput
+    # test (see merge-queue.yaml).
+    if: github.event_name == 'pull_request'
     uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@d0cffaf9e9209c8eca00e8c74e82ac3f5f3cf7bb # workflow-checks-v2
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
@@ -141,6 +146,7 @@ jobs:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
   tests:
     name: Test
+    if: github.event_name == 'pull_request' # skip in the merge queue (see `checks`)
     uses: hoprnet/hopr-workflows/.github/workflows/tests.yaml@798d791de5c5485c3043049781dfd0938539a36a # workflow-tests-v6
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
@@ -154,6 +160,7 @@ jobs:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
   build-library:
     name: Library ${{ matrix.architecture }}
+    if: github.event_name == 'pull_request' # skip in the merge queue (see `checks`)
     strategy:
       fail-fast: false
       matrix:
