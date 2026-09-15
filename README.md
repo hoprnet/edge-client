@@ -230,9 +230,9 @@ nix run .#coverage-unit
 ### Integration & throughput tests
 
 Full-stack integration lives in
-**[`hoprnet/hoprd-test`](https://github.com/hoprnet/hoprd-test)**, which
-consumes `edgli` as a library and runs it against a real network. That repo
-owns:
+**[`hoprnet/hopr-integration-tests`](https://github.com/hoprnet/hopr-integration-tests)**,
+which consumes `edgli` as a library and runs it against a real network. That
+repo owns:
 
 - **Local-cluster session throughput** (0-hop / 1-hop over a
   `hoprd-localcluster`),
