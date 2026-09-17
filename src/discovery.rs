@@ -6,7 +6,9 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::{Duration, SystemTime};
+#[cfg(feature = "runtime-tokio")]
+use std::time::Duration;
+use std::time::SystemTime;
 
 use futures::{Stream, StreamExt};
 use hopr_chain_connector::HoprBlockchainReader;
@@ -137,26 +139,29 @@ where
         .with_service_type(ServiceType::GVPN_EXIT)
         .with_live_only(true);
 
-    let entries: Vec<ServiceEntry> = reader.stream_services(selector)?.collect().await;
-    let total = entries.len();
-    let nodes: Vec<ExitNodeInfo> = entries
-        .into_iter()
+    // Decoded while streaming so malformed entries never occupy memory.
+    let mut skipped = 0usize;
+    let nodes: Vec<ExitNodeInfo> = reader
+        .stream_services(selector)?
         .filter_map(|entry| {
             let node = entry.node;
-            match decode(entry) {
+            let decoded = match decode(entry) {
                 Ok(entry) => Some(entry),
                 Err(error) => {
+                    skipped += 1;
                     tracing::debug!(%error, %node, "skipping exit node with malformed metadata");
                     None
                 }
-            }
+            };
+            futures::future::ready(decoded)
         })
-        .collect();
+        .collect()
+        .await;
     // A ratio, not per entry: malformed entries are normal in a permissionless registry, so only
     // accepted-vs-skipped reveals our own decoder breaking.
     tracing::info!(
         accepted = nodes.len(),
-        skipped = total - nodes.len(),
+        skipped,
         "fetched gvpn:exit registry entries"
     );
     Ok(nodes)
@@ -244,12 +249,15 @@ where
 /// How often [`ExitNodeRegistry`] re-fetches the full registry to catch nodes that went orphaned
 /// (lost their Safe binding) without emitting a `Deregistered` event — [`subscribe_exit_nodes`]
 /// does not get that liveness cross-check, only [`list_exit_nodes`] does.
+#[cfg(feature = "runtime-tokio")]
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
 
+#[cfg(feature = "runtime-tokio")]
 fn to_map(nodes: Vec<ExitNodeInfo>) -> HashMap<Address, ExitNodeInfo> {
     nodes.into_iter().map(|node| (node.node, node)).collect()
 }
 
+#[cfg(feature = "runtime-tokio")]
 fn apply_update(nodes: &mut HashMap<Address, ExitNodeInfo>, update: ExitNodeUpdate) {
     match update {
         ExitNodeUpdate::Upsert { entry, .. } => {
@@ -266,11 +274,14 @@ fn apply_update(nodes: &mut HashMap<Address, ExitNodeInfo>, update: ExitNodeUpda
 /// Owns the live subscription and periodic liveness reconciliation behind one handle. Construct
 /// it with the initial result from [`list_exit_nodes`] once the full edge client's chain connector
 /// is available. Dropping the handle stops the background task.
+#[cfg(feature = "runtime-tokio")]
+#[must_use = "dropping the registry stops live exit-node discovery"]
 pub struct ExitNodeRegistry {
     nodes: tokio::sync::watch::Receiver<HashMap<Address, ExitNodeInfo>>,
     task: tokio::task::AbortHandle,
 }
 
+#[cfg(feature = "runtime-tokio")]
 impl ExitNodeRegistry {
     /// The current set of registered, live exit nodes, keyed by node address.
     pub fn nodes(&self) -> HashMap<Address, ExitNodeInfo> {
@@ -283,12 +294,14 @@ impl ExitNodeRegistry {
     }
 }
 
+#[cfg(feature = "runtime-tokio")]
 impl Drop for ExitNodeRegistry {
     fn drop(&mut self) {
         self.task.abort();
     }
 }
 
+#[cfg(feature = "runtime-tokio")]
 async fn reconcile_exit_nodes<C, S>(
     chain: C,
     updates: S,
@@ -299,8 +312,8 @@ async fn reconcile_exit_nodes<C, S>(
 {
     let mut live_updates = Some(std::pin::pin!(updates));
     let mut reconcile = tokio::time::interval(RECONCILE_INTERVAL);
+    // First tick fires at once: `initial` predates the subscription, so re-read to close the gap.
     reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    reconcile.tick().await; // the caller already supplied the initial fetch
 
     loop {
         tokio::select! {
@@ -341,6 +354,10 @@ async fn reconcile_exit_nodes<C, S>(
 /// `initial` should be fetched with [`list_exit_nodes`] before or during edge-client startup. The
 /// connected connector supplies domain-level service events and is also used for periodic
 /// Safe-binding reconciliation.
+///
+/// Must be called inside a Tokio runtime with the time driver enabled (the `#[tokio::main]`
+/// default); the reconciliation task is spawned onto it.
+#[cfg(feature = "runtime-tokio")]
 pub fn watch_exit_nodes<C>(
     initial: Vec<ExitNodeInfo>,
     chain: C,
@@ -712,6 +729,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "runtime-tokio")]
     #[test]
     fn applying_invalid_metadata_removes_without_claiming_deregistration() -> anyhow::Result<()> {
         let info = decode(entry_with_metadata(NODE, valid_metadata())?)?;
