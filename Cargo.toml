@@ -94,13 +94,6 @@ url = { version = "2.5.8", optional = true }
 validator = { version = "0.21.0", optional = true }
 
 # Pinned to a `rev` rather than tracked on `release/4.0`, because PIX lives only on `master`.
-#
-# The rev must also be the one every node this client talks to was built from. hoprnet 7c7e0ed8
-# ("generation-tagged SURB consumption") added a generation byte to `SurbReceiverInfo`, growing the
-# SURB from 401 to 402 bytes without bumping any protocol version, so peers on opposite sides of it
-# cannot read each other's replies at all -- the node logs `invalid start protocol version`, the
-# client logs `Message.version` parse failures, and no channel or session is ever established.
-# `a96c00de` is what `hoprd` pins; the only commit after it on master touches no Rust.
 hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "a96c00de2e5bcf2b891c3e25bb7f8a57b53a4901", features = [
   "session-client",
   "serde",
