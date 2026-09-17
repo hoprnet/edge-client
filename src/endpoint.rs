@@ -15,9 +15,6 @@ use hopr_chain_connector::{
 };
 use url::Url;
 
-use crate::blokli::DEFAULT_BLOKLI_URL;
-use crate::errors::EdgliError;
-
 /// Error returned when a [`BlokliDnsOverride`] cannot be parsed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -84,8 +81,8 @@ impl fmt::Display for BlokliDnsOverride {
 /// The Blokli service endpoint: a URL, an optional DNS-resolution override, and how long a
 /// single request to it may take.
 ///
-/// [`Default`] yields [`DEFAULT_BLOKLI_URL`] resolved through system DNS, with the connector's
-/// [`DEFAULT_REQUEST_TIMEOUT`].
+/// There is no default URL: construct one with [`BlokliEndpoint::new`]. It resolves through
+/// system DNS and uses the connector's [`DEFAULT_REQUEST_TIMEOUT`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlokliEndpoint {
     /// URL of the Blokli service.
@@ -95,16 +92,6 @@ pub struct BlokliEndpoint {
     /// Timeout for a single request to this endpoint, covering DNS, TCP, TLS, request and
     /// response. Raise it for endpoints reached over a high-latency link.
     pub request_timeout: std::time::Duration,
-}
-
-impl Default for BlokliEndpoint {
-    fn default() -> Self {
-        Self {
-            url: DEFAULT_BLOKLI_URL.clone(),
-            dns_override: None,
-            request_timeout: DEFAULT_REQUEST_TIMEOUT,
-        }
-    }
 }
 
 impl BlokliEndpoint {
@@ -127,24 +114,6 @@ impl BlokliEndpoint {
     pub fn with_request_timeout(mut self, request_timeout: std::time::Duration) -> Self {
         self.request_timeout = request_timeout;
         self
-    }
-
-    /// Creates an endpoint from an optional URL string.
-    ///
-    /// Uses [`DEFAULT_BLOKLI_URL`] when `url` is `None`.
-    pub fn from_optional_url(url: Option<&str>) -> Result<Self, EdgliError> {
-        let url = match url {
-            Some(url) => url
-                .parse()
-                .map_err(|e| EdgliError::ConfigError(format!("invalid Blokli URL '{url}': {e}")))?,
-            None => DEFAULT_BLOKLI_URL.clone(),
-        };
-
-        Ok(Self {
-            url,
-            dns_override: None,
-            request_timeout: DEFAULT_REQUEST_TIMEOUT,
-        })
     }
 
     /// Converts the endpoint into the chain connector's client configuration.
@@ -174,36 +143,14 @@ mod tests {
         IpAddr::V4(Ipv4Addr::new(a, b, c, d))
     }
 
-    #[test]
-    fn from_optional_url_defaults_to_production_url() {
-        let endpoint = BlokliEndpoint::from_optional_url(None).unwrap();
-        assert_eq!(endpoint.url, *DEFAULT_BLOKLI_URL);
-        assert_eq!(endpoint.dns_override, None);
+    fn test_endpoint() -> BlokliEndpoint {
+        BlokliEndpoint::new("https://blokli.example.com".parse().unwrap())
     }
 
     #[test]
-    fn from_optional_url_keeps_custom_url() {
-        let endpoint =
-            BlokliEndpoint::from_optional_url(Some("https://blokli.example.com")).unwrap();
+    fn new_uses_system_dns() {
+        let endpoint = test_endpoint();
         assert_eq!(endpoint.url.as_str(), "https://blokli.example.com/");
-        assert_eq!(endpoint.dns_override, None);
-    }
-
-    #[test]
-    fn from_optional_url_rejects_invalid_url() {
-        let error = BlokliEndpoint::from_optional_url(Some("not a url")).unwrap_err();
-        match error {
-            EdgliError::ConfigError(message) => {
-                assert!(message.starts_with("invalid Blokli URL 'not a url':"));
-            }
-            other => panic!("expected configuration error, got {other}"),
-        }
-    }
-
-    #[test]
-    fn default_endpoint_matches_default_url() {
-        let endpoint = BlokliEndpoint::default();
-        assert_eq!(endpoint.url, *DEFAULT_BLOKLI_URL);
         assert_eq!(endpoint.dns_override, None);
     }
 
@@ -214,7 +161,7 @@ mod tests {
     #[test]
     fn to_client_config_propagates_dns_override() {
         let dns_override = BlokliDnsOverride::new(v4(10, 1, 2, 1), Some(3002));
-        let endpoint = BlokliEndpoint::default().with_dns_override(dns_override);
+        let endpoint = test_endpoint().with_dns_override(dns_override);
 
         let config = endpoint.to_client_config();
         assert_eq!(config.url, endpoint.url);
@@ -223,34 +170,20 @@ mod tests {
 
     #[test]
     fn to_client_config_without_override_uses_system_dns() {
-        let config = BlokliEndpoint::default().to_client_config();
+        let config = test_endpoint().to_client_config();
         assert_eq!(config.dns_override, None);
     }
 
     #[test]
     fn endpoints_default_to_the_connector_request_timeout() {
-        assert_eq!(
-            BlokliEndpoint::default().request_timeout,
-            DEFAULT_REQUEST_TIMEOUT
-        );
-        assert_eq!(
-            BlokliEndpoint::new(DEFAULT_BLOKLI_URL.clone()).request_timeout,
-            DEFAULT_REQUEST_TIMEOUT
-        );
-        assert_eq!(
-            BlokliEndpoint::from_optional_url(None)
-                .unwrap()
-                .request_timeout,
-            DEFAULT_REQUEST_TIMEOUT
-        );
+        assert_eq!(test_endpoint().request_timeout, DEFAULT_REQUEST_TIMEOUT);
     }
 
     /// Same seam as [`to_client_config_propagates_dns_override`]: a caller-supplied request
     /// timeout must survive the hop into the connector's client config.
     #[test]
     fn to_client_config_propagates_request_timeout() {
-        let endpoint =
-            BlokliEndpoint::default().with_request_timeout(std::time::Duration::from_secs(10));
+        let endpoint = test_endpoint().with_request_timeout(std::time::Duration::from_secs(10));
 
         let config = endpoint.to_client_config();
         assert_eq!(config.request_timeout, std::time::Duration::from_secs(10));
@@ -259,7 +192,7 @@ mod tests {
     #[test]
     fn with_request_timeout_keeps_the_dns_override() {
         let dns_override = BlokliDnsOverride::new(v4(10, 1, 2, 1), Some(3002));
-        let endpoint = BlokliEndpoint::default()
+        let endpoint = test_endpoint()
             .with_dns_override(dns_override)
             .with_request_timeout(std::time::Duration::from_secs(10));
 

@@ -129,9 +129,20 @@ jobs:
           grep -o 'source = "git+https://github.com/hoprnet/hoprnet[^"]*"' Cargo.lock | sort -u || true
   checks:
     name: Check
+    # In the merge queue we don't want to re-run the heavy checks, but their
+    # contexts (`Check / *`) are required and must report on the merge group or
+    # the queue stalls. So the job still runs on merge_group; the reusable
+    # workflow's `enable`/skip booleans are turned off there, which skips the work
+    # while each `Check / *` still reports (green). Only Integration throughput
+    # does real work in the queue (see merge-queue.yaml). `!= 'merge_group'` keeps
+    # normal PR behaviour untouched.
     uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@d0cffaf9e9209c8eca00e8c74e82ac3f5f3cf7bb # workflow-checks-v2
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
+      format: ${{ github.event_name != 'merge_group' }}
+      pre_commit: ${{ github.event_name != 'merge_group' }}
+      lint: ${{ github.event_name != 'merge_group' }}
+      audit: ${{ github.event_name != 'merge_group' }}
       lint_command: "nix build -L .#checks.x86_64-linux.clippy"
       deps: false
       audit_command: "nix build -L .#checks.x86_64-linux.audit"
@@ -141,12 +152,14 @@ jobs:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
   tests:
     name: Test
+    # Runs on merge_group too, but the enable booleans are off there so the
+    # `Test / *` contexts report (skipped = passing) without re-running (see `checks`).
     uses: hoprnet/hopr-workflows/.github/workflows/tests.yaml@798d791de5c5485c3043049781dfd0938539a36a # workflow-tests-v6
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
-      enable_unit_tests: true
+      enable_unit_tests: ${{ github.event_name != 'merge_group' }}
       unit_test_command: "nix develop -c cargo nextest run --no-tests=pass"
-      enable_unit_coverage: true
+      enable_unit_coverage: ${{ github.event_name != 'merge_group' }}
       unit_coverage_command: "nix run .#coverage-unit"
       runner_unit: depot-ubuntu-24.04-8
       test_timeout: 30
@@ -154,6 +167,8 @@ jobs:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
   build-library:
     name: Library ${{ matrix.architecture }}
+    # Runs on merge_group too; `enabled` is off there so `Library … / Build`
+    # reports (skipped = passing) without rebuilding (see `checks`).
     strategy:
       fail-fast: false
       matrix:
@@ -178,6 +193,6 @@ jobs:
       architecture: ${{ matrix.architecture }}
       build_command: ${{ matrix.build_command }}
       runner: ${{ matrix.runner }}
-      enabled: ${{ matrix.required_label == '' || contains(github.event.pull_request.labels.*.name, matrix.required_label) }}
+      enabled: ${{ github.event_name != 'merge_group' && (matrix.required_label == '' || contains(github.event.pull_request.labels.*.name, matrix.required_label)) }}
     secrets:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}

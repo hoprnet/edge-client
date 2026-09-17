@@ -16,7 +16,7 @@ use {
     opentelemetry_sdk::trace::{RandomIdGenerator, Sampler},
 };
 
-use edgli::{BlokliDnsOverride, BlokliEndpoint, errors::EdgliError};
+use edgli::{BlokliDnsOverride, BlokliEndpoint, Url, errors::EdgliError};
 
 // Avoid musl's default allocator due to degraded performance
 // https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance
@@ -62,9 +62,9 @@ pub struct CliArgs {
         long,
         env = "HOPR_EDGE_BLOKLI_URL",
         help = "The URL of the blokli provider to use",
-        required = false
+        required = true
     )]
-    pub blokli_url: Option<String>,
+    pub blokli_url: Url,
 
     /// Blokli DNS override
     #[arg(
@@ -222,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
         "Starting Edgli"
     );
 
-    let mut blokli_endpoint = BlokliEndpoint::from_optional_url(args.blokli_url.as_deref())?;
+    let mut blokli_endpoint = BlokliEndpoint::new(args.blokli_url);
     if let Some(dns_override) = args.blokli_dns_override {
         blokli_endpoint = blokli_endpoint.with_dns_override(dns_override);
     }

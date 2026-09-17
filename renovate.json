@@ -6,6 +6,7 @@
     "group:allNonMajor",
     "group:allDigest"
   ],
+  "baseBranchPatterns": ["$default", "/^release\\/\\d+\\.\\d+$/"],
   "prCreation": "not-pending",
   "semanticCommits": "enabled",
   "rangeStrategy": "bump",
