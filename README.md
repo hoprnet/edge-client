@@ -43,7 +43,7 @@ async fn run(cfg: HoprLibConfig, keys: HoprKeys) -> anyhow::Result<()> {
     let edgli = Edgli::new(
         cfg,
         keys,
-        BlokliEndpoint::default(), // production endpoint, system DNS
+        BlokliEndpoint::new("https://blokli.example.com".parse()?), // system DNS
         None,  // BlockchainConnectorConfig (optional)
         false, // probe_local_addresses: filter non-public peer addresses
         |state: EdgliInitState| tracing::info!(?state, "init"),
@@ -63,7 +63,7 @@ and certificate validation still use the original hostname:
 ```rust
 use edgli::{BlokliDnsOverride, BlokliEndpoint};
 
-let endpoint = BlokliEndpoint::default()
+let endpoint = BlokliEndpoint::new("https://blokli.example.com".parse()?)
     .with_dns_override("10.1.2.1:3002".parse::<BlokliDnsOverride>()?);
 ```
 
@@ -74,6 +74,20 @@ address without a separate port.
 The same `BlokliEndpoint` is accepted by `make_incentive_operations`, so the
 on-boarding flow (balances, ticket pricing, Safe deployment, withdrawals)
 honours the override too.
+
+Exit-node discovery is split across startup deliberately: call
+`list_exit_nodes(endpoint)` for the initial `gvpn:exit` destination list, then
+pass that list to `Edgli::watch_exit_nodes` after the edge client is connected:
+
+```rust
+let registry = edgli.watch_exit_nodes(initial)?;
+```
+
+Keep `registry` alive: it owns the background task, and dropping it stops live
+discovery. Live registrations, updates, and removals come from the connected
+chain connector's domain event stream; periodic reads reconcile entries whose
+node has lost its Safe binding. `watch_exit_nodes` needs the `runtime-tokio`
+feature and must be called inside a Tokio runtime with timers enabled.
 
 `BlokliEndpoint`, `BlokliDnsOverride` and `make_incentive_operations` are
 blokli-specific: they are only available with the `blokli` feature enabled (it
@@ -230,9 +244,9 @@ nix run .#coverage-unit
 ### Integration & throughput tests
 
 Full-stack integration lives in
-**[`hoprnet/hoprd-test`](https://github.com/hoprnet/hoprd-test)**, which
-consumes `edgli` as a library and runs it against a real network. That repo
-owns:
+**[`hoprnet/hopr-integration-tests`](https://github.com/hoprnet/hopr-integration-tests)**,
+which consumes `edgli` as a library and runs it against a real network. That
+repo owns:
 
 - **Local-cluster session throughput** (0-hop / 1-hop over a
   `hoprd-localcluster`),
@@ -270,8 +284,8 @@ Key inputs handed to `Edgli::new`:
 - `HoprLibConfig` — host / transport / safe-module configuration.
 - `HoprKeys` — packet key + chain key pair.
 - `BlokliEndpoint` — blokli service URL plus an optional DNS override that
-  bypasses system DNS for that host. `BlokliEndpoint::default()` uses the
-  production endpoint and system DNS.
+  bypasses system DNS for that host. There is no default URL; it must always be
+  provided (`--blokli-url` / `HOPR_EDGE_BLOKLI_URL` on the CLI).
 - `BlockchainConnectorConfig` — connector tuning (optional; defaults applied
   when omitted).
 
