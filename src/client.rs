@@ -345,10 +345,7 @@ impl Edgli {
         )?)
     }
 
-    /// Maintains a live exit-node registry from a previously fetched initial destination list.
-    ///
-    /// Fetch `initial` with [`crate::discovery::list_exit_nodes`] before or during client startup;
-    /// subsequent updates and liveness reconciliation use this client's connected chain API.
+    /// Maintains a live exit-node registry seeded with [`crate::discovery::list_exit_nodes`].
     pub fn watch_exit_nodes(
         &self,
         initial: Vec<crate::discovery::ExitNodeInfo>,

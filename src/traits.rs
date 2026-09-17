@@ -91,9 +91,7 @@ pub trait EdgeNodeApi: Send + Sync {
         &self,
     ) -> anyhow::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>>;
 
-    /// Maintains a live registry from an initial list fetched before or during node startup.
-    ///
-    /// Needs a Tokio runtime, so it is only available with the `runtime-tokio` feature.
+    /// Maintains a live registry from an initial list; needs Tokio, hence `runtime-tokio` only.
     #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
     fn watch_exit_nodes(&self, initial: Vec<ExitNodeInfo>) -> anyhow::Result<ExitNodeRegistry>;
 }

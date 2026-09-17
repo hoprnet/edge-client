@@ -1,8 +1,7 @@
 //! Discovery of `gvpn:exit` nodes registered in the on-chain `HoprServiceRegistry`.
 //!
-//! Initial reads go through [`hopr_chain_connector::HoprBlockchainReader`], which does not require
-//! the full connector to be initialized. Live updates use the domain event stream of the connected
-//! chain connector, keeping Blokli wire types behind `hopr-chain-connector`.
+//! Initial reads need no connector ([`HoprBlockchainReader`]); live updates ride the connected
+//! connector's event stream so Blokli wire types stay behind `hopr-chain-connector`.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -21,33 +20,20 @@ use serde::Deserialize;
 
 use crate::endpoint::BlokliEndpoint;
 
-/// `gvpn:exit` metadata, versioned per `design-service-registry-v3.md` §3.2 (in-band schema
-/// discriminator; each service type documents its own encoding).
-///
-/// `version` is read by [`parse_exit_node_metadata`]; unknown keys are tolerated so an additive
+/// Schema per `design-service-registry-v3.md` §3.2; unknown keys are tolerated so an additive
 /// field cannot invalidate every entry for older clients.
 #[derive(Deserialize)]
 struct ExitNodeMetadataV1 {
-    /// Where the exit node's gvpn-server process listens on its private overlay: the HTTP
-    /// registration API and the bridge-mode session forwarding target.
+    /// Overlay address of the gvpn-server HTTP API and bridge-mode forwarding target.
     gnosis_vpn_server: SocketAddr,
-    /// Where the exit node's WireGuard server listens on its private overlay. Required, not
-    /// `Option`: registering under `gvpn:exit` requires running both an exit node and an exit
-    /// server, so a well-formed entry always has one.
+    /// Not `Option`: a `gvpn:exit` registration implies a running exit server.
     wireguard_server: SocketAddr,
-    /// Free-form labels the operator publishes (e.g. location), mirroring gnosis_vpn-client's
-    /// existing config `meta` tags. Absent means the operator published no labels.
-    ///
-    /// Held as `Value` so a non-string label cannot reject the whole entry; [`stringify_meta`]
-    /// flattens it.
+    /// `Value`, not `String`, so one non-string label cannot reject the whole entry.
     #[serde(default)]
     meta: HashMap<String, serde_json::Value>,
 }
 
-/// Renders free-form labels as strings, keeping every key.
-///
-/// A label is metadata about a node, never a reason to discard one, so a non-string value is
-/// carried as its JSON text rather than failing the entry.
+/// A label never disqualifies a node, so non-string values become their JSON text.
 fn stringify_meta(meta: HashMap<String, serde_json::Value>) -> HashMap<String, String> {
     meta.into_iter()
         .map(|(key, value)| match value {
@@ -67,8 +53,7 @@ enum MetadataDecodeError {
     UnsupportedVersion(u64),
 }
 
-/// Reads `version` before the payload so a future schema version is reported as unsupported
-/// rather than as generic corruption.
+/// `version` is checked before the payload so a future schema reads as unsupported, not corrupt.
 fn parse_exit_node_metadata(bytes: &[u8]) -> Result<ExitNodeMetadataV1, MetadataDecodeError> {
     let value: serde_json::Value = serde_json::from_slice(bytes)?;
     let version = value
@@ -84,23 +69,19 @@ fn parse_exit_node_metadata(bytes: &[u8]) -> Result<ExitNodeMetadataV1, Metadata
 /// A `gvpn:exit` node, decoded from its on-chain registry entry.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExitNodeInfo {
-    /// On-chain address of the exit node.
     pub node: Address,
     /// Safe that performed the last write to this entry.
     pub safe: Address,
-    /// The exit node's gvpn-server endpoint (HTTP registration API / bridge-mode target).
+    /// gvpn-server HTTP API and bridge-mode forwarding target.
     pub gnosis_vpn_server: SocketAddr,
-    /// The exit node's WireGuard server endpoint.
     pub wireguard_server: SocketAddr,
     /// Free-form operator-published labels.
     pub meta: HashMap<String, String>,
-    /// When the entry was registered.
     pub registered_at: SystemTime,
-    /// When the entry was last updated; equal to `registered_at` until the first update.
+    /// Equal to `registered_at` until the first update.
     pub updated_at: SystemTime,
 }
 
-/// Decodes one registry entry's application-specific metadata.
 fn decode(entry: ServiceEntry) -> Result<ExitNodeInfo, MetadataDecodeError> {
     let metadata = parse_exit_node_metadata(entry.metadata.as_ref())?;
     Ok(ExitNodeInfo {
@@ -114,11 +95,9 @@ fn decode(entry: ServiceEntry) -> Result<ExitNodeInfo, MetadataDecodeError> {
     })
 }
 
-/// Fetches all currently registered, live `gvpn:exit` nodes.
+/// Fetches all registered `gvpn:exit` nodes that still have a Safe binding.
 ///
-/// "Live" means the node still has a Safe binding in the node-Safe registry — an entry whose
-/// binding was lost is permanently listed but dead (`design-service-registry-v3.md` §9.5), and
-/// [`ServiceSelector::with_live_only`] filters those out.
+/// An entry whose binding was lost stays listed but is dead (§9.5), hence `with_live_only`.
 pub async fn list_exit_nodes(blokli_endpoint: BlokliEndpoint) -> anyhow::Result<Vec<ExitNodeInfo>> {
     list_exit_nodes_with_client(blokli_endpoint.build_client()).await
 }
@@ -157,8 +136,7 @@ where
         })
         .collect()
         .await;
-    // A ratio, not per entry: malformed entries are normal in a permissionless registry, so only
-    // accepted-vs-skipped reveals our own decoder breaking.
+    // Ratio, not per entry: malformed entries are normal; only the ratio shows our decoder breaking.
     tracing::info!(
         accepted = nodes.len(),
         skipped,
@@ -167,31 +145,26 @@ where
     Ok(nodes)
 }
 
-/// What changed about a `gvpn:exit` registry entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExitNodeUpdateKind {
     Registered,
     Updated,
 }
 
-/// Why an exit node was removed from the usable destination set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExitNodeRemovalReason {
-    /// The service registry entry was removed on-chain.
     Deregistered,
-    /// The registered entry exists but no longer contains valid `gvpn:exit` metadata.
+    /// The entry still exists on-chain but its metadata no longer decodes.
     InvalidMetadata,
 }
 
 /// A live change to the usable `gvpn:exit` destination set.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExitNodeUpdate {
-    /// A valid registration or metadata update that should be inserted into the destination set.
     Upsert {
         kind: ExitNodeUpdateKind,
         entry: ExitNodeInfo,
     },
-    /// An entry that should be removed from the usable destination set.
     Remove {
         node: Address,
         reason: ExitNodeRemovalReason,
@@ -232,9 +205,7 @@ fn decode_event(event: ChainEvent) -> Option<ExitNodeUpdate> {
 
 /// Subscribes to live `gvpn:exit` registrations, updates, and deregistrations.
 ///
-/// Uses the already-connected chain connector's domain event stream, keeping Blokli wire types
-/// and conversion details behind `hopr-chain-connector`. Safe-binding liveness is reconciled by
-/// [`ExitNodeRegistry`] because a node losing its binding does not emit a service deregistration.
+/// A lost Safe binding emits no deregistration, so liveness is left to [`ExitNodeRegistry`].
 pub fn subscribe_exit_nodes<C>(
     chain: &C,
 ) -> Result<impl Stream<Item = ExitNodeUpdate> + Send + 'static, C::Error>
@@ -246,9 +217,7 @@ where
         .filter_map(|event| futures::future::ready(decode_event(event))))
 }
 
-/// How often [`ExitNodeRegistry`] re-fetches the full registry to catch nodes that went orphaned
-/// (lost their Safe binding) without emitting a `Deregistered` event — [`subscribe_exit_nodes`]
-/// does not get that liveness cross-check, only [`list_exit_nodes`] does.
+/// Full re-fetch cadence; only [`list_exit_nodes`] sees nodes that lost their Safe binding.
 #[cfg(feature = "runtime-tokio")]
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
 
@@ -269,11 +238,7 @@ fn apply_update(nodes: &mut HashMap<Address, ExitNodeInfo>, update: ExitNodeUpda
     }
 }
 
-/// A live, continuously updated view of registered `gvpn:exit` nodes.
-///
-/// Owns the live subscription and periodic liveness reconciliation behind one handle. Construct
-/// it with the initial result from [`list_exit_nodes`] once the full edge client's chain connector
-/// is available. Dropping the handle stops the background task.
+/// Live view of registered `gvpn:exit` nodes; owns the subscription and reconciliation task.
 #[cfg(feature = "runtime-tokio")]
 #[must_use = "dropping the registry stops live exit-node discovery"]
 pub struct ExitNodeRegistry {
@@ -349,14 +314,9 @@ async fn reconcile_exit_nodes<C, S>(
     }
 }
 
-/// Starts maintaining a live exit-node registry through an already-connected chain connector.
+/// Starts maintaining a live exit-node registry, seeded with the result of [`list_exit_nodes`].
 ///
-/// `initial` should be fetched with [`list_exit_nodes`] before or during edge-client startup. The
-/// connected connector supplies domain-level service events and is also used for periodic
-/// Safe-binding reconciliation.
-///
-/// Must be called inside a Tokio runtime with the time driver enabled (the `#[tokio::main]`
-/// default); the reconciliation task is spawned onto it.
+/// Spawns onto the current Tokio runtime, which needs the time driver (`#[tokio::main]` default).
 #[cfg(feature = "runtime-tokio")]
 pub fn watch_exit_nodes<C>(
     initial: Vec<ExitNodeInfo>,
@@ -398,8 +358,7 @@ mod tests {
         .unwrap()
     }
 
-    /// The exact blob published on piz-palu-dev, hardcoded because fixtures built here only ever
-    /// prove the decoder agrees with itself.
+    /// Verbatim from piz-palu-dev: fixtures built here only prove the decoder agrees with itself.
     const REAL_ON_CHAIN_METADATA: &str = r#"{
     "version":1,
     "gnosis_vpn_server":"172.30.0.1:8000",
