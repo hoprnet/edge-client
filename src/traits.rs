@@ -18,7 +18,9 @@ use hopr_lib::{
 };
 
 #[cfg(feature = "blokli")]
-use crate::discovery::{ExitNodeInfo, ExitNodeRegistry, ExitNodeUpdate};
+use crate::discovery::ExitNodeUpdate;
+#[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
+use crate::discovery::{ExitNodeInfo, ExitNodeRegistry};
 
 /// All balance information for the node wallet and its linked Safe.
 #[derive(Clone, Debug)]
@@ -89,8 +91,8 @@ pub trait EdgeNodeApi: Send + Sync {
         &self,
     ) -> anyhow::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>>;
 
-    /// Maintains a live registry from an initial list fetched before or during node startup.
-    #[cfg(feature = "blokli")]
+    /// Maintains a live registry from an initial list; needs Tokio, hence `runtime-tokio` only.
+    #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
     fn watch_exit_nodes(&self, initial: Vec<ExitNodeInfo>) -> anyhow::Result<ExitNodeRegistry>;
 }
 
@@ -280,7 +282,7 @@ mod tests {
             Ok(futures::stream::empty().boxed())
         }
 
-        #[cfg(feature = "blokli")]
+        #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
         fn watch_exit_nodes(
             &self,
             _initial: Vec<ExitNodeInfo>,

@@ -190,8 +190,8 @@ impl Edgli {
     ///   before calling to control the routing strategy.  Use
     ///   [`crate::latency_path_planner_config`] to obtain a latency-optimised default.
     /// * `hopr_keys` – chain and packet keypairs
-    /// * `blokli_endpoint` – Blokli service URL and optional DNS override; use
-    ///   [`BlokliEndpoint::default`] for the production endpoint via system DNS
+    /// * `blokli_endpoint` – Blokli service URL and optional DNS override, built with
+    ///   [`BlokliEndpoint::new`]; there is no default URL
     /// * `blokli_connector_config` – optional connector config overrides
     /// * `probe_local_addresses` – when `true`, probe non-public (private,
     ///   loopback, link-local) peer addresses from announcements; when `false`
@@ -345,10 +345,7 @@ impl Edgli {
         )?)
     }
 
-    /// Maintains a live exit-node registry from a previously fetched initial destination list.
-    ///
-    /// Fetch `initial` with [`crate::discovery::list_exit_nodes`] before or during client startup;
-    /// subsequent updates and liveness reconciliation use this client's connected chain API.
+    /// Maintains a live exit-node registry seeded with [`crate::discovery::list_exit_nodes`].
     pub fn watch_exit_nodes(
         &self,
         initial: Vec<crate::discovery::ExitNodeInfo>,

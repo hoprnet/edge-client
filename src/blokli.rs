@@ -20,15 +20,10 @@ use hopr_lib::{
     },
     builder::Keypair,
 };
-use url::Url;
 
 use crate::endpoint::BlokliEndpoint;
 
 pub use hopr_lib::builder::ChainKeypair;
-
-lazy_static::lazy_static! {
-    pub static ref DEFAULT_BLOKLI_URL: Url = "https://blokli.jura.gnosisvpn.io".parse().unwrap();
-}
 
 /// Fallback gas price when Blokli reports none, in wei per gas — matches the
 /// connector's own `GasEstimation::default().max_fee_per_gas` (10 Gwei), the
@@ -363,14 +358,6 @@ mod tests {
         assert_eq!(
             resolve_max_fee_per_gas(Some("not a number"), None),
             DEFAULT_MAX_FEE_PER_GAS
-        );
-    }
-
-    #[test]
-    fn default_blokli_url_is_correct() {
-        assert_eq!(
-            DEFAULT_BLOKLI_URL.as_str(),
-            "https://blokli.jura.gnosisvpn.io/"
         );
     }
 

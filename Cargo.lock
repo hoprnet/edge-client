@@ -2978,7 +2978,6 @@ dependencies = [
  "hopr-strategy",
  "hopr-ticket-manager",
  "hopr-transport-p2p",
- "lazy_static",
  "mimalloc",
  "multiaddr",
  "opentelemetry",
