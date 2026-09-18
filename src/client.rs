@@ -491,15 +491,6 @@ impl Edgli {
     ///
     /// Every other field of `base` is passed through, so the caller keeps control of routing,
     /// SURB management and flow control.
-    ///
-    /// The capability is the whole switch since hoprnet#8430. There is no longer a
-    /// `pix_ssa_quota` to state: `new_session` announces what this node's installed share
-    /// generator produces, which is the only value the Exit ever accepted.
-    ///
-    /// Still fallible, and still reads the dimensions, because that read is what rejects a
-    /// `protocol.pix` the node itself would reject — see [`crate::strategy::pix_ssa_quota`].
-    /// Dropping it would move that error from here to Session establishment, which is a worse
-    /// place to learn the node is misconfigured.
     #[cfg(feature = "pix")]
     pub fn with_pix(
         &self,
