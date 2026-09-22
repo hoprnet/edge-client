@@ -145,7 +145,7 @@ jobs:
       audit: ${{ github.event_name != 'merge_group' }}
       lint_command: "nix build -L .#checks.x86_64-linux.clippy"
       deps: false
-      audit_command: "nix build -L .#checks.x86_64-linux.audit"
+      audit_command: "nix run -L .#audit"
       runner_small: depot-ubuntu-24.04
       runner_large: depot-ubuntu-24.04-8
     secrets:
