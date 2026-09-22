@@ -24,17 +24,6 @@ pub use hopr_strategy::channel_lifecycle::{
 /// tickets than a stake actually covers.
 const ASSUMED_HOPS: u32 = RoutingOptions::MAX_INTERMEDIATE_HOPS as u32;
 
-/// Safe capacity required before a channel opens, as a multiple of the initial capacity.
-///
-/// The strategy's own default is a fixed volume that does not track a requested one, so a
-/// larger request would otherwise clear the gate on a Safe that cannot then top the
-/// channel up. Twice covers the channel and its first top-up.
-///
-/// Applied as a floor *alongside* that default, not in place of it: the gate is the larger
-/// of the two, so a small request cannot lower it below what the strategy would have
-/// required on its own.
-const MIN_SAFE_MULTIPLE: u64 = 2;
-
 /// Confidence level the channel stake is sized for.
 ///
 /// [`CapacitySizingMode::Deterministic`] sizes to the *mean* drain, leaving the lower
@@ -522,27 +511,12 @@ pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<Fu
     let defaults = FundingConfig::default();
     let initial_capacity = cfg.channel_capacity.unwrap_or(defaults.initial_capacity);
 
-    let min_safe_capacity_required = match cfg.min_safe_capacity_required {
-        Some(explicit) => explicit,
-        None => {
-            let floor = initial_capacity
-                .as_u64()
-                .checked_mul(MIN_SAFE_MULTIPLE)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("{initial_capacity} × {MIN_SAFE_MULTIPLE} overflows u64")
-                })?;
-            ByteSize::b(floor).max(defaults.min_safe_capacity_required)
-        }
-    };
-
     Ok(FundingConfig {
         initial_capacity,
         topup_capacity: cfg.topup_capacity.unwrap_or(defaults.topup_capacity),
         lower_capacity_threshold: cfg
             .lower_capacity_threshold
             .unwrap_or(defaults.lower_capacity_threshold),
-        min_safe_capacity_required,
-        stop_when_unfunded: true,
         sizing_mode: cfg.sizing_mode.clone().unwrap_or(SIZING_MODE),
     })
 }
@@ -561,7 +535,7 @@ fn channel_stakes(
     let funding = compute_funding_config(sizing)?;
     let resolved = resolve_funding(&funding, ticket_price, win_prob);
     let total = resolved.initial_balance * (missing_channels as u64);
-    Ok(total.max(resolved.min_safe_balance_required))
+    Ok(total)
 }
 
 /// One-time costs still owed before this node can be fully up and running,
@@ -835,7 +809,6 @@ pub fn default_strategy_cfg(
         // The threshold that decides when a top-up fires, and so the first value
         // to reach for when investigating a channel that stalled mid-relay.
         lower_capacity_threshold = %funding.lower_capacity_threshold,
-        min_safe_capacity_required = %funding.min_safe_capacity_required,
         sizing_mode = ?funding.sizing_mode,
         "channel-lifecycle funding configured"
     );
@@ -873,9 +846,6 @@ mod tests {
 
     /// Gnosis-typical gas price in wei per gas (2 Gwei).
     const TEST_MAX_FEE_PER_GAS: u128 = 2_000_000_000;
-
-    /// Winning probabilities spanning the range the network may run at.
-    const WIN_PROBS: [f64; 6] = [1.0, 0.5, 0.1, 0.01, 0.001, 0.0001];
 
     #[test]
     fn funding_config_uses_the_requested_capacity_verbatim() {
@@ -932,19 +902,6 @@ mod tests {
     }
 
     #[test]
-    fn funding_config_honours_an_explicit_min_safe_capacity_verbatim() {
-        // Not raised to 2x initial_capacity like the derived floor — see
-        // funding_config_min_safe_covers_at_least_two_channels for that case.
-        let cfg = compute_funding_config(&IncentiveConfiguration {
-            channel_capacity: Some(ByteSize::mib(640)),
-            min_safe_capacity_required: Some(ByteSize::mib(640)),
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(cfg.min_safe_capacity_required, ByteSize::mib(640));
-    }
-
-    #[test]
     fn funding_config_honours_an_explicit_sizing_mode() {
         // The default (None) case is pinned by funding_config_uses_probabilistic_sizing.
         let cfg = compute_funding_config(&IncentiveConfiguration {
@@ -977,50 +934,6 @@ mod tests {
     }
 
     #[test]
-    fn funding_config_min_safe_covers_at_least_two_channels() {
-        // The strategy's default gate is a fixed volume that does not track the request,
-        // so a larger request would otherwise clear it on a safe that cannot then top the
-        // channel up.
-        for requested in [None, Some(ByteSize::mb(1)), Some(ByteSize::gib(4))] {
-            let cfg = compute_funding_config(&IncentiveConfiguration {
-                channel_capacity: requested,
-                ..Default::default()
-            })
-            .unwrap();
-            assert!(
-                cfg.min_safe_capacity_required.as_u64()
-                    >= cfg.initial_capacity.as_u64() * MIN_SAFE_MULTIPLE,
-                "{requested:?}: {} < 2 x {}",
-                cfg.min_safe_capacity_required,
-                cfg.initial_capacity
-            );
-        }
-    }
-
-    #[test]
-    fn funding_config_rejects_a_capacity_that_overflows_the_safe_gate() {
-        assert!(
-            compute_funding_config(&IncentiveConfiguration {
-                channel_capacity: Some(ByteSize::b(u64::MAX)),
-                ..Default::default()
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn funding_config_explicit_min_safe_capacity_skips_the_overflow_prone_floor() {
-        // Must bypass the overflow-prone MIN_SAFE_MULTIPLE multiply entirely, not dodge it by luck.
-        let cfg = compute_funding_config(&IncentiveConfiguration {
-            channel_capacity: Some(ByteSize::b(u64::MAX)),
-            min_safe_capacity_required: Some(ByteSize::mib(1)),
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(cfg.min_safe_capacity_required, ByteSize::mib(1));
-    }
-
-    #[test]
     fn funding_config_uses_probabilistic_sizing() {
         // `resolve_funding` asks the strategy to resolve whichever mode is set here, so
         // this pins the mode itself rather than any restatement of its arithmetic.
@@ -1034,7 +947,6 @@ mod tests {
             "expected Probabilistic({SIZING_SUCCESS_PROBABILITY}), got {:?}",
             cfg.sizing_mode
         );
-        assert!(cfg.stop_when_unfunded);
     }
 
     #[test]
@@ -1089,20 +1001,6 @@ mod tests {
                 let cfg = compute_funding_config(&IncentiveConfiguration::default()).unwrap();
                 let resolved = resolve_funding(&cfg, price, p);
 
-                let one = compute_balance_recommendation(
-                    price,
-                    p,
-                    1,
-                    no_startup_costs(),
-                    &IncentiveConfiguration::default(),
-                    TEST_MAX_FEE_PER_GAS,
-                )
-                .unwrap();
-                assert_eq!(
-                    one.channel_stakes, resolved.min_safe_balance_required,
-                    "price={price}, p={p}"
-                );
-
                 let many = compute_balance_recommendation(
                     price,
                     p,
@@ -1122,26 +1020,6 @@ mod tests {
     }
 
     #[test]
-    fn balance_recommendation_covers_min_safe_balance() {
-        // `stop_when_unfunded` blocks every open below min_safe_capacity_required.
-        let price = HoprBalance::new_base(10);
-        for p in WIN_PROBS {
-            let cfg = compute_funding_config(&IncentiveConfiguration::default()).unwrap();
-            let min_safe = resolve_funding(&cfg, price, p).min_safe_balance_required;
-            let rec = compute_balance_recommendation(
-                price,
-                p,
-                1,
-                no_startup_costs(),
-                &IncentiveConfiguration::default(),
-                TEST_MAX_FEE_PER_GAS,
-            )
-            .unwrap();
-            assert!(rec.channel_stakes >= min_safe, "p={p}");
-        }
-    }
-
-    #[test]
     fn balance_recommendation_tracks_requested_capacity() {
         // Regression: the recommendation is derived from the same funding config the
         // reactor runs on. If it ignored `channel_capacity` a node funded to the reported
@@ -1152,8 +1030,6 @@ mod tests {
             ..Default::default()
         };
         for p in [1.0, 0.01, 0.001] {
-            let cfg = compute_funding_config(&requested_cfg).unwrap();
-            let expected = resolve_funding(&cfg, price, p).min_safe_balance_required;
             let rec = compute_balance_recommendation(
                 price,
                 p,
@@ -1163,7 +1039,6 @@ mod tests {
                 TEST_MAX_FEE_PER_GAS,
             )
             .unwrap();
-            assert_eq!(rec.channel_stakes, expected, "p={p}");
 
             let default = compute_balance_recommendation(
                 price,
@@ -1234,7 +1109,6 @@ mod tests {
         assert_eq!(funding.initial_capacity, ByteSize::mib(640));
         assert_eq!(funding.topup_capacity, ByteSize::mib(384));
         assert_eq!(funding.lower_capacity_threshold, ByteSize::mib(128));
-        assert_eq!(funding.min_safe_capacity_required, ByteSize::mib(640));
         assert_eq!(funding.sizing_mode, CapacitySizingMode::Deterministic);
     }
 
