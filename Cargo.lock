@@ -4235,11 +4235,11 @@ dependencies = [
 [[package]]
 name = "hopr-strategy"
 version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88b80cfdf4632f8ffc73ad4d5c9bfadaa14783c7f4bf44c7ac7e9940fcd03137"
+source = "git+https://github.com/hoprnet/hopr-strategy?branch=compat%2Fv4#ef95cdda211c2d4edee232af8735535cc5fb9b27"
 dependencies = [
  "anyhow",
  "async-trait",
+ "atomic_enum",
  "bytesize",
  "dashmap",
  "futures",
@@ -4251,11 +4251,13 @@ dependencies = [
  "lazy_static",
  "moka",
  "multiaddr",
+ "num_enum",
  "parking_lot",
  "serde",
  "serde_with",
  "smart-default",
  "statrs",
+ "strum",
  "thiserror 2.0.20",
  "tracing",
  "validator",
