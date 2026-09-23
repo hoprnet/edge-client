@@ -422,16 +422,8 @@ pub struct IncentiveConfiguration {
     /// Data volume a single channel should carry before it needs a top-up.
     ///
     /// Becomes the strategy's initial capacity as given, honoured verbatim — no rounding,
-    /// no floor.
-    ///
-    /// # Funding is all-or-nothing
-    ///
-    /// Raising this also raises the balance below which the node refuses to operate. Unless
-    /// [`min_safe_capacity_required`](Self::min_safe_capacity_required) is set explicitly,
-    /// the safe gate is the larger of [`MIN_SAFE_MULTIPLE`] × this volume and the strategy's
-    /// own default, so a small request does not lower it. Under `stop_when_unfunded`, a
-    /// Safe below that gate opens **zero** channels, not smaller ones and not fewer — read
-    /// the figure off [`minimum_balance_recommendation`] rather than deriving it here.
+    /// no floor. For what the Safe must hold to fund it, read
+    /// [`minimum_balance_recommendation`] rather than deriving it here.
     ///
     /// Default: `None` — the strategy's own initial capacity.
     #[default(None)]
@@ -444,12 +436,6 @@ pub struct IncentiveConfiguration {
     /// Channel balance (as data capacity) below which a top-up fires. Default: `None` — the strategy's own.
     #[default(None)]
     pub lower_capacity_threshold: Option<ByteSize>,
-
-    /// Minimum safe balance (as data capacity) before opening/funding any channel. Set
-    /// explicitly to opt out of the [`MIN_SAFE_MULTIPLE`] × [`channel_capacity`](Self::channel_capacity)
-    /// floor. Default: `None` — the derived floor.
-    #[default(None)]
-    pub min_safe_capacity_required: Option<ByteSize>,
 
     /// How each capacity field above converts to a wxHOPR stake. Feeds both the reactor and
     /// the balance recommendation via [`compute_funding_config`], so they can't disagree.
@@ -492,10 +478,8 @@ impl PacketTransport for EdgePacketTransport {
 ///
 /// Delegates to [`FundingConfig::resolve`] rather than reproducing the
 /// capacity-to-balance conversion: a local copy keeps compiling after the formula changes
-/// upstream, then reports figures the strategy disagrees with — and since
-/// `min_safe_balance_required` gates opening under `stop_when_unfunded`, reporting low
-/// leaves a node unable to open any channel. Honours whichever [`CapacitySizingMode`]
-/// `funding` carries, so it tracks [`SIZING_MODE`] without restating it.
+/// upstream, then reports figures the strategy disagrees with. Honours whichever
+/// [`CapacitySizingMode`] `funding` carries, so it tracks [`SIZING_MODE`] without restating it.
 fn resolve_funding(
     funding: &FundingConfig,
     ticket_price: HoprBalance,
@@ -504,9 +488,8 @@ fn resolve_funding(
     funding.resolve::<EdgePacketTransport>(ticket_price, win_prob)
 }
 
-/// [`FundingConfig`] for the sizing fields on `cfg`: each is passed through verbatim, `None`
-/// keeps the strategy's default, and an unset `min_safe_capacity_required` gets the
-/// [`MIN_SAFE_MULTIPLE`] floor instead. [`resolve_funding`] converts the result to wxHOPR.
+/// [`FundingConfig`] for the sizing fields on `cfg`: each is passed through verbatim and
+/// `None` keeps the strategy's default. [`resolve_funding`] converts the result to wxHOPR.
 pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<FundingConfig> {
     let defaults = FundingConfig::default();
     let initial_capacity = cfg.channel_capacity.unwrap_or(defaults.initial_capacity);
@@ -522,10 +505,6 @@ pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<Fu
 }
 
 /// wxHOPR the Safe must hold to fund `missing_channels` new channels.
-///
-/// Raised to `min_safe_balance_required`, which `stop_when_unfunded` gates every open on:
-/// a node funded to exactly `missing × initial` would sit at the threshold and never open
-/// its first channel.
 fn channel_stakes(
     ticket_price: HoprBalance,
     win_prob: f64,
@@ -1066,7 +1045,6 @@ mod tests {
         let cfg = IncentiveConfiguration::default();
         assert!(cfg.topup_capacity.is_none());
         assert!(cfg.lower_capacity_threshold.is_none());
-        assert!(cfg.min_safe_capacity_required.is_none());
         assert!(cfg.sizing_mode.is_none());
     }
 
@@ -1095,7 +1073,6 @@ mod tests {
             channel_capacity: Some(ByteSize::mib(640)),
             topup_capacity: Some(ByteSize::mib(384)),
             lower_capacity_threshold: Some(ByteSize::mib(128)),
-            min_safe_capacity_required: Some(ByteSize::mib(640)),
             sizing_mode: Some(CapacitySizingMode::Deterministic),
             ..Default::default()
         };
