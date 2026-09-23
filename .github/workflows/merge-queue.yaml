@@ -24,11 +24,7 @@ jobs:
   integration-throughput:
     name: Integration throughput # must match the required-check context exactly
     if: >-
-      (github.event_name == 'merge_group'
-        && github.event.merge_group.base_ref == 'refs/heads/main')
-      || (github.event_name == 'pull_request'
-        && github.base_ref == 'main'
-        && contains(github.event.pull_request.labels.*.name, 'run-integration'))
+      (github.event_name == 'merge_group' && github.event.merge_group.base_ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main' && contains(github.event.pull_request.labels.*.name, 'run-integration'))
     runs-on: depot-ubuntu-24.04
     # Under the queue's own 180 min check-response timeout; the dispatched run is capped at 150.
     timeout-minutes: 170
