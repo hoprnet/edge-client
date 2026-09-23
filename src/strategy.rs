@@ -85,18 +85,10 @@ pub struct IncentiveConfiguration {
     #[default(None)]
     pub channel_allowlist: Option<HashSet<Address>>,
 
-    /// Data volume a single channel should carry before it needs a top-up.
-    ///
-    /// Becomes the strategy's initial capacity as given, honoured verbatim — no rounding,
-    /// no floor.
-    ///
-    /// # A short Safe funds partially
-    ///
-    /// Raising this also raises what the node must hold to keep every channel issuing
-    /// tickets. A Safe that cannot cover a full top-up funds the largest whole number of
-    /// winning tickets it can and reports the strategy as degraded — so the shortfall
-    /// shows up as reduced throughput, not as a stopped node. Read the figure to fund off
-    /// [`minimum_balance_recommendation`] rather than deriving it here.
+    /// Data volume a single channel should carry before it needs a top-up, used verbatim
+    /// as the strategy's initial capacity. Raising it raises what the Safe must hold; a
+    /// Safe that falls short tops up partially and goes degraded rather than stopping.
+    /// Read the figure to fund off [`minimum_balance_recommendation`].
     ///
     /// Default: `None` — the strategy's own initial capacity.
     #[default(None)]
@@ -149,12 +141,9 @@ impl PacketTransport for EdgePacketTransport {
 
 /// The wxHOPR the strategy resolves `funding` to at the current ticket economics.
 ///
-/// Delegates to [`FundingConfig::resolve`] rather than reproducing the
-/// capacity-to-balance conversion: a local copy keeps compiling after the formula changes
-/// upstream, then reports figures the strategy disagrees with — and a recommendation below
-/// what the strategy locks leaves a node permanently short of a full top-up. Honours
-/// whichever [`CapacitySizingMode`] `funding` carries, so it tracks [`SIZING_MODE`] without
-/// restating it.
+/// Delegates to [`FundingConfig::resolve`] rather than reproducing the conversion: a local
+/// copy would keep compiling once the upstream formula changes, then quote figures the
+/// strategy disagrees with.
 fn resolve_funding(
     funding: &FundingConfig,
     ticket_price: HoprBalance,
@@ -163,8 +152,8 @@ fn resolve_funding(
     funding.resolve::<EdgePacketTransport>(ticket_price, win_prob)
 }
 
-/// [`FundingConfig`] for the sizing fields on `cfg`: each is passed through verbatim and
-/// `None` keeps the strategy's default. [`resolve_funding`] converts the result to wxHOPR.
+/// [`FundingConfig`] for the sizing fields on `cfg`: each passed through verbatim, `None`
+/// keeping the strategy's default.
 pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<FundingConfig> {
     let defaults = FundingConfig::default();
 
@@ -178,14 +167,11 @@ pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<Fu
     })
 }
 
-/// wxHOPR the Safe must hold to open `missing_channels` new channels and carry the whole
-/// population through its first round of top-ups.
+/// wxHOPR the Safe must hold to open `missing_channels` channels and carry the target
+/// population through one round of top-ups.
 ///
-/// Delegates to [`ResolvedFunding::required_safe_balance`], the strategy's own demand
-/// formula, asking it for one top-up per targeted channel on top of the opening stakes.
-/// Funding only the opens is the smaller and more literal figure, but a node funded to it
-/// exactly goes degraded the moment its first channel drains to the lower threshold; this
-/// recommendation is what a user funds once and walks away from.
+/// The top-up round is headroom: funded to the opens alone, a node goes degraded as soon as
+/// its first channel drains to the lower threshold.
 fn channel_stakes(
     ticket_price: HoprBalance,
     win_prob: f64,
@@ -597,8 +583,7 @@ mod tests {
 
     #[test]
     fn funding_config_passes_an_extreme_capacity_through_verbatim() {
-        // No local arithmetic sits between the request and the strategy any more, so even
-        // a capacity at the top of the range is carried rather than rejected.
+        // Nothing sits between the request and the strategy, so no capacity is rejected.
         let cfg = compute_funding_config(&IncentiveConfiguration {
             channel_capacity: Some(ByteSize::b(u64::MAX)),
             ..Default::default()
@@ -668,8 +653,8 @@ mod tests {
 
     #[test]
     fn balance_recommendation_matches_strategy_initial_stake() {
-        // The recommendation must equal what the strategy locks, never less: one opening
-        // stake per missing channel, plus one top-up round for the whole target population.
+        // One opening stake per missing channel, plus a top-up round for the target
+        // population. Never less than what the strategy locks.
         for price in [HoprBalance::new_base(10), HoprBalance::from(100u32)] {
             for p in [1.0, 0.01, 0.001] {
                 let sizing = IncentiveConfiguration::default();
@@ -699,9 +684,7 @@ mod tests {
 
     #[test]
     fn balance_recommendation_covers_a_first_round_of_topups() {
-        // A node funded to the opening stakes alone goes degraded the moment its first
-        // channel drains to the lower threshold, so the recommendation carries a top-up
-        // for every channel in the target population on top.
+        // The headroom is exactly one top-up per channel in the target population.
         let price = HoprBalance::new_base(10);
         let sizing = IncentiveConfiguration::default();
         for p in WIN_PROBS {
@@ -937,8 +920,8 @@ mod tests {
 
     #[test]
     fn compute_balance_recommendation_scales_by_missing_channels() {
-        // Only the opening stakes scale with the missing count; the top-up round is sized
-        // by the target population and stays put.
+        // Only the opening stakes scale with the missing count; the top-up round is fixed
+        // by the target population.
         let price = HoprBalance::new_base(10);
         let sizing = IncentiveConfiguration::default();
         let resolved = resolve_funding(&compute_funding_config(&sizing).unwrap(), price, 1.0);
