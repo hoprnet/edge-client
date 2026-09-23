@@ -419,13 +419,8 @@ pub struct IncentiveConfiguration {
     #[default(None)]
     pub channel_allowlist: Option<HashSet<Address>>,
 
-    /// Data volume a single channel should carry before it needs a top-up.
-    ///
-    /// Becomes the strategy's initial capacity as given, honoured verbatim — no rounding,
-    /// no floor. For what the Safe must hold to fund it, read
-    /// [`minimum_balance_recommendation`] rather than deriving it here.
-    ///
-    /// Default: `None` — the strategy's own initial capacity.
+    /// Initial capacity, honoured verbatim; the Safe figure comes from
+    /// [`minimum_balance_recommendation`]. Default: `None` — the strategy's own.
     #[default(None)]
     pub channel_capacity: Option<ByteSize>,
 
@@ -476,10 +471,8 @@ impl PacketTransport for EdgePacketTransport {
 
 /// The wxHOPR the strategy resolves `funding` to at the current ticket economics.
 ///
-/// Delegates to [`FundingConfig::resolve`] rather than reproducing the
-/// capacity-to-balance conversion: a local copy keeps compiling after the formula changes
-/// upstream, then reports figures the strategy disagrees with. Honours whichever
-/// [`CapacitySizingMode`] `funding` carries, so it tracks [`SIZING_MODE`] without restating it.
+/// Delegates to [`FundingConfig::resolve`]: a local copy would keep compiling after the
+/// formula changes upstream, then report figures the strategy disagrees with.
 fn resolve_funding(
     funding: &FundingConfig,
     ticket_price: HoprBalance,
@@ -488,8 +481,7 @@ fn resolve_funding(
     funding.resolve::<EdgePacketTransport>(ticket_price, win_prob)
 }
 
-/// [`FundingConfig`] for the sizing fields on `cfg`: each is passed through verbatim and
-/// `None` keeps the strategy's default. [`resolve_funding`] converts the result to wxHOPR.
+/// [`FundingConfig`] from `cfg`'s sizing fields, verbatim; `None` keeps the strategy's default.
 pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<FundingConfig> {
     let defaults = FundingConfig::default();
     let initial_capacity = cfg.channel_capacity.unwrap_or(defaults.initial_capacity);
