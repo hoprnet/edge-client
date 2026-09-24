@@ -342,7 +342,7 @@ pub struct PixEntryPool {
     pub state_path: Option<std::path::PathBuf>,
 
     /// Name of the environment variable holding the Curvy operator's private key; only read under
-    /// [`CurvySubmission::Operator`].
+    /// [`CurvySubmission::Operator`] or [`CurvyShielding::Portal`].
     pub operator_key_env: String,
 
     /// How the float reaches the vault. Upstream default: [`CurvyShielding::Direct`], straight
