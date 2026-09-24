@@ -560,7 +560,7 @@ pub fn xdai_fee_per_tx(max_fee_per_gas: u128) -> XDaiBalance {
 /// Everything still needed for this node to be fully up and running.
 #[derive(Clone, Copy, Debug)]
 pub struct BalanceRecommendation {
-    /// wxHOPR needed to stake the missing channels.
+    /// wxHOPR to stake the missing channels plus one top-up round for the target population.
     pub channel_stakes: HoprBalance,
     /// One-time fee still owed before the node can start (today the
     /// key-binding fee); zero once the key is bound on-chain.
@@ -627,7 +627,8 @@ pub struct Capacity {
     pub byte_capacity: u64,
 }
 
-/// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels.
+/// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels,
+/// with one top-up round of headroom for the target population.
 ///
 /// `costs` are the one-time startup costs (fee and remaining transactions)
 /// reported as their own fields next to the channel stakes; callers obtain
@@ -746,7 +747,7 @@ where
 }
 
 /// Returns the minimum recommended wxHOPR and xDAI for this node to open
-/// `cfg.target_open_channels` channels from scratch.
+/// `cfg.target_open_channels` channels from scratch and carry them through one top-up round.
 ///
 /// Queries ticket pricing from the safeless chain interactor so this can be
 /// called before the full node is started (e.g. during onboarding). The
