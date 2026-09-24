@@ -17,11 +17,6 @@
 
     rust-overlay.url = "github:oxalica/rust-overlay";
 
-    advisory-db = {
-      url = "github:rustsec/advisory-db";
-      flake = false;
-    };
-
     # Input dependency optimization
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
     nix-lib.inputs.nixpkgs.follows = "nixpkgs";
@@ -43,7 +38,6 @@
       nix-lib,
       rust-overlay,
       crane,
-      advisory-db,
       treefmt-nix,
       pre-commit,
       ...
@@ -335,13 +329,6 @@
               }
             );
 
-            # Audit dependencies
-            audit = craneLib.cargoAudit {
-              inherit src advisory-db;
-              # smartstring is unmaintained (RUSTSEC-2026-0249) with no patched version available
-              cargoAuditExtraArgs = "--ignore RUSTSEC-2026-0249";
-            };
-
             # Audit licenses
             licenses = craneLib.cargoDeny {
               inherit src;
@@ -420,6 +407,8 @@
           devShells.ci = pkgs.mkShell {
             packages = [ pkgs.zizmor ];
           };
+
+          apps.audit = nixLib.mkAuditApp { rustToolchainFile = ./rust-toolchain.toml; };
 
           apps.coverage-unit = {
             type = "app";

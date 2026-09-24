@@ -113,8 +113,6 @@ jobs:
           private-key: ${{ secrets.GH_APP_HOPRNET_BOT_PRIVATE_KEY }}
           owner: hoprnet
           repositories: hopr-integration-tests
-          # Only `gh run watch` / `gh run view` run on this token.
-          permission-actions: read
       - name: Watch the integration run (stage 1)
         id: wait1
         env:
@@ -149,8 +147,6 @@ jobs:
           private-key: ${{ secrets.GH_APP_HOPRNET_BOT_PRIVATE_KEY }}
           owner: hoprnet
           repositories: hopr-integration-tests
-          # Only `gh run watch` / `gh run view` run on this token.
-          permission-actions: read
       - name: Watch the integration run (stage 2)
         id: wait2
         if: steps.wait1.outputs.done != 'true'
@@ -184,8 +180,6 @@ jobs:
           private-key: ${{ secrets.GH_APP_HOPRNET_BOT_PRIVATE_KEY }}
           owner: hoprnet
           repositories: hopr-integration-tests
-          # Only `gh run watch` / `gh run view` run on this token.
-          permission-actions: read
       - name: Watch the integration run (stage 3)
         id: wait3
         if: steps.wait1.outputs.done != 'true' && steps.wait2.outputs.done != 'true'

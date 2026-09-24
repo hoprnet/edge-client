@@ -229,10 +229,16 @@ nix develop -c cargo nextest run --features pix-test
 nix develop -c cargo nextest run --features pix-curvy
 ```
 
-Full check suite (clippy, rustdoc, audit, licenses, tests) via Nix:
+Full check suite (clippy, rustdoc, licenses, tests) via Nix:
 
 ```bash
 nix flake check
+```
+
+Dependency audit (live RustSec DB, honours `.cargo/audit.toml`):
+
+```bash
+nix run .#audit
 ```
 
 Coverage (lcov at `coverage.lcov`):
