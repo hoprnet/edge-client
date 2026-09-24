@@ -3,6 +3,8 @@
 #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
 pub mod client;
 pub mod errors;
+pub mod telemetry;
+mod telemetry_common;
 
 #[cfg(feature = "blokli")]
 pub mod blokli;
