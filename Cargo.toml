@@ -85,7 +85,7 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "release/4.0",
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { version = "0.22.2", features = ["runtime-tokio"] }
+hopr-chain-connector = { version = "0.22.3", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.4.0" }
 # TEMPORARY: using Git branch instead of published versions for v4 compat
 hopr-strategy = { git = "https://github.com/hoprnet/hopr-strategy", branch = "compat/v4", features = [
@@ -103,7 +103,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 
 [dev-dependencies]
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests.
-hopr-chain-connector = { version = "0.22.2", features = [
+hopr-chain-connector = { version = "0.22.3", features = [
   "runtime-tokio",
   "testing",
 ] }
