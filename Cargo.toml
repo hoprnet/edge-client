@@ -42,7 +42,7 @@ pix = ["runtime-tokio", "dep:validator"]
 # secp256k1 deposit addresses -- tests/demos only; mutually exclusive with pix-curvy.
 pix-test = ["pix", "hopr-lib/pix-secp256k1", "hopr-strategy/strategy-pix-test"]
 
-# Baby JubJub (anonymous) deposit addresses -- stub, panics on first deposit; wired now so it stays linted; mutually exclusive with pix-test.
+# Baby JubJub (anonymous) deposit addresses, settled through the Curvy privacy pool; mutually exclusive with pix-test.
 pix-curvy = ["pix", "hopr-lib/pix-bjj", "hopr-strategy/strategy-pix-curvy"]
 
 # tokio-console profiling of the `edgli` binary (see init_logger in src/main.rs). Build with

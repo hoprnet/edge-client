@@ -162,15 +162,13 @@ pub struct Edgli {
     hopr: Arc<HoprEdgeClient>,
     /// The node's packet-layer public key, stored at construction for peer-ID access.
     packet_public_key: OffchainPublicKey,
-    /// The node's chain keypair, which the plain PIX deposit pool signs with.
+    /// The node's chain keypair, which both PIX deposit pools sign with: the plain pool its sweep's
+    /// gas top-up, the Curvy pool its direct shield through the Safe module.
     ///
-    /// Held because the pool cannot get it any other way: `HoprEdgeClient` keeps a
+    /// Held because the pools cannot get it any other way: `HoprEdgeClient` keeps a
     /// `NodeOnchainIdentity`, not the keypair, and exposes no accessor. Storing it is what keeps
     /// [`Edgli::run_reactor_from_cfg`] from having to take a private key as an argument.
-    ///
-    /// Gated on the pool that reads it rather than on `pix`, so a `pix-curvy` build does not carry
-    /// a key nothing in it can use — that pool settles to Baby JubJub addresses and signs nothing.
-    #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+    #[cfg(feature = "pix")]
     chain_key: ChainKeypair,
 }
 
@@ -322,7 +320,7 @@ impl Edgli {
         Ok(Self {
             hopr: node,
             packet_public_key,
-            #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+            #[cfg(feature = "pix")]
             chain_key: hopr_keys.chain_key,
         })
     }
@@ -555,10 +553,12 @@ impl Edgli {
                             self.chain_key.clone(),
                             sub_cfg.pool.to_upstream(),
                         )?;
+                        // The pool checks `chain_key` against the node's identity at build time; it signs the direct shield, which goes through the Safe module.
                         #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
                         let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
                             .build_curvy::<_, SpecDepositAddress>(
                             Arc::clone(&node),
+                            self.chain_key.clone(),
                             sub_cfg.pool.to_upstream(),
                         )?;
                         Ok(built)

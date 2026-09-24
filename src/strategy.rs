@@ -67,7 +67,7 @@ compile_error!(
 #[cfg(all(feature = "pix", not(any(feature = "pix-test", feature = "pix-curvy"))))]
 compile_error!(
     "the `pix` feature selects no deposit pool on its own and is not meant to be enabled \
-     directly. Enable `pix-curvy` (Baby JubJub, anonymous — currently a stub) or `pix-test` \
+     directly. Enable `pix-curvy` (Baby JubJub, anonymous) or `pix-test` \
      (secp256k1, visible on-chain, for tests and demos), each of which turns on `pix` as well."
 );
 
@@ -81,13 +81,16 @@ compile_error!(
 /// `pix`, and so would break the doc build that the `docs-pix-*` checks exist to keep clean.
 #[non_exhaustive]
 pub enum EdgeStrategyKind {
-    /// Boxed because [`ChannelLifecycleConfig`] is some 560 bytes against `Pix`'s few dozen, and
-    /// every element of a `MultiStrategyConfig` would otherwise be sized for the largest. `hoprd`
-    /// boxes the same variant of its own strategy enum for the same reason.
+    /// Boxed because [`ChannelLifecycleConfig`] is some 560 bytes, and every element of a
+    /// `MultiStrategyConfig` would otherwise be sized for the largest. `hoprd` boxes the same
+    /// variant of its own strategy enum for the same reason.
     ChannelLifecycle(Box<ChannelLifecycleConfig>),
     /// Pays the Exit for the traffic it delivers. See [`PixEntryConfig`].
+    ///
+    /// Boxed for the same reason as `ChannelLifecycle`: under `pix-curvy` the pool half carries the
+    /// Curvy deployment's endpoints and is some 520 bytes.
     #[cfg(feature = "pix")]
-    Pix(PixEntryConfig),
+    Pix(Box<PixEntryConfig>),
 }
 
 /// Entry-side PIX settlement configuration.
@@ -295,28 +298,116 @@ impl PixEntryPool {
 
 /// Entry-side knobs of the **Baby JubJub** deposit pool (`pix-curvy`).
 ///
-/// One field, because upstream's `CurvyDepositPoolConfig` has one: it carries "only what the
-/// `DepositPool` contract itself forces — a pool owns the deadline on the future it returns from
-/// `notify_deposit`" and stays otherwise empty until the settlement design says what belongs there.
-/// Nothing here is Exit-side, so unlike the secp256k1 pool there is nothing to leave out.
+/// Mirrors upstream's `CurvyDepositPoolConfig` field for field. Unlike the secp256k1 pool there is
+/// nothing to leave out: the Entry shields its float into the Curvy vault, allocates each deposit
+/// out of it and submits the proofs, so every knob — endpoints, submission path, token id, state
+/// file — is one the Entry itself reads.
 ///
-/// Expect this to grow when the pool is implemented.
+/// Upstream applies its `HOPRD_CURVY_*` environment overrides (shielding, submission, relayer URL,
+/// note source, indexer URL, token, initial funding) on top of this when the pool is built, and
+/// validates the result there rather than here: a config that omits `relayer_url` because the
+/// environment switches `submission` to `operator` is legal.
+///
+/// Both conversions destructure rather than use `..Default::default()`, so a field upstream adds is
+/// a compile error here instead of a knob silently pinned to its default.
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PixEntryPool {
-    /// How long the pool waits for the deposit before resolving to an error.
+    /// Blokli endpoint the pool discovers the Curvy deployment through, reads the note index from
+    /// and submits its transactions to.
+    ///
+    /// Upstream default: `http://localhost:8080/`, a placeholder — point it at the same Blokli the
+    /// node uses.
+    pub blokli_url: url::Url,
+
+    /// How long the pool waits for an allocation to be committed and final before resolving to an
+    /// error. The first allocation of a run also carries the shield, so size it for that.
     ///
     /// Upstream default: 60 s.
     pub max_deposit_tracking_time: Duration,
+
+    /// The Curvy vault's token id for wxHOPR. Upstream default: 3 (the local Curvy deployment);
+    /// on Gnosis it is 2.
+    pub token: u64,
+
+    /// wxHOPR shielded from the Safe into the vault on the first deposit, gross of shield fees.
+    /// Deposits are allocated out of it until it runs out; the pool does not top itself up.
+    ///
+    /// Upstream default: 100 wxHOPR.
+    pub initial_funding: HoprBalance,
+
+    /// Where the pool keeps its durable state. Must be the same path on every start.
+    ///
+    /// Upstream default: `curvy-pix-<node address>.redb` in the working directory.
+    pub state_path: Option<std::path::PathBuf>,
+
+    /// Name of the environment variable holding the Curvy operator's private key; only read under
+    /// [`CurvySubmission::Operator`] or [`CurvyShielding::Portal`].
+    pub operator_key_env: String,
+
+    /// How the float reaches the vault. Upstream default: [`CurvyShielding::Direct`], straight
+    /// from the Safe.
+    pub shielding: CurvyShielding,
+
+    /// How proofs reach the chain. Upstream default: [`CurvySubmission::Relayer`].
+    pub submission: CurvySubmission,
+
+    /// Base URL of the Curvy relayer. Required under [`CurvySubmission::Relayer`]; deliberately
+    /// without a default upstream.
+    pub relayer_url: Option<url::Url>,
+
+    /// Where notes are read from. Upstream default: [`CurvyNoteSource::Blokli`].
+    pub note_source: CurvyNoteSource,
+
+    /// Base URL of Curvy's indexer. Required under [`CurvyNoteSource::CurvyIndexer`].
+    pub curvy_indexer_url: Option<url::Url>,
+
+    /// The Safe MultiSend the node's module delegate-calls to bundle the vault approval with a
+    /// direct shield. Upstream default: the canonical deterministic deployment.
+    pub safe_multisend_address: Address,
+}
+
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+pub use hopr_strategy::pix::pools::curvy::{CurvyNoteSource, CurvyShielding, CurvySubmission};
+
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+impl From<hopr_strategy::pix::pools::curvy::PoolConfig> for PixEntryPool {
+    fn from(upstream: hopr_strategy::pix::pools::curvy::PoolConfig) -> Self {
+        let hopr_strategy::pix::pools::curvy::PoolConfig {
+            blokli_url,
+            max_deposit_tracking_time,
+            token,
+            initial_funding,
+            state_path,
+            operator_key_env,
+            shielding,
+            submission,
+            relayer_url,
+            note_source,
+            curvy_indexer_url,
+            safe_multisend_address,
+        } = upstream;
+        Self {
+            blokli_url,
+            max_deposit_tracking_time,
+            token,
+            initial_funding,
+            state_path,
+            operator_key_env,
+            shielding,
+            submission,
+            relayer_url,
+            note_source,
+            curvy_indexer_url,
+            safe_multisend_address,
+        }
+    }
 }
 
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
 impl Default for PixEntryPool {
     fn default() -> Self {
-        let upstream = hopr_strategy::pix::pools::curvy::PoolConfig::default();
-        Self {
-            max_deposit_tracking_time: upstream.max_deposit_tracking_time,
-        }
+        hopr_strategy::pix::pools::curvy::PoolConfig::default().into()
     }
 }
 
@@ -324,8 +415,33 @@ impl Default for PixEntryPool {
 impl PixEntryPool {
     /// The upstream form. Every field is carried, since none of them is Exit-side.
     pub(crate) fn to_upstream(&self) -> hopr_strategy::pix::pools::curvy::PoolConfig {
+        let Self {
+            blokli_url,
+            max_deposit_tracking_time,
+            token,
+            initial_funding,
+            state_path,
+            operator_key_env,
+            shielding,
+            submission,
+            relayer_url,
+            note_source,
+            curvy_indexer_url,
+            safe_multisend_address,
+        } = self.clone();
         hopr_strategy::pix::pools::curvy::PoolConfig {
-            max_deposit_tracking_time: self.max_deposit_tracking_time,
+            blokli_url,
+            max_deposit_tracking_time,
+            token,
+            initial_funding,
+            state_path,
+            operator_key_env,
+            shielding,
+            submission,
+            relayer_url,
+            note_source,
+            curvy_indexer_url,
+            safe_multisend_address,
         }
     }
 }
@@ -1528,26 +1644,45 @@ mod tests {
         );
     }
 
-    /// The Baby JubJub pool has exactly one knob today. If upstream grows it while implementing
-    /// settlement, this is where that shows up.
+    /// The Baby JubJub pool carries every upstream field, so the defaults must round-trip exactly.
     #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
     #[test]
     fn pix_entry_pool_defaults_track_the_curvy_pool() {
-        let upstream = hopr_strategy::pix::pools::curvy::PoolConfig::default();
         assert_eq!(
-            PixEntryPool::default().max_deposit_tracking_time,
-            upstream.max_deposit_tracking_time
+            PixEntryPool::default().to_upstream(),
+            hopr_strategy::pix::pools::curvy::PoolConfig::default()
         );
+    }
 
-        // ...and an override reaches upstream rather than being dropped on the way.
-        let overridden = PixEntryPool {
-            max_deposit_tracking_time: Duration::from_secs(30),
+    /// An override reaches upstream rather than being dropped on the way — one per kind of field
+    /// the Entry has to set for a real deployment.
+    #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+    #[test]
+    fn pix_entry_pool_curvy_overrides_reach_upstream() {
+        let blokli: url::Url = "http://blokli.example:8080/".parse().unwrap();
+        let relayer: url::Url = "https://api.curvy.dev/".parse().unwrap();
+        let upstream = PixEntryPool {
+            blokli_url: blokli.clone(),
+            max_deposit_tracking_time: Duration::from_secs(300),
+            token: 2,
+            initial_funding: "25 wxHOPR".parse().unwrap(),
+            state_path: Some("/var/lib/node/curvy.redb".into()),
+            submission: CurvySubmission::Relayer,
+            relayer_url: Some(relayer.clone()),
+            ..Default::default()
         }
         .to_upstream();
+
+        assert_eq!(upstream.blokli_url, blokli);
+        assert_eq!(upstream.max_deposit_tracking_time, Duration::from_secs(300));
+        assert_eq!(upstream.token, 2);
+        assert_eq!(upstream.initial_funding, "25 wxHOPR".parse().unwrap());
         assert_eq!(
-            overridden.max_deposit_tracking_time,
-            Duration::from_secs(30)
+            upstream.state_path.as_deref(),
+            Some(std::path::Path::new("/var/lib/node/curvy.redb"))
         );
+        assert_eq!(upstream.submission, CurvySubmission::Relayer);
+        assert_eq!(upstream.relayer_url, Some(relayer));
     }
 
     /// The debounce windows are the ones to watch: a bare `serde(default)` on them upstream once

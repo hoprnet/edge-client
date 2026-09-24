@@ -19,14 +19,14 @@ fn readme_pix_snippet_compiles_and_runs() -> anyhow::Result<()> {
     let mut strategies = default_strategy_cfg(&IncentiveConfiguration::default())?;
     strategies
         .strategies
-        .push(EdgeStrategyKind::Pix(PixEntryConfig {
+        .push(EdgeStrategyKind::Pix(Box::new(PixEntryConfig {
             strategy: PixEntryStrategy {
                 price_per_byte: "0.0001 wxHOPR".parse()?,
                 max_ssa_allocation: "10 wxHOPR".parse()?,
                 ..Default::default()
             },
             ..Default::default()
-        }));
+        })));
     assert_eq!(strategies.strategies.len(), 2);
 
     // Ask: with_pix/pix_ssa_quota need a live node; both wrap the free function below.
