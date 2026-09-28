@@ -298,18 +298,27 @@ impl PixEntryPool {
 
 /// Entry-side knobs of the **Baby JubJub** deposit pool (`pix-curvy`).
 ///
-/// Mirrors upstream's `CurvyDepositPoolConfig` field for field. Unlike the secp256k1 pool there is
+/// Carries every field of upstream's `CurvyDepositPoolConfig`. Unlike the secp256k1 pool there is
 /// nothing to leave out: the Entry shields its float into the Curvy vault, allocates each deposit
 /// out of it and submits the proofs, so every knob — endpoints, submission path, token id, state
 /// file — is one the Entry itself reads.
 ///
-/// Upstream applies its `HOPRD_CURVY_*` environment overrides (shielding, submission, relayer URL,
-/// note source, indexer URL, token, initial funding) on top of this when the pool is built, and
-/// validates the result there rather than here: a config that omits `relayer_url` because the
-/// environment switches `submission` to `operator` is legal.
+/// Upstream keeps each mode and the URL it needs as two fields (`submission` + `relayer_url`,
+/// `note_source` + `curvy_indexer_url`) and checks the pairing only when the pool is built. Here
+/// the URL lives in the variant that needs it — [`PixCurvySubmission`], [`PixCurvyNoteSource`] —
+/// so a relayed or indexer-backed configuration without its endpoint does not compile.
 ///
-/// Both conversions destructure rather than use `..Default::default()`, so a field upstream adds is
-/// a compile error here instead of a knob silently pinned to its default.
+/// **The default submission mode differs from upstream:** it is [`PixCurvySubmission::Operator`]
+/// here, where upstream defaults to `Relayer`. Upstream's `Relayer` default comes without a
+/// relayer URL, and a `Relayer` variant that carries its URL has nothing to stand in for that. See
+/// [`Self::submission`]. A production Entry sets `submission` explicitly either way.
+///
+/// Upstream still applies its `HOPRD_CURVY_*` environment overrides (shielding, submission, relayer
+/// URL, note source, indexer URL, token, initial funding) on top of this when the pool is built, and
+/// validates the result there.
+///
+/// `Default` and the conversion to upstream both destructure rather than using `..`, so a field
+/// upstream adds is a compile error here instead of a knob silently pinned to its default.
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PixEntryPool {
@@ -342,25 +351,25 @@ pub struct PixEntryPool {
     pub state_path: Option<std::path::PathBuf>,
 
     /// Name of the environment variable holding the Curvy operator's private key; only read under
-    /// [`CurvySubmission::Operator`] or [`CurvyShielding::Portal`].
+    /// [`PixCurvySubmission::Operator`] or [`CurvyShielding::Portal`].
     pub operator_key_env: String,
 
     /// How the float reaches the vault. Upstream default: [`CurvyShielding::Direct`], straight
     /// from the Safe.
     pub shielding: CurvyShielding,
 
-    /// How proofs reach the chain. Upstream default: [`CurvySubmission::Relayer`].
-    pub submission: CurvySubmission,
+    /// How proofs reach the chain.
+    ///
+    /// Default: [`PixCurvySubmission::Operator`], which differs from upstream's `Relayer`. Upstream
+    /// deliberately has no default relayer URL, since a misconfigured node that falls back to the
+    /// production relayer is worse than one that refuses to start. A variant that carries its URL
+    /// cannot express "relayer, URL unset", so the default is the mode that needs no URL. It still
+    /// refuses to start until the operator key is set, so a node that was never configured keeps
+    /// failing at startup, as it does upstream.
+    pub submission: PixCurvySubmission,
 
-    /// Base URL of the Curvy relayer. Required under [`CurvySubmission::Relayer`]; deliberately
-    /// without a default upstream.
-    pub relayer_url: Option<url::Url>,
-
-    /// Where notes are read from. Upstream default: [`CurvyNoteSource::Blokli`].
-    pub note_source: CurvyNoteSource,
-
-    /// Base URL of Curvy's indexer. Required under [`CurvyNoteSource::CurvyIndexer`].
-    pub curvy_indexer_url: Option<url::Url>,
+    /// Where notes are read from. Upstream default: [`PixCurvyNoteSource::Blokli`].
+    pub note_source: PixCurvyNoteSource,
 
     /// The Safe MultiSend the node's module delegate-calls to bundle the vault approval with a
     /// direct shield. Upstream default: the canonical deterministic deployment.
@@ -368,11 +377,72 @@ pub struct PixEntryPool {
 }
 
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
-pub use hopr_strategy::pix::pools::curvy::{CurvyNoteSource, CurvyShielding, CurvySubmission};
+pub use hopr_strategy::pix::pools::curvy::CurvyShielding;
+
+/// How the Curvy pool gets its proofs on chain: upstream's `CurvySubmission`, with the relayer's
+/// URL held by the variant that needs it.
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PixCurvySubmission {
+    /// Hand each proof to the Curvy relayer at this base URL (`https://api.curvy.box` in
+    /// production, `https://api.curvy.dev` for staging). The relayer submits and pays gas, and the
+    /// node never appears as a transaction sender.
+    Relayer(url::Url),
+    /// Sign and submit every proof locally with the Curvy operator key named by
+    /// [`PixEntryPool::operator_key_env`].
+    Operator,
+}
+
+/// Where the Curvy pool reads notes from: upstream's `CurvyNoteSource`, with the indexer's URL
+/// held by the variant that needs it.
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum PixCurvyNoteSource {
+    /// Blokli's own Curvy index, read through [`PixEntryPool::blokli_url`].
+    #[default]
+    Blokli,
+    /// Curvy's shared indexer for the deployment, at this base URL (the same gateway host as the
+    /// relayer). Only notes are read from it; Blokli still serves everything else.
+    CurvyIndexer(url::Url),
+}
 
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
-impl From<hopr_strategy::pix::pools::curvy::PoolConfig> for PixEntryPool {
-    fn from(upstream: hopr_strategy::pix::pools::curvy::PoolConfig) -> Self {
+impl PixCurvySubmission {
+    fn to_upstream(
+        &self,
+    ) -> (
+        hopr_strategy::pix::pools::curvy::CurvySubmission,
+        Option<url::Url>,
+    ) {
+        use hopr_strategy::pix::pools::curvy::CurvySubmission;
+        match self {
+            Self::Relayer(url) => (CurvySubmission::Relayer, Some(url.clone())),
+            Self::Operator => (CurvySubmission::Operator, None),
+        }
+    }
+}
+
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+impl PixCurvyNoteSource {
+    fn to_upstream(
+        &self,
+    ) -> (
+        hopr_strategy::pix::pools::curvy::CurvyNoteSource,
+        Option<url::Url>,
+    ) {
+        use hopr_strategy::pix::pools::curvy::CurvyNoteSource;
+        match self {
+            Self::Blokli => (CurvyNoteSource::Blokli, None),
+            Self::CurvyIndexer(url) => (CurvyNoteSource::CurvyIndexer, Some(url.clone())),
+        }
+    }
+}
+
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+impl Default for PixEntryPool {
+    /// Upstream's defaults, except `submission` (see the field). The URL-carrying pair is read
+    /// through the `_` bindings only to keep the destructure exhaustive.
+    fn default() -> Self {
         let hopr_strategy::pix::pools::curvy::PoolConfig {
             blokli_url,
             max_deposit_tracking_time,
@@ -381,12 +451,12 @@ impl From<hopr_strategy::pix::pools::curvy::PoolConfig> for PixEntryPool {
             state_path,
             operator_key_env,
             shielding,
-            submission,
-            relayer_url,
-            note_source,
-            curvy_indexer_url,
+            submission: _,
+            relayer_url: _,
+            note_source: _,
+            curvy_indexer_url: _,
             safe_multisend_address,
-        } = upstream;
+        } = hopr_strategy::pix::pools::curvy::PoolConfig::default();
         Self {
             blokli_url,
             max_deposit_tracking_time,
@@ -395,19 +465,10 @@ impl From<hopr_strategy::pix::pools::curvy::PoolConfig> for PixEntryPool {
             state_path,
             operator_key_env,
             shielding,
-            submission,
-            relayer_url,
-            note_source,
-            curvy_indexer_url,
+            submission: PixCurvySubmission::Operator,
+            note_source: PixCurvyNoteSource::Blokli,
             safe_multisend_address,
         }
-    }
-}
-
-#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
-impl Default for PixEntryPool {
-    fn default() -> Self {
-        hopr_strategy::pix::pools::curvy::PoolConfig::default().into()
     }
 }
 
@@ -424,11 +485,11 @@ impl PixEntryPool {
             operator_key_env,
             shielding,
             submission,
-            relayer_url,
             note_source,
-            curvy_indexer_url,
             safe_multisend_address,
         } = self.clone();
+        let (submission, relayer_url) = submission.to_upstream();
+        let (note_source, curvy_indexer_url) = note_source.to_upstream();
         hopr_strategy::pix::pools::curvy::PoolConfig {
             blokli_url,
             max_deposit_tracking_time,
@@ -1644,14 +1705,58 @@ mod tests {
         );
     }
 
-    /// The Baby JubJub pool carries every upstream field, so the defaults must round-trip exactly.
+    /// The Baby JubJub pool carries every upstream field, so the defaults must round-trip exactly
+    /// except for `submission`. Upstream's `Relayer` needs a URL it deliberately does not default,
+    /// so a variant that carries its URL has no equivalent, and the default is `Operator` instead.
     #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
     #[test]
     fn pix_entry_pool_defaults_track_the_curvy_pool() {
+        use hopr_strategy::pix::pools::curvy::{CurvySubmission, PoolConfig};
+
+        let upstream = PoolConfig::default();
+        assert_eq!(upstream.submission, CurvySubmission::Relayer);
+        assert_eq!(upstream.relayer_url, None);
+
         assert_eq!(
             PixEntryPool::default().to_upstream(),
-            hopr_strategy::pix::pools::curvy::PoolConfig::default()
+            PoolConfig {
+                submission: CurvySubmission::Operator,
+                ..upstream
+            }
         );
+    }
+
+    /// Each URL reaches upstream alongside the mode that needs it, and the mode that does not
+    /// need one sends none.
+    #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+    #[test]
+    fn pix_curvy_modes_carry_their_urls_to_upstream() {
+        use hopr_strategy::pix::pools::curvy::{CurvyNoteSource, CurvySubmission};
+
+        let relayer: url::Url = "https://api.curvy.dev/".parse().unwrap();
+        let indexer: url::Url = "https://indexer.curvy.dev/".parse().unwrap();
+
+        let upstream = PixEntryPool {
+            submission: PixCurvySubmission::Relayer(relayer.clone()),
+            note_source: PixCurvyNoteSource::CurvyIndexer(indexer.clone()),
+            ..Default::default()
+        }
+        .to_upstream();
+        assert_eq!(upstream.submission, CurvySubmission::Relayer);
+        assert_eq!(upstream.relayer_url, Some(relayer));
+        assert_eq!(upstream.note_source, CurvyNoteSource::CurvyIndexer);
+        assert_eq!(upstream.curvy_indexer_url, Some(indexer));
+
+        let upstream = PixEntryPool {
+            submission: PixCurvySubmission::Operator,
+            note_source: PixCurvyNoteSource::Blokli,
+            ..Default::default()
+        }
+        .to_upstream();
+        assert_eq!(upstream.submission, CurvySubmission::Operator);
+        assert_eq!(upstream.relayer_url, None);
+        assert_eq!(upstream.note_source, CurvyNoteSource::Blokli);
+        assert_eq!(upstream.curvy_indexer_url, None);
     }
 
     /// An override reaches upstream rather than being dropped on the way — one per kind of field
@@ -1667,8 +1772,7 @@ mod tests {
             token: 2,
             initial_funding: "25 wxHOPR".parse().unwrap(),
             state_path: Some("/var/lib/node/curvy.redb".into()),
-            submission: CurvySubmission::Relayer,
-            relayer_url: Some(relayer.clone()),
+            submission: PixCurvySubmission::Relayer(relayer.clone()),
             ..Default::default()
         }
         .to_upstream();
@@ -1681,7 +1785,10 @@ mod tests {
             upstream.state_path.as_deref(),
             Some(std::path::Path::new("/var/lib/node/curvy.redb"))
         );
-        assert_eq!(upstream.submission, CurvySubmission::Relayer);
+        assert_eq!(
+            upstream.submission,
+            hopr_strategy::pix::pools::curvy::CurvySubmission::Relayer
+        );
         assert_eq!(upstream.relayer_url, Some(relayer));
     }
 

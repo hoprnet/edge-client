@@ -128,7 +128,10 @@ use edgli::strategy::{EdgeStrategyKind, IncentiveConfiguration, default_strategy
 use edgli::hopr_lib::HoprSessionClientConfig;
 
 // Pay: add the PIX strategy to the reactor. `strategy` is pricing and is the same whichever pool
-// the build selected; `pool` is that pool's own knobs, and its defaults are usually fine.
+// the build selected; `pool` is that pool's own knobs. Under `pix-curvy` its defaults are not
+// enough to start: the default `Operator` submission needs the operator key in
+// `HOPRD_CURVY_OPERATOR_PRIVATE_KEY`, or set `submission: PixCurvySubmission::Relayer(url)`.
+// The `pix-curvy` section below lists the rest of what a Curvy deployment needs.
 let mut strategies = default_strategy_cfg(&IncentiveConfiguration::default())?;
 strategies.strategies.push(EdgeStrategyKind::Pix(Box::new(PixEntryConfig {
     strategy: PixEntryStrategy {
@@ -198,8 +201,10 @@ submitted through the Curvy relayer. When the float runs out, deposits fail; the
 pool does not top itself up.
 
 So the Entry needs a Curvy deployment to talk to: `blokli_url` (a Blokli that
-indexes Curvy), `relayer_url` under the default relayer submission, and the
-vault's `token` id for wxHOPR, which is 2 on Gnosis rather than the default 3.
+indexes Curvy), a `submission` mode (`PixCurvySubmission::Relayer(url)` for the
+Curvy relayer, or `Operator` with the operator key in the environment; the
+default is `Operator`, because a relayer URL is deliberately not defaulted), and
+the vault's `token` id for wxHOPR, which is 2 on Gnosis rather than the default 3.
 Its Safe module must also have the Curvy aggregator scoped as a target, or the
 first shield reverts. The pool reads its `HOPRD_CURVY_*` environment overrides
 on top of `PixEntryPool` when the strategy is built.
