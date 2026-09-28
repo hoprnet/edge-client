@@ -197,7 +197,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -224,7 +224,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -274,7 +274,7 @@ dependencies = [
  "futures",
  "futures-util",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -297,7 +297,7 @@ dependencies = [
  "futures",
  "futures-util",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "wasmtimer",
@@ -342,7 +342,7 @@ dependencies = [
  "alloy-rlp",
  "crc",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -368,7 +368,7 @@ dependencies = [
  "borsh",
  "k256 0.13.4",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -382,7 +382,7 @@ dependencies = [
  "borsh",
  "once_cell",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -396,7 +396,7 @@ dependencies = [
  "borsh",
  "once_cell",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -456,7 +456,7 @@ dependencies = [
  "alloy-provider 2.4.2",
  "alloy-sol-types",
  "async-trait",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -525,7 +525,7 @@ dependencies = [
  "http",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -540,7 +540,7 @@ dependencies = [
  "http",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -567,7 +567,7 @@ dependencies = [
  "futures-utils-wasm",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -593,7 +593,7 @@ dependencies = [
  "futures-utils-wasm",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -639,7 +639,7 @@ dependencies = [
  "rand 0.8.8",
  "serde_json",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "url",
 ]
@@ -705,7 +705,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "url",
@@ -747,7 +747,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "url",
@@ -902,7 +902,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -923,7 +923,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -960,7 +960,7 @@ dependencies = [
  "either",
  "elliptic-curve 0.13.8",
  "k256 0.13.4",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -975,7 +975,7 @@ dependencies = [
  "either",
  "elliptic-curve 0.13.8",
  "k256 0.13.4",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -991,7 +991,7 @@ dependencies = [
  "async-trait",
  "k256 0.13.4",
  "rand 0.8.8",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1007,7 +1007,7 @@ dependencies = [
  "async-trait",
  "k256 0.13.4",
  "rand 0.8.8",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1098,7 +1098,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tower",
  "tracing",
@@ -1121,7 +1121,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tower",
  "tracing",
@@ -1173,7 +1173,7 @@ dependencies = [
  "nybbles",
  "serde",
  "smallvec",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -1796,7 +1796,7 @@ dependencies = [
  "nom 7.1.3",
  "num-traits",
  "rusticata-macros",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "time",
 ]
 
@@ -2323,7 +2323,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smart-default",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "url",
 ]
@@ -2641,7 +2641,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3139,7 +3139,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "rayon",
  "sha2 0.11.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3184,7 +3184,7 @@ dependencies = [
  "ruzstd",
  "serde_json",
  "sha2 0.11.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3434,7 +3434,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3680,17 +3680,17 @@ dependencies = [
  "hopr-ticket-manager",
  "hopr-transport-p2p",
  "mimalloc",
- "multiaddr",
- "opentelemetry",
+ "multiaddr 0.19.0",
+ "opentelemetry 0.33.0",
  "opentelemetry-otlp",
- "opentelemetry_sdk",
+ "opentelemetry_sdk 0.33.0",
  "serde",
  "serde_json",
  "serde_yaml",
  "signal-hook",
  "smart-default",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4576,7 +4576,7 @@ dependencies = [
  "ipnet",
  "jni",
  "rand 0.10.3",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tinyvec",
  "tokio",
  "tracing",
@@ -4602,7 +4602,7 @@ dependencies = [
  "rand 0.9.5",
  "ring",
  "socket2 0.5.10",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tinyvec",
  "tokio",
  "tracing",
@@ -4623,7 +4623,7 @@ dependencies = [
  "prefix-trie",
  "rand 0.10.3",
  "ring",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tinyvec",
  "tracing",
  "url",
@@ -4645,7 +4645,7 @@ dependencies = [
  "rand 0.9.5",
  "resolv-conf",
  "smallvec",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
@@ -4671,7 +4671,7 @@ dependencies = [
  "resolv-conf",
  "smallvec",
  "system-configuration",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
@@ -4725,11 +4725,11 @@ dependencies = [
  "futures",
  "futures-concurrency",
  "hopr-types",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "serde",
  "serde_bytes",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -4746,7 +4746,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
@@ -4778,7 +4778,7 @@ dependencies = [
  "serde_json",
  "smart-default",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "validator",
 ]
@@ -4798,7 +4798,7 @@ dependencies = [
  "serde_bytes",
  "strum",
  "subtle",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -4853,7 +4853,7 @@ dependencies = [
  "serde_with",
  "smart-default",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tracing",
@@ -4877,7 +4877,7 @@ dependencies = [
  "petgraph",
  "rand 0.10.3",
  "smallvec",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -4891,7 +4891,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4918,7 +4918,7 @@ dependencies = [
  "serde_with",
  "smart-default",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "validator",
 ]
@@ -4940,7 +4940,7 @@ dependencies = [
  "serde_bytes",
  "smart-default",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "validator",
  "vsss-rs",
@@ -4972,7 +4972,7 @@ dependencies = [
  "serde_bytes",
  "smart-default",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
@@ -4990,7 +4990,7 @@ dependencies = [
  "serde",
  "serde_cbor_2",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5036,7 +5036,7 @@ dependencies = [
  "statrs",
  "strum",
  "subtle",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "validator",
@@ -5062,7 +5062,7 @@ dependencies = [
  "redb",
  "strum",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -5098,7 +5098,7 @@ dependencies = [
  "lazy_static",
  "libp2p",
  "moka",
- "multiaddr",
+ "multiaddr 0.18.2",
  "proc-macro-regex",
  "rand 0.10.3",
  "rand_distr",
@@ -5106,7 +5106,7 @@ dependencies = [
  "serde",
  "smart-default",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio-util",
  "tracing",
  "validator",
@@ -5125,7 +5125,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "smart-default",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -5144,10 +5144,10 @@ dependencies = [
  "hopr-utilities 0.12.0",
  "libp2p",
  "libp2p-stream",
- "multiaddr",
+ "multiaddr 0.18.2",
  "pin-project",
  "quinn-udp 0.6.2",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -5172,7 +5172,7 @@ dependencies = [
  "serde",
  "smart-default",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "validator",
 ]
@@ -5206,7 +5206,7 @@ dependencies = [
  "serde_repr",
  "smart-default",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
@@ -5219,7 +5219,7 @@ dependencies = [
  "hopr-protocol-app",
  "serde",
  "smart-default",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "validator",
 ]
 
@@ -5257,12 +5257,12 @@ dependencies = [
  "hybrid-array",
  "k256 0.14.0",
  "lazy_static",
- "libp2p-identity",
- "multiaddr",
+ "libp2p-identity 0.2.14",
+ "multiaddr 0.18.2",
  "num_enum",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "opentelemetry-prometheus-text-exporter",
- "opentelemetry_sdk",
+ "opentelemetry_sdk 0.32.1",
  "poly1305 0.9.1",
  "primitive-types 0.14.0",
  "rand 0.10.3",
@@ -5280,7 +5280,7 @@ dependencies = [
  "smart-default",
  "strum",
  "subtle",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "typenum",
  "uuid",
@@ -5304,14 +5304,14 @@ dependencies = [
  "hopr-types",
  "indexmap 2.14.2",
  "lazy_static",
- "libp2p-identity",
- "multiaddr",
+ "libp2p-identity 0.2.14",
+ "multiaddr 0.18.2",
  "pin-project",
  "rand 0.10.3",
  "serde_json",
  "socket2 0.6.5",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -5349,7 +5349,7 @@ dependencies = [
  "hopr-types",
  "indexmap 2.14.2",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
@@ -5373,8 +5373,8 @@ dependencies = [
  "indexmap 2.14.2",
  "lazy_static",
  "libc",
- "libp2p-identity",
- "multiaddr",
+ "libp2p-identity 0.2.14",
+ "multiaddr 0.18.2",
  "pin-project",
  "rand 0.10.3",
  "rayon",
@@ -5383,7 +5383,7 @@ dependencies = [
  "serde_json",
  "socket2 0.6.5",
  "strum",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tracing",
@@ -5951,7 +5951,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "walkdir",
  "windows-link",
 ]
@@ -6149,7 +6149,7 @@ dependencies = [
  "libp2p-core",
  "libp2p-dns",
  "libp2p-identify",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-mdns",
  "libp2p-metrics",
  "libp2p-noise",
@@ -6159,10 +6159,10 @@ dependencies = [
  "libp2p-tcp",
  "libp2p-upnp",
  "libp2p-yamux",
- "multiaddr",
+ "multiaddr 0.18.2",
  "pin-project",
  "rw-stream-sink",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -6172,7 +6172,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d16ccf824ee859ca83df301e1c0205270206223fd4b1f2e512a693e1912a8f4a"
 dependencies = [
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-swarm",
 ]
 
@@ -6189,14 +6189,14 @@ dependencies = [
  "futures-bounded",
  "futures-timer",
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-request-response",
  "libp2p-swarm",
  "quick-protobuf",
  "quick-protobuf-codec",
  "rand 0.8.8",
  "rand_core 0.6.4",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "web-time",
 ]
@@ -6208,7 +6208,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a18b8b607cf3bfa2f8c57db9c7d8569a315d5cc0a282e6bfd5ebfc0a9840b2a0"
 dependencies = [
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-swarm",
 ]
 
@@ -6222,8 +6222,8 @@ dependencies = [
  "fnv",
  "futures",
  "futures-timer",
- "libp2p-identity",
- "multiaddr",
+ "libp2p-identity 0.2.14",
+ "multiaddr 0.18.2",
  "multihash",
  "multistream-select",
  "parking_lot",
@@ -6231,7 +6231,7 @@ dependencies = [
  "quick-protobuf",
  "rand 0.8.8",
  "rw-stream-sink",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "unsigned-varint 0.8.0",
  "web-time",
@@ -6247,7 +6247,7 @@ dependencies = [
  "futures",
  "hickory-resolver 0.25.2",
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "parking_lot",
  "smallvec",
  "tracing",
@@ -6265,12 +6265,12 @@ dependencies = [
  "futures-bounded",
  "futures-timer",
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-swarm",
  "quick-protobuf",
  "quick-protobuf-codec",
  "smallvec",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -6288,9 +6288,23 @@ dependencies = [
  "rand 0.8.8",
  "serde",
  "sha2 0.10.9",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "zeroize",
+]
+
+[[package]]
+name = "libp2p-identity"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d77f16caa4f4d2667a1fad5bb1a3a4a4556967c1bff93525ebb2975847fa3de"
+dependencies = [
+ "bs58",
+ "hkdf 0.13.0",
+ "multihash",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
@@ -6303,7 +6317,7 @@ dependencies = [
  "hickory-proto 0.25.2",
  "if-watch",
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-swarm",
  "rand 0.8.8",
  "smallvec",
@@ -6321,7 +6335,7 @@ dependencies = [
  "futures",
  "libp2p-core",
  "libp2p-identify",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-swarm",
  "pin-project",
  "prometheus-client",
@@ -6338,14 +6352,14 @@ dependencies = [
  "bytes",
  "futures",
  "libp2p-core",
- "libp2p-identity",
- "multiaddr",
+ "libp2p-identity 0.2.14",
+ "multiaddr 0.18.2",
  "multihash",
  "quick-protobuf",
  "rand 0.8.8",
  "snow",
  "static_assertions",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "x25519-dalek",
  "zeroize",
@@ -6361,7 +6375,7 @@ dependencies = [
  "futures-timer",
  "if-watch",
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-tls",
  "quinn",
  "quinn-proto",
@@ -6369,7 +6383,7 @@ dependencies = [
  "ring",
  "rustls",
  "socket2 0.5.10",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
@@ -6384,7 +6398,7 @@ dependencies = [
  "futures",
  "futures-bounded",
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-swarm",
  "rand 0.8.8",
  "smallvec",
@@ -6399,7 +6413,7 @@ checksum = "1d6bd8025c80205ec2810cfb28b02f362ab48a01bee32c50ab5f12761e033464"
 dependencies = [
  "futures",
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-swarm",
  "rand 0.8.8",
  "tracing",
@@ -6417,7 +6431,7 @@ dependencies = [
  "futures-timer",
  "hashlink",
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "libp2p-swarm-derive",
  "multistream-select",
  "rand 0.8.8",
@@ -6463,12 +6477,12 @@ dependencies = [
  "futures",
  "futures-rustls",
  "libp2p-core",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
  "rcgen",
  "ring",
  "rustls",
  "rustls-webpki",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "x509-parser",
  "yasna",
 ]
@@ -6497,7 +6511,7 @@ dependencies = [
  "either",
  "futures",
  "libp2p-core",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "yamux 0.12.1",
  "yamux 0.13.10",
@@ -6723,7 +6737,27 @@ dependencies = [
  "arrayref",
  "byteorder",
  "data-encoding",
- "libp2p-identity",
+ "libp2p-identity 0.2.14",
+ "multibase",
+ "multihash",
+ "percent-encoding",
+ "serde",
+ "static_assertions",
+ "unsigned-varint 0.8.0",
+ "url",
+]
+
+[[package]]
+name = "multiaddr"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d96879ec0057cf5f99543c5333f6818c1473081684ae7ad55da21b6ea65ba214"
+dependencies = [
+ "arrayref",
+ "byteorder",
+ "bytes",
+ "data-encoding",
+ "libp2p-identity 0.3.0",
  "multibase",
  "multihash",
  "percent-encoding",
@@ -6855,7 +6889,7 @@ dependencies = [
  "log",
  "netlink-packet-core",
  "netlink-sys",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -7076,37 +7110,52 @@ dependencies = [
  "futures-sink",
  "js-sys",
  "pin-project-lite",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "opentelemetry"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cdb0b1b267eb9db3331b434ed9ddab10d50e280a9adf9d13e5233e2002b61b5"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
 [[package]]
 name = "opentelemetry-http"
-version = "0.32.0"
+version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5683015d09e2df236ef005b17f6f196f0d5f6313c4fa43a7b6a53b52776e4331"
+checksum = "ee2c3625b8aa04209f7e01e513bc8044da9687fa38a9eacf59628ca5f3b87300"
 dependencies = [
  "async-trait",
  "bytes",
  "http",
- "opentelemetry",
+ "opentelemetry 0.33.0",
  "reqwest",
 ]
 
 [[package]]
 name = "opentelemetry-otlp"
-version = "0.32.0"
+version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
+checksum = "699a67345e21962a231955b9059a157e428b219fa5df8efe11f08346fb23a344"
 dependencies = [
  "http",
- "opentelemetry",
+ "httpdate",
+ "opentelemetry 0.33.0",
  "opentelemetry-http",
  "opentelemetry-proto",
- "opentelemetry_sdk",
+ "opentelemetry_sdk 0.33.0",
  "prost",
  "reqwest",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tonic",
  "tonic-types",
@@ -7118,19 +7167,19 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4fe57ea90b12f643a366aa7c4fa5cfb54bd1cf252f55368337e40534b278a68"
 dependencies = [
- "opentelemetry",
- "opentelemetry_sdk",
+ "opentelemetry 0.32.0",
+ "opentelemetry_sdk 0.32.1",
  "smartstring",
 ]
 
 [[package]]
 name = "opentelemetry-proto"
-version = "0.32.0"
+version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
+checksum = "25da1ac11a0aeccf38d7f77ee0348715adaf8340f65ad46c94a02c6b20e2f65d"
 dependencies = [
- "opentelemetry",
- "opentelemetry_sdk",
+ "opentelemetry 0.33.0",
+ "opentelemetry_sdk 0.33.0",
  "prost",
  "tonic",
  "tonic-prost",
@@ -7145,11 +7194,27 @@ dependencies = [
  "futures-channel",
  "futures-executor",
  "futures-util",
- "opentelemetry",
+ "opentelemetry 0.32.0",
  "percent-encoding",
  "portable-atomic",
  "rand 0.9.5",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "opentelemetry_sdk"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb39533d9d1c912123efd7d41d7e0c29d16917b60ce15b4c8d87cb1af7f67520"
+dependencies = [
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "opentelemetry 0.33.0",
+ "percent-encoding",
+ "portable-atomic",
+ "rand 0.9.5",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -7753,7 +7818,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2 0.6.5",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "web-time",
@@ -7777,7 +7842,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tinyvec",
  "tracing",
  "web-time",
@@ -9059,7 +9124,7 @@ dependencies = [
  "nalgebra",
  "num-traits",
  "rand 0.10.3",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -9259,11 +9324,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl 2.0.20",
+ "thiserror-impl 2.0.21",
 ]
 
 [[package]]
@@ -9279,9 +9344,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10283,7 +10348,7 @@ dependencies = [
  "nom 7.1.3",
  "oid-registry",
  "rusticata-macros",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "time",
 ]
 
