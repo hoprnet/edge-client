@@ -263,22 +263,13 @@
               }
             );
 
-            # rustdoc's broken-link check for the PIX feature surface, which the default-feature docs build and clippy both skip.
+            # rustdoc's broken-link check for the `pix-test` surface; `pix-curvy` is a default feature, so `docs` covers it.
             docs-pix-test = craneLib.cargoDoc (
               commonArgs
               // {
                 inherit cargoArtifacts;
                 RUSTDOCFLAGS = denyBrokenDocLinks;
-                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-test";
-              }
-            );
-
-            docs-pix-curvy = craneLib.cargoDoc (
-              commonArgs
-              // {
-                inherit cargoArtifacts;
-                RUSTDOCFLAGS = denyBrokenDocLinks;
-                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-curvy";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features runtime-tokio,blokli,pix-test";
               }
             );
 
@@ -310,22 +301,13 @@
               }
             );
 
-            # Clippy the two (mutually exclusive) PIX pools on top of the default features -- they aren't in `default` so nothing else lints them.
+            # Clippy the `pix-test` pool, which needs the defaults off; `pix-curvy` is a default feature, so `clippy` covers it.
             feature-pix-test = craneLib.cargoClippy (
               commonArgs
               // {
                 inherit cargoArtifacts;
                 cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-test";
-              }
-            );
-
-            feature-pix-curvy = craneLib.cargoClippy (
-              commonArgs
-              // {
-                inherit cargoArtifacts;
-                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --features pix-curvy";
+                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features runtime-tokio,blokli,pix-test";
               }
             );
 

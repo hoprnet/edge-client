@@ -170,6 +170,13 @@ pub struct Edgli {
     /// [`Edgli::run_reactor_from_cfg`] from having to take a private key as an argument.
     #[cfg(feature = "pix")]
     chain_key: ChainKeypair,
+    /// The Blokli this node was constructed with, which the Curvy pool also talks to (deployment
+    /// discovery, note index, submissions).
+    ///
+    /// Held so a caller never passes the same URL twice: it is not configurable per pool, since a
+    /// pool pointed at a different Blokli than its node's would see a different chain view.
+    #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+    blokli_url: url::Url,
 }
 
 impl std::ops::Deref for Edgli {
@@ -322,6 +329,8 @@ impl Edgli {
             packet_public_key,
             #[cfg(feature = "pix")]
             chain_key: hopr_keys.chain_key,
+            #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+            blokli_url: blokli_endpoint.url,
         })
     }
 
@@ -559,7 +568,9 @@ impl Edgli {
                             .build_curvy::<_, SpecDepositAddress>(
                             Arc::clone(&node),
                             self.chain_key.clone(),
-                            sub_cfg.pool.to_upstream(),
+                            sub_cfg
+                                .pool
+                                .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref()),
                         )?;
                         Ok(built)
                     }

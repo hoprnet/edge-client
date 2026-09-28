@@ -18,7 +18,7 @@ path = "src/main.rs"
 required-features = ["runtime-tokio", "blokli"]
 
 [features]
-default = ["runtime-tokio", "blokli"]
+default = ["runtime-tokio", "blokli", "pix-curvy"]
 runtime-tokio = [
   "dep:tokio",
   "hopr-lib/runtime-tokio",
@@ -39,10 +39,12 @@ blokli = ["dep:tokio", "dep:url", "dep:serde", "dep:serde_json"]
 # PIX settlement: Entry deposits wxHOPR per Session. Pulls runtime-tokio, which the strategy needs to run.
 pix = ["runtime-tokio", "dep:validator"]
 
-# secp256k1 deposit addresses -- tests/demos only; mutually exclusive with pix-curvy.
+# secp256k1 deposit addresses -- tests/demos only; mutually exclusive with pix-curvy, so it needs
+# `default-features = false` (`--no-default-features` on the command line).
 pix-test = ["pix", "hopr-lib/pix-secp256k1", "hopr-strategy/strategy-pix-test"]
 
-# Baby JubJub (anonymous) deposit addresses, settled through the Curvy privacy pool; mutually exclusive with pix-test.
+# Baby JubJub (anonymous) deposit addresses, settled through the Curvy privacy pool; on by default so
+# any client build is anonymous. Mutually exclusive with pix-test.
 pix-curvy = ["pix", "hopr-lib/pix-bjj", "hopr-strategy/strategy-pix-curvy"]
 
 # tokio-console profiling of the `edgli` binary (see init_logger in src/main.rs). Build with
