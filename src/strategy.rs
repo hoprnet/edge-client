@@ -406,8 +406,9 @@ pub struct PixEntryPool {
     /// Where notes are read from. Upstream default: [`PixCurvyNoteSource::Blokli`].
     pub note_source: PixCurvyNoteSource,
 
-    /// The Safe MultiSend the node's module delegate-calls to bundle the vault approval with a
-    /// direct shield. Upstream default: the canonical deterministic deployment.
+    /// Deprecated and ignored upstream: a direct shield is now one ERC-777 `send` to Curvy's shield
+    /// router, so nothing is bundled through MultiSend. Mirrored only because upstream keeps the
+    /// field so existing configurations still parse.
     pub safe_multisend_address: Address,
 }
 
