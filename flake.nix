@@ -269,7 +269,9 @@
               // {
                 inherit cargoArtifacts;
                 RUSTDOCFLAGS = denyBrokenDocLinks;
-                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features runtime-tokio,blokli,pix-test";
+                cargoExtraArgs =
+                  (commonArgs.cargoExtraArgs or "")
+                  + " --locked --no-default-features --features runtime-tokio,blokli,pix-test";
               }
             );
 
@@ -307,7 +309,9 @@
               // {
                 inherit cargoArtifacts;
                 cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-                cargoExtraArgs = (commonArgs.cargoExtraArgs or "") + " --locked --no-default-features --features runtime-tokio,blokli,pix-test";
+                cargoExtraArgs =
+                  (commonArgs.cargoExtraArgs or "")
+                  + " --locked --no-default-features --features runtime-tokio,blokli,pix-test";
               }
             );
 

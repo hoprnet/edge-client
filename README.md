@@ -105,25 +105,24 @@ key from the SSA shares its spent SURBs carried and sweeps the deposit into its
 Safe. Only the Entry half is implemented here — an edge client never terminates
 a Session, so it never reconstructs or sweeps anything.
 
-Build with exactly one deposit pool, then opt a Session in _and_ run
-the deposit strategy. Both halves are needed: with only the strategy nothing
-announces PIX and no deposit is ever requested, and with only the opt-in the
-node announces PIX it cannot pay for and the Exit closes the Session on its
-deposit deadline.
+Build with exactly one deposit pool, then opt a Session in _and_ run the deposit
+strategy. Both halves are needed: with only the strategy nothing announces PIX
+and no deposit is ever requested, and with only the opt-in the node announces
+PIX it cannot pay for and the Exit closes the Session on its deposit deadline.
 
 | feature     | deposit address    | status                                                    |
 | ----------- | ------------------ | --------------------------------------------------------- |
 | `pix-curvy` | Baby JubJub        | anonymous; settles through a Curvy deployment (see below) |
 | `pix-test`  | Ethereum (visible) | works; **tests and demos only**, forfeits PIX's anonymity |
 
-`pix-curvy` is a default feature, so any build of this crate settles
-anonymously unless it opts out. `pix-test` needs `default-features = false`
-(`--no-default-features`) plus the features you still want. The two are
-mutually exclusive — enabling both is a compile error, because
-`hopr-lib` resolves the conflict in favour of secp256k1 _silently_, so a build
-asking for the anonymous pool would settle to visible addresses with nothing to
-say so. `pix` on its own is the umbrella both turn on; enabling it alone selects
-no pool and is also a compile error.
+`pix-curvy` is a default feature, so any build of this crate settles anonymously
+unless it opts out. `pix-test` needs `default-features = false`
+(`--no-default-features`) plus the features you still want. The two are mutually
+exclusive — enabling both is a compile error, because `hopr-lib` resolves the
+conflict in favour of secp256k1 _silently_, so a build asking for the anonymous
+pool would settle to visible addresses with nothing to say so. `pix` on its own
+is the umbrella both turn on; enabling it alone selects no pool and is also a
+compile error.
 
 ```rust,ignore
 use edgli::{PixEntryConfig, PixEntryStrategy, quota_per_ssa};
@@ -203,18 +202,18 @@ and then allocates every deposit out of that float as a private note, proved and
 submitted through the Curvy relayer. When the float runs out, deposits fail; the
 pool does not top itself up.
 
-So the Entry needs a Curvy deployment to talk to: the node's own Blokli (the
-one passed to `Edgli::new`) must index Curvy, since the pool uses it rather
-than a URL of its own; a `submission` mode (`PixCurvySubmission::Relayer(url)`
-for the Curvy relayer, or `Operator` with the operator key in the environment;
-the default is `Operator`, because a relayer URL is deliberately not
-defaulted); and the vault's `token` id for wxHOPR, which is 2 on Gnosis rather
-than the default 3. Set `PixEntryConfig::state_dir` so the pool's state
+So the Entry needs a Curvy deployment to talk to: the node's own Blokli (the one
+passed to `Edgli::new`) must index Curvy, since the pool uses it rather than a
+URL of its own; a `submission` mode (`PixCurvySubmission::Relayer(url)` for the
+Curvy relayer, or `Operator` with the operator key in the environment; the
+default is `Operator`, because a relayer URL is deliberately not defaulted); and
+the vault's `token` id for wxHOPR, which is 2 on Gnosis rather than the
+default 3. Set `PixEntryConfig::state_dir` so the pool's state
 (`curvy-pix.redb`) is found again on every start; without it the file lands in
-the working directory.
-Its Safe module must also have the Curvy aggregator scoped as a target, or the
-first shield reverts. The pool reads its `HOPRD_CURVY_*` environment overrides
-on top of `PixEntryPool` when the strategy is built.
+the working directory. Its Safe module must also have the Curvy aggregator
+scoped as a target, or the first shield reverts. The pool reads its
+`HOPRD_CURVY_*` environment overrides on top of `PixEntryPool` when the strategy
+is built.
 
 #### `pix-test` is not for production
 
