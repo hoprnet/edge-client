@@ -199,9 +199,9 @@ The Curvy pool does not pay each deposit from the Safe. On its first deposit it
 shields `PixEntryPool::initial_funding` from the Safe into the Curvy vault —
 directly, as one Safe-module transaction bundling the approval with the shield —
 and then allocates every deposit out of that float as a private note, proved and
-submitted through the Curvy relayer. When the float runs out, deposits fail; the
-pool does not top itself up.
-
+and then allocates every deposit out of that float as a private note, proved and
+submitted per its `submission` mode — by the operator by default, or through the
+relayer. When the float runs out, deposits fail; the pool does not top itself up.
 So the Entry needs a Curvy deployment to talk to: the node's own Blokli (the one
 passed to `Edgli::new`) must index Curvy, since the pool uses it rather than a
 URL of its own; a `submission` mode (`PixCurvySubmission::Relayer(url)` for the
