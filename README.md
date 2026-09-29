@@ -201,11 +201,11 @@ directly, as one Safe-module transaction bundling the approval with the shield â
 and then allocates every deposit out of that float as a private note, proved and
 and then allocates every deposit out of that float as a private note, proved and
 submitted per its `submission` mode â€” by the operator by default, or through the
-relayer. When the float runs out, deposits fail; the pool does not top itself up.
-So the Entry needs a Curvy deployment to talk to: the node's own Blokli (the one
-passed to `Edgli::new`) must index Curvy, since the pool uses it rather than a
-URL of its own; a `submission` mode (`PixCurvySubmission::Relayer(url)` for the
-Curvy relayer, or `Operator` with the operator key in the environment; the
+relayer. When the float runs out, deposits fail; the pool does not top itself
+up. So the Entry needs a Curvy deployment to talk to: the node's own Blokli (the
+one passed to `Edgli::new`) must index Curvy, since the pool uses it rather than
+a URL of its own; a `submission` mode (`PixCurvySubmission::Relayer(url)` for
+the Curvy relayer, or `Operator` with the operator key in the environment; the
 default is `Operator`, because a relayer URL is deliberately not defaulted); and
 the vault's `token` id for wxHOPR, which is 2 on Gnosis rather than the
 default 3. Set `PixEntryConfig::state_dir` so the pool's state
