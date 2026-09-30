@@ -105,22 +105,24 @@ key from the SSA shares its spent SURBs carried and sweeps the deposit into its
 Safe. Only the Entry half is implemented here — an edge client never terminates
 a Session, so it never reconstructs or sweeps anything.
 
-Pick exactly one deposit pool and build with it, then opt a Session in _and_ run
-the deposit strategy. Both halves are needed: with only the strategy nothing
-announces PIX and no deposit is ever requested, and with only the opt-in the
-node announces PIX it cannot pay for and the Exit closes the Session on its
-deposit deadline.
+Build with exactly one deposit pool, then opt a Session in _and_ run the deposit
+strategy. Both halves are needed: with only the strategy nothing announces PIX
+and no deposit is ever requested, and with only the opt-in the node announces
+PIX it cannot pay for and the Exit closes the Session on its deposit deadline.
 
 | feature     | deposit address    | status                                                    |
 | ----------- | ------------------ | --------------------------------------------------------- |
-| `pix-curvy` | Baby JubJub        | **stub** — starts and serves, panics on the first deposit |
+| `pix-curvy` | Baby JubJub        | anonymous; settles through a Curvy deployment (see below) |
 | `pix-test`  | Ethereum (visible) | works; **tests and demos only**, forfeits PIX's anonymity |
 
-They are mutually exclusive — enabling both is a compile error, because
-`hopr-lib` resolves the conflict in favour of secp256k1 _silently_, so a build
-asking for the anonymous pool would settle to visible addresses with nothing to
-say so. `pix` on its own is the umbrella both turn on; enabling it alone selects
-no pool and is also a compile error.
+`pix-curvy` is a default feature, so any build of this crate settles anonymously
+unless it opts out. `pix-test` needs `default-features = false`
+(`--no-default-features`) plus the features you still want. The two are mutually
+exclusive — enabling both is a compile error, because `hopr-lib` resolves the
+conflict in favour of secp256k1 _silently_, so a build asking for the anonymous
+pool would settle to visible addresses with nothing to say so. `pix` on its own
+is the umbrella both turn on; enabling it alone selects no pool and is also a
+compile error.
 
 ```rust,ignore
 use edgli::{PixEntryConfig, PixEntryStrategy, quota_per_ssa};
@@ -128,16 +130,19 @@ use edgli::strategy::{EdgeStrategyKind, IncentiveConfiguration, default_strategy
 use edgli::hopr_lib::HoprSessionClientConfig;
 
 // Pay: add the PIX strategy to the reactor. `strategy` is pricing and is the same whichever pool
-// the build selected; `pool` is that pool's own knobs, and its defaults are usually fine.
+// the build selected; `pool` is that pool's own knobs. Under `pix-curvy` its defaults are not
+// enough to start: the default `Operator` submission needs the operator key in
+// `HOPRD_CURVY_OPERATOR_PRIVATE_KEY`, or set `submission: PixCurvySubmission::Relayer(url)`.
+// The `pix-curvy` section below lists the rest of what a Curvy deployment needs.
 let mut strategies = default_strategy_cfg(&IncentiveConfiguration::default())?;
-strategies.strategies.push(EdgeStrategyKind::Pix(PixEntryConfig {
+strategies.strategies.push(EdgeStrategyKind::Pix(Box::new(PixEntryConfig {
     strategy: PixEntryStrategy {
         price_per_byte: "0.0001 wxHOPR".parse()?,
         max_ssa_allocation: "10 wxHOPR".parse()?,
         ..Default::default()
     },
     ..Default::default()
-}));
+})));
 let _reactor = edgli.run_reactor_from_cfg(strategies)?;
 
 // Ask: opt a Session in. The quota is read from this node's own `protocol.pix`
@@ -188,17 +193,34 @@ remaining float as its `safe` allocation, which is the figure to watch. Size the
 float against `price_per_byte × quota_per_ssa × expected SSA cycles`, plus
 whatever the channels need.
 
-Where `pix-curvy`'s funds will come from is not yet settled — its
-`deposit_funds_to` is unimplemented — so this section is about `pix-test` only.
+#### Under `pix-curvy`, the Safe funds a shielded float
 
-#### Not for production
+The Curvy pool does not pay each deposit from the Safe. On its first deposit it
+shields `PixEntryPool::initial_funding` from the Safe into the Curvy vault —
+directly, as one Safe-module transaction bundling the approval with the shield —
+and then allocates every deposit out of that float as a private note, proved and
+and then allocates every deposit out of that float as a private note, proved and
+submitted per its `submission` mode — by the operator by default, or through the
+relayer. When the float runs out, deposits fail; the pool does not top itself
+up. So the Entry needs a Curvy deployment to talk to: the node's own Blokli (the
+one passed to `Edgli::new`) must index Curvy, since the pool uses it rather than
+a URL of its own; a `submission` mode (`PixCurvySubmission::Relayer(url)` for
+the Curvy relayer, or `Operator` with the operator key in the environment; the
+default is `Operator`, because a relayer URL is deliberately not defaulted); and
+the vault's `token` id for wxHOPR, which is 2 on Gnosis rather than the
+default 3. Set `PixEntryConfig::state_dir` so the pool's state
+(`curvy-pix.redb`) is found again on every start; without it the file lands in
+the working directory. Its Safe module must also have the Curvy aggregator
+scoped as a target, or the first shield reverts. The pool reads its
+`HOPRD_CURVY_*` environment overrides on top of `PixEntryPool` when the strategy
+is built.
 
-Neither pool is deployable today. `pix-test` works but settles fully visibly
-on-chain, forfeiting the anonymity PIX exists to provide; `pix-curvy` is the
-anonymous one and is a stub whose methods panic. So there is currently no
-production PIX path, here or in `hoprd`. The `pix-curvy` wiring is carried
-anyway, compiled and linted on every PR, so that when the settlement logic lands
-upstream this crate needs a dependency bump rather than a design.
+#### `pix-test` is not for production
+
+`pix-test` works but settles fully visibly on-chain, forfeiting the anonymity
+PIX exists to provide. `pix-curvy` is the anonymous pool, and the one `hoprd`
+builds as its production PIX binary (`strategy-pix-curvy`); the two have to be
+built from the same `hopr-strategy` release.
 
 ### Feature flags
 
@@ -206,9 +228,9 @@ upstream this crate needs a dependency bump rather than a design.
 | --------------- | :-----: | --------------------------------------------------------- |
 | `runtime-tokio` |   yes   | Tokio runtime integration                                 |
 | `blokli`        |   yes   | Blokli-backed trustful blockchain connector               |
-| `pix`           |   no    | Entry-side PIX; umbrella, selects no pool on its own      |
+| `pix`           |   yes   | Entry-side PIX; umbrella, selects no pool on its own      |
 | `pix-test`      |   no    | PIX with the secp256k1 pool — tests and demos (see above) |
-| `pix-curvy`     |   no    | PIX with the Baby JubJub pool — stub (see above)          |
+| `pix-curvy`     |   yes   | PIX with the Baby JubJub (Curvy) pool (see above)         |
 | `telemetry`     |   no    | OpenTelemetry OTLP export                                 |
 | `testing`       |   no    | Test-only helpers from `hopr-lib`                         |
 | `prof`          |   no    | `tokio-console` subscriber (needs `--cfg tokio_unstable`) |
@@ -224,9 +246,8 @@ Unit tests (lib `#[cfg(test)]` modules + the `tests/` binaries):
 ```bash
 nix develop -c cargo nextest run
 
-# PIX code is behind non-default features, so it needs naming
-nix develop -c cargo nextest run --features pix-test
-nix develop -c cargo nextest run --features pix-curvy
+# `pix-curvy` is a default feature; the `pix-test` pool needs the defaults off
+nix develop -c cargo nextest run --no-default-features --features runtime-tokio,blokli,pix-test
 ```
 
 Full check suite (clippy, rustdoc, licenses, tests) via Nix:
