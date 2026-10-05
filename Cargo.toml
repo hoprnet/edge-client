@@ -47,18 +47,18 @@ anyhow = "1.0.104"
 bytesize = "2.7.0"
 smart-default = "0.7.1"
 async-signal = "0.2.14"
-async-trait = "0.1.91"
-cfg-if = "1.0.4"
-clap = { version = "4.6.5", features = ["derive", "env", "string"] }
+async-trait = "0.1.92"
+cfg-if = "1.0.5"
+clap = { version = "4.6.7", features = ["derive", "env", "string"] }
 console-subscriber = { version = "0.5.0", optional = true }
-futures = "0.3.33"
-multiaddr = "0.18.2"
-lazy_static = "1.5.0"
-signal-hook = "0.4.4"
+futures = "0.3.34"
+multiaddr = "0.19.1"
+lazy_static = "1.5.1"
+signal-hook = "0.4.5"
 serde_yaml = { version = "0.9.34" }
 strum = { version = "0.28.0", features = ["derive"] }
-thiserror = "2.0.19"
-tokio = { version = "1.53.1", features = [
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = [
   "rt-multi-thread",
   "macros",
   "tracing",
@@ -69,15 +69,15 @@ tracing-subscriber = { version = "0.3.23", features = [
   "json",
   "env-filter",
 ] }
-opentelemetry = { version = "0.32.0", optional = true }
-opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
+opentelemetry = { version = "0.33.0", optional = true }
+opentelemetry-otlp = { version = "0.33.0", default-features = false, features = [
   "trace",
   "reqwest-client",
   "tls-roots",
   "http-proto",
   "grpc-tonic",
 ], optional = true }
-opentelemetry_sdk = { version = "0.32.1", optional = true }
+opentelemetry_sdk = { version = "0.33.0", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
 
@@ -85,15 +85,15 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "release/4.0",
   "session-client",
   "serde",
 ] }
-hopr-chain-connector = { version = "0.22.3", features = ["runtime-tokio"] }
-hopr-ct-full-network = { version = "0.4.0" }
+hopr-chain-connector = { version = "0.27.0", features = ["runtime-tokio"] }
+hopr-ct-full-network = { version = "0.7.0" }
 # TEMPORARY: using Git branch instead of published versions for v4 compat
 hopr-strategy = { git = "https://github.com/hoprnet/hopr-strategy", branch = "compat/v4", features = [
   "strategy-channel-lifecycle",
 ] }
-hopr-ticket-manager = { version = "0.5.2" }
-hopr-network-graph = { version = "0.5.0" }
-hopr-transport-p2p = { version = "0.9.5" }
+hopr-ticket-manager = { version = "0.8.0" }
+hopr-network-graph = { version = "0.8.0" }
+hopr-transport-p2p = { version = "0.12.0" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -103,12 +103,12 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 
 [dev-dependencies]
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests.
-hopr-chain-connector = { version = "0.22.3", features = [
+hopr-chain-connector = { version = "0.27.0", features = [
   "runtime-tokio",
   "testing",
 ] }
 # `full` for the async unit tests in src/ (#[tokio::test], spawn, time, sync).
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { version = "1.53.2", features = ["full"] }
 
 [build-dependencies]
 anyhow = "1.0.104"
