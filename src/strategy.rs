@@ -10,6 +10,11 @@ pub use hopr_strategy::channel_lifecycle::{
     CapacitySizingMode, ChannelLifecycleConfig, EligibilityConfig, FundingConfig, PopulationConfig,
     ResolvedFunding, SelectorProfile,
 };
+// The strategy's externally observable health, surfaced to downstream consumers via
+// [`crate::client::StrategyStateHandle`] so they can read Degraded/Failed without
+// depending on `hopr_strategy` directly. `AtomicStrategyState` is the lock-free cell the
+// running strategy stores it in; the handle wraps a clone of it.
+pub use hopr_strategy::strategy::{AtomicStrategyState, StrategyState};
 
 /// Paid downstream relay hops a ticket's face value covers.
 ///
