@@ -352,10 +352,16 @@ impl Edgli {
             .into_iter()
             .collect();
 
-        let open_to_connected = all_channels
+        // Balances of channels the strategy keeps and tops up (open, to a still-connected
+        // peer). Channels to disconnected peers are excluded: the strategy closes and
+        // replaces them rather than refilling, so they are neither a missing-channel deficit
+        // nor top-up headroom.
+        let open_to_connected_balances: Vec<HoprBalance> = all_channels
             .iter()
             .filter(|c| c.status == ChannelStatus::Open && connected.contains(&c.destination))
-            .count();
+            .map(|c| c.balance)
+            .collect();
+        let open_to_connected = open_to_connected_balances.len();
 
         let missing = cfg.target_open_channels.saturating_sub(open_to_connected);
         // Zero for a running node — hopr-lib announces during startup — but
@@ -368,6 +374,7 @@ impl Edgli {
             missing,
             costs,
             cfg,
+            &open_to_connected_balances,
             max_fee_per_gas,
         )
     }

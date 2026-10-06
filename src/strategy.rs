@@ -183,6 +183,32 @@ fn channel_stakes(
     Ok(resolved.required_safe_balance(sizing.target_open_channels, missing_channels))
 }
 
+/// wxHOPR to refill already-open channels that have drained to or below the strategy's
+/// lower threshold.
+///
+/// One `topup_balance` per drained channel, mirroring the running fund pass, which tops up
+/// each channel with `balance <= lower_balance_threshold` by exactly `topup_balance`. The
+/// strategy's additional *proactive* top-up (a channel predicted to drain before the next
+/// tick confirms) depends on per-channel observation history not available here, so this
+/// counts only the state-observable condition — the floor of what the strategy will refill.
+///
+/// `open_channel_balances` are the current balances of the node's open channels. Empty (no
+/// open channels, e.g. during onboarding) yields zero.
+fn topup_headroom(
+    ticket_price: HoprBalance,
+    win_prob: f64,
+    sizing: &IncentiveConfiguration,
+    open_channel_balances: &[HoprBalance],
+) -> anyhow::Result<HoprBalance> {
+    let funding = compute_funding_config(sizing)?;
+    let resolved = resolve_funding(&funding, ticket_price, win_prob);
+    let drained = open_channel_balances
+        .iter()
+        .filter(|balance| **balance <= resolved.lower_balance_threshold)
+        .count();
+    Ok(resolved.topup_balance * drained as u64)
+}
+
 /// One-time costs still owed before this node can be fully up and running,
 /// verified against on-chain state.
 #[derive(Clone, Copy, Debug)]
@@ -228,6 +254,18 @@ pub fn xdai_fee_per_tx(max_fee_per_gas: u128) -> XDaiBalance {
 pub struct BalanceRecommendation {
     /// wxHOPR needed to stake the missing channels.
     pub channel_stakes: HoprBalance,
+    /// wxHOPR to top up already-open channels that have drained to or below the
+    /// strategy's lower threshold, one `topup_balance` per such channel — the
+    /// same refill the running fund pass performs.
+    ///
+    /// Distinct from [`channel_stakes`](Self::channel_stakes): that figure funds
+    /// a population *from scratch* (opening stakes plus one prospective top-up
+    /// round) and is zero once no channel is missing; this one is measured
+    /// against the *live* balances of channels already open, so it can be
+    /// positive even when `channel_stakes` is zero. Reported on its own and not
+    /// folded into [`total_wxhopr`](Self::total_wxhopr), which keeps its
+    /// from-scratch meaning.
+    pub topup_headroom: HoprBalance,
     /// One-time fee still owed before the node can start (today the
     /// key-binding fee); zero once the key is bound on-chain.
     pub fee_to_start: HoprBalance,
@@ -304,12 +342,17 @@ pub struct Capacity {
 ///
 /// `max_fee_per_gas` is the chain's current EIP-1559 gas price in wei per gas,
 /// from which the per-transaction xDai fee is derived; see [`xdai_fee_per_tx`].
+///
+/// `open_channel_balances` are the current balances of the node's already-open
+/// channels, used to compute [`BalanceRecommendation::topup_headroom`]. Pass an
+/// empty slice when there are no open channels (e.g. onboarding a fresh node).
 pub(crate) fn compute_balance_recommendation(
     ticket_price: HoprBalance,
     win_prob: f64,
     missing_channels: usize,
     costs: StartupCosts,
     sizing: &IncentiveConfiguration,
+    open_channel_balances: &[HoprBalance],
     max_fee_per_gas: u128,
 ) -> anyhow::Result<BalanceRecommendation> {
     let stake = if missing_channels == 0 {
@@ -319,6 +362,7 @@ pub(crate) fn compute_balance_recommendation(
     };
     Ok(BalanceRecommendation {
         channel_stakes: stake,
+        topup_headroom: topup_headroom(ticket_price, win_prob, sizing, open_channel_balances)?,
         fee_to_start: costs.fee_to_start,
         txs_to_start: costs.txs_to_start,
         xdai_fee_per_tx: xdai_fee_per_tx(max_fee_per_gas),
@@ -427,12 +471,15 @@ pub async fn minimum_balance_recommendation(
     let win_prob = stats.winning_probability.as_f64();
     let costs = incentive_ops.compute_costs_to_start().await?;
     let max_fee_per_gas = incentive_ops.max_fee_per_gas().await?;
+    // Onboarding path: the node has no open channels yet, so there is no live
+    // balance to top up — only the from-scratch stakes apply.
     compute_balance_recommendation(
         stats.ticket_price,
         win_prob,
         cfg.target_open_channels,
         costs,
         cfg,
+        &[],
         max_fee_per_gas,
     )
 }
@@ -669,6 +716,7 @@ mod tests {
                         missing,
                         no_startup_costs(),
                         &sizing,
+                        &[],
                         TEST_MAX_FEE_PER_GAS,
                     )
                     .unwrap();
@@ -696,6 +744,7 @@ mod tests {
                 1,
                 no_startup_costs(),
                 &sizing,
+                &[],
                 TEST_MAX_FEE_PER_GAS,
             )
             .unwrap();
@@ -727,6 +776,7 @@ mod tests {
                 1,
                 no_startup_costs(),
                 &requested_cfg,
+                &[],
                 TEST_MAX_FEE_PER_GAS,
             )
             .unwrap();
@@ -738,6 +788,7 @@ mod tests {
                 1,
                 no_startup_costs(),
                 &IncentiveConfiguration::default(),
+                &[],
                 TEST_MAX_FEE_PER_GAS,
             )
             .unwrap();
@@ -858,12 +909,75 @@ mod tests {
             0,
             no_startup_costs(),
             &IncentiveConfiguration::default(),
+            &[],
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
         assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
+        assert_eq!(rec.topup_headroom, HoprBalance::zero());
         assert_eq!(rec.xdai_fee_per_tx, xdai_fee_per_tx(TEST_MAX_FEE_PER_GAS));
         assert_eq!(rec.xdai_fund_amount, suggested_xdai_fund_amount());
+    }
+
+    #[test]
+    fn topup_headroom_positive_when_a_channel_drained_below_threshold_and_nothing_missing() {
+        // The starved-channel case: no channel is missing (channel_stakes stays zero),
+        // but an open channel has drained to the lower threshold and still needs a refill.
+        let price = HoprBalance::new_base(10);
+        let sizing = IncentiveConfiguration::default();
+        let resolved = resolve_funding(&compute_funding_config(&sizing).unwrap(), price, 1.0);
+        // One channel resting at the lower threshold (`<=` triggers a top-up), one healthy.
+        let balances = [resolved.lower_balance_threshold, resolved.initial_balance];
+        let rec = compute_balance_recommendation(
+            price,
+            1.0,
+            0,
+            no_startup_costs(),
+            &sizing,
+            &balances,
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
+        assert_eq!(
+            rec.channel_stakes,
+            HoprBalance::zero(),
+            "nothing missing, so the from-scratch figure is zero"
+        );
+        assert_eq!(
+            rec.topup_headroom, resolved.topup_balance,
+            "exactly one drained channel needs exactly one top-up; the healthy one must not count"
+        );
+        // Headroom is reported on its own, never folded into the from-scratch total.
+        assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
+    }
+
+    #[test]
+    fn topup_headroom_and_stakes_both_zero_when_nothing_missing_and_channels_full() {
+        // Adversarial: a silent no-op would be indistinguishable here. Both fields are
+        // legitimately zero and distinct — a full population needs neither opens nor top-ups.
+        let price = HoprBalance::new_base(10);
+        let sizing = IncentiveConfiguration::default();
+        let resolved = resolve_funding(&compute_funding_config(&sizing).unwrap(), price, 1.0);
+        // Every open channel sits above the lower threshold: nothing to refill.
+        let full = resolved.initial_balance;
+        assert!(
+            full > resolved.lower_balance_threshold,
+            "test premise: a freshly opened stake is above the top-up threshold"
+        );
+        let balances = [full, full, full];
+        let rec = compute_balance_recommendation(
+            price,
+            1.0,
+            0,
+            no_startup_costs(),
+            &sizing,
+            &balances,
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
+        assert_eq!(rec.channel_stakes, HoprBalance::zero());
+        assert_eq!(rec.topup_headroom, HoprBalance::zero());
+        assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
     }
 
     #[test]
@@ -880,6 +994,7 @@ mod tests {
                 txs_to_start: 3,
             },
             &IncentiveConfiguration::default(),
+            &[],
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
@@ -909,6 +1024,7 @@ mod tests {
                 txs_to_start: 2,
             },
             &IncentiveConfiguration::default(),
+            &[],
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
@@ -932,6 +1048,7 @@ mod tests {
             8,
             no_startup_costs(),
             &sizing,
+            &[],
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
@@ -943,6 +1060,7 @@ mod tests {
             1,
             no_startup_costs(),
             &sizing,
+            &[],
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
@@ -969,6 +1087,7 @@ mod tests {
             1,
             no_startup_costs(),
             &IncentiveConfiguration::default(),
+            &[],
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
@@ -978,6 +1097,7 @@ mod tests {
             1,
             no_startup_costs(),
             &IncentiveConfiguration::default(),
+            &[],
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
@@ -997,6 +1117,7 @@ mod tests {
             0,
             no_startup_costs(),
             &IncentiveConfiguration::default(),
+            &[],
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
