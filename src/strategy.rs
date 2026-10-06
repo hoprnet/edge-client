@@ -154,7 +154,7 @@ pub struct PixEntryPoolKnobs {
 pub struct PixEntryStrategy {
     /// wxHOPR charged per byte of the agreed per-SSA quota. One deposit is
     /// `price_per_byte × quota_per_ssa`, where the quota is
-    /// `polys_per_ssa × (shares_per_poly + surplus_shares) × PACKET_PAYLOAD_SIZE`.
+    /// `polys_per_ssa × (shares_per_poly + surplus_shares) × PIX_QUOTA_BYTES_PER_SHARE`.
     ///
     /// # Deposits are paid by the Safe
     ///
@@ -621,10 +621,10 @@ pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> anyhow::Result<ho
 
 /// Bytes of Exit → Entry traffic a single SSA deposit buys.
 ///
-/// `polys_per_ssa × emitted_shares_per_poly × PACKET_PAYLOAD_SIZE`, matching what the Exit computes
-/// when it decides whether the offered quota is one it accepts. Multiply by
-/// [`PixEntryStrategy::price_per_byte`] for the wxHOPR a single deposit costs, and by the number of
-/// SSA cycles a Session is expected to run for the float that Session needs.
+/// `polys_per_ssa × emitted_shares_per_poly × PIX_QUOTA_BYTES_PER_SHARE` (the Session MTU),
+/// matching what the Exit computes when it decides whether the offered quota is one it accepts.
+/// Multiply by [`PixEntryStrategy::price_per_byte`] for the wxHOPR a single deposit costs, and by
+/// the number of SSA cycles a Session is expected to run for the float that Session needs.
 ///
 /// Counts `emitted_shares_per_poly` — threshold *plus* surplus — rather than the threshold alone,
 /// and reads it off [`PixParams`](hopr_lib::PixParams) rather than re-deriving it. A polynomial
@@ -636,7 +636,7 @@ pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> anyhow::Result<ho
 pub fn quota_per_ssa(params: &hopr_lib::PixParams) -> u64 {
     u64::from(params.polys_per_ssa())
         * u64::from(params.emitted_shares_per_poly())
-        * hopr_lib::exports::transport::PACKET_PAYLOAD_SIZE as u64
+        * hopr_lib::exports::transport::session::PIX_QUOTA_BYTES_PER_SHARE
 }
 
 /// Strategy configuration for an edge node reactor.
@@ -2065,7 +2065,7 @@ mod tests {
     #[cfg(feature = "pix")]
     #[test]
     fn quota_per_ssa_prices_the_surplus() {
-        let payload = hopr_lib::exports::transport::PACKET_PAYLOAD_SIZE as u64;
+        let payload = hopr_lib::exports::transport::session::PIX_QUOTA_BYTES_PER_SHARE;
 
         let bare =
             hopr_lib::PixParams::try_new_for::<hopr_lib::exports::transport::HoprPixSpec>(8, 4, 0)
