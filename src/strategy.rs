@@ -271,14 +271,6 @@ pub struct BalanceRecommendation {
     /// folded into [`total_wxhopr`](Self::total_wxhopr), which keeps its
     /// from-scratch meaning.
     pub topup_headroom: HoprBalance,
-    /// wxHOPR face value of one winning ticket (`ticket_price × hops / win_prob`):
-    /// the least a channel must hold to issue its next ticket, and so the single
-    /// usability boundary — a channel is usable iff its balance is at least this.
-    ///
-    /// Reported so a consumer shares this number with the router instead of
-    /// reinventing it. Like [`topup_headroom`](Self::topup_headroom) it is a
-    /// reported figure, not folded into [`total_wxhopr`](Self::total_wxhopr).
-    pub face_value: HoprBalance,
     /// One-time fee still owed before the node can start (today the
     /// key-binding fee); zero once the key is bound on-chain.
     pub fee_to_start: HoprBalance,
@@ -376,10 +368,6 @@ pub(crate) fn compute_balance_recommendation(
     Ok(BalanceRecommendation {
         channel_stakes: stake,
         topup_headroom: topup_headroom(ticket_price, win_prob, sizing, open_channel_balances)?,
-        // The per-ticket usability boundary, resolved from the same funding config as the
-        // figures above so every reported number agrees on one set of ticket economics.
-        face_value: resolve_funding(&compute_funding_config(sizing)?, ticket_price, win_prob)
-            .face_value,
         fee_to_start: costs.fee_to_start,
         txs_to_start: costs.txs_to_start,
         xdai_fee_per_tx: xdai_fee_per_tx(max_fee_per_gas),
@@ -995,35 +983,6 @@ mod tests {
         assert_eq!(rec.channel_stakes, HoprBalance::zero());
         assert_eq!(rec.topup_headroom, HoprBalance::zero());
         assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
-    }
-
-    #[test]
-    fn balance_recommendation_reports_resolved_ticket_face_value() {
-        // The usability boundary a consumer shares with the router: exactly the resolved
-        // per-ticket face value, non-zero for a normal price, and never folded into the total.
-        let price = HoprBalance::new_base(10);
-        let sizing = IncentiveConfiguration::default();
-        for p in WIN_PROBS {
-            let resolved = resolve_funding(&compute_funding_config(&sizing).unwrap(), price, p);
-            let rec = compute_balance_recommendation(
-                price,
-                p,
-                0,
-                no_startup_costs(),
-                &sizing,
-                &[],
-                TEST_MAX_FEE_PER_GAS,
-            )
-            .unwrap();
-            assert_eq!(rec.face_value, resolved.face_value, "p={p}");
-            assert!(
-                rec.face_value > HoprBalance::zero(),
-                "p={p}: a normal price must yield a non-zero face value"
-            );
-            // Nothing missing and no startup cost, so the fund total is zero even though
-            // face_value is positive — proving it is reported, not funded.
-            assert_eq!(rec.total_wxhopr(), HoprBalance::zero(), "p={p}");
-        }
     }
 
     #[test]
