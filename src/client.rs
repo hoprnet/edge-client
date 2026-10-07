@@ -465,8 +465,6 @@ impl Edgli {
         let mut strategies: Vec<Box<dyn Strategy + Send>> =
             Vec::with_capacity(cfg.strategies.len());
         // The channel-lifecycle strategy's live health cell, cloned before the strategy is moved
-        // into the reactor task below. `state()` takes `&mut self` once running, so this shared
-        // The channel-lifecycle strategy's live health cell, cloned before the strategy is moved
         // into the reactor task below: the strategy object is moved into that task, so the
         // shared atomic is the only way to observe Degraded/Failed from outside.
         let mut strategy_state: Option<StrategyStateHandle> = None;
