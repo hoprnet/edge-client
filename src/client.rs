@@ -352,10 +352,16 @@ impl Edgli {
             .into_iter()
             .collect();
 
-        let open_to_connected = all_channels
+        // Balances of open channels to still-connected peers. Channels to disconnected
+        // peers are excluded to keep this a floor: the fund pass can still refill a drained
+        // channel to a disconnected peer with recent ticket activity, so those channels are
+        // counted neither as a missing-channel deficit nor as top-up headroom.
+        let open_to_connected_balances: Vec<HoprBalance> = all_channels
             .iter()
             .filter(|c| c.status == ChannelStatus::Open && connected.contains(&c.destination))
-            .count();
+            .map(|c| c.balance)
+            .collect();
+        let open_to_connected = open_to_connected_balances.len();
 
         let missing = cfg.target_open_channels.saturating_sub(open_to_connected);
         // Zero for a running node — hopr-lib announces during startup — but
@@ -368,6 +374,7 @@ impl Edgli {
             missing,
             costs,
             cfg,
+            &open_to_connected_balances,
             max_fee_per_gas,
         )
     }
@@ -431,12 +438,19 @@ impl Edgli {
     /// The default reactor runs a single [`ChannelLifecycleStrategy`] which
     /// owns open / fund / close / finalize for outgoing payment channels.
     ///
-    /// Returns an [`AbortHandle`] that stops the strategy reactor when aborted.
+    /// Returns a [`ReactorHandle`] carrying both the [`AbortHandle`] that stops
+    /// the reactor and a [`StrategyStateHandle`] for reading the channel-lifecycle
+    /// strategy's externally observable [`StrategyState`](super::strategy::StrategyState)
+    /// while it runs.
+    ///
+    /// Errors when `cfg` contains no strategy: a reactor with nothing to run has no
+    /// health to report, and faking [`Running`](super::strategy::StrategyState::Running)
+    /// would hide the misconfiguration.
     #[cfg(feature = "blokli")]
     pub fn run_reactor_from_cfg(
         &self,
         cfg: super::strategy::MultiStrategyConfig,
-    ) -> anyhow::Result<AbortHandle> {
+    ) -> anyhow::Result<ReactorHandle> {
         use super::strategy::EdgeStrategyKind;
         use hopr_strategy::{
             channel_lifecycle::ChannelLifecycleStrategy,
@@ -448,17 +462,27 @@ impl Edgli {
         // `build` became fallible in hopr-strategy 0.26. Propagate rather than unwrap: a strategy
         // that failed to construct would otherwise leave the reactor running with nothing driving
         // channel lifecycle, which looks like a healthy node that never opens a channel.
-        let strategies = cfg
-            .strategies
-            .into_iter()
-            .map(|kind| -> anyhow::Result<Box<dyn Strategy + Send>> {
-                match kind {
-                    EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
-                        Ok(ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))?)
+        let mut strategies: Vec<Box<dyn Strategy + Send>> =
+            Vec::with_capacity(cfg.strategies.len());
+        // The channel-lifecycle strategy's live health cell, cloned before the strategy is moved
+        // into the reactor task below: the strategy object is moved into that task, so the
+        // shared atomic is the only way to observe Degraded/Failed from outside.
+        let mut strategy_state: Option<StrategyStateHandle> = None;
+        for kind in cfg.strategies {
+            match kind {
+                EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
+                    let built = ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))?;
+                    if strategy_state.is_none() {
+                        strategy_state = Some(StrategyStateHandle(built.state_handle()));
                     }
+                    strategies.push(built);
                 }
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            }
+        }
+
+        let strategy_state = strategy_state.ok_or_else(|| {
+            anyhow::anyhow!("reactor requires at least one strategy to expose its state")
+        })?;
 
         let mut multi_strategy = MultiStrategy::new(strategies);
 
@@ -469,8 +493,40 @@ impl Edgli {
         });
 
         tokio::spawn(abortable);
-        Ok(abort_handle)
+        Ok(ReactorHandle {
+            abort_handle,
+            strategy_state,
+        })
     }
+}
+
+/// Read handle to the channel-lifecycle strategy's externally observable
+/// [`StrategyState`](super::strategy::StrategyState).
+///
+/// Cloned from the live strategy before it starts running:
+/// [`Strategy::run`](hopr_strategy::strategy::Strategy::run) takes `&mut self` and is moved
+/// into the reactor task, so this shared atomic is the only way to read the strategy's
+/// health from outside. It reports the strategy's own verdict — this handle never
+/// re-derives one. Cheap to clone; `Send` + `Sync`.
+#[derive(Clone)]
+pub struct StrategyStateHandle(Arc<super::strategy::AtomicStrategyState>);
+
+impl StrategyStateHandle {
+    /// The strategy's current externally observable state
+    /// (`Running` / `Degraded` / `Failed`).
+    pub fn state(&self) -> super::strategy::StrategyState {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Handle to a running strategy reactor returned by
+/// [`Edgli::run_reactor_from_cfg`]: an [`AbortHandle`] to stop it, and a
+/// [`StrategyStateHandle`] to read the channel-lifecycle strategy's health.
+pub struct ReactorHandle {
+    /// Aborts the reactor task when triggered.
+    pub abort_handle: AbortHandle,
+    /// Reads the channel-lifecycle strategy's externally observable state.
+    pub strategy_state: StrategyStateHandle,
 }
 
 #[cfg(test)]
@@ -593,5 +649,39 @@ mod tests {
     fn probeable_addresses_empty_input() {
         assert!(probeable_addresses(vec![], false).is_empty());
         assert!(probeable_addresses(vec![], true).is_empty());
+    }
+
+    mod strategy_state_handle {
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        use super::super::StrategyStateHandle;
+        use crate::strategy::{AtomicStrategyState, StrategyState};
+
+        #[test]
+        fn reads_degraded_when_the_strategy_reports_degraded() {
+            // The handle shares the strategy's live cell; the running strategy flips it
+            // (as `set_state` does), and the handle must observe the transition.
+            let cell = Arc::new(AtomicStrategyState::new(StrategyState::Running));
+            let handle = StrategyStateHandle(cell.clone());
+            cell.store(StrategyState::Degraded, Ordering::Relaxed);
+            assert_eq!(handle.state(), StrategyState::Degraded);
+        }
+
+        #[test]
+        fn reads_failed_never_silently_running() {
+            // Adversarial: a Failed strategy must read back as Failed, not be masked as
+            // the default healthy state — the whole point of exposing the verdict.
+            let cell = Arc::new(AtomicStrategyState::new(StrategyState::Running));
+            let handle = StrategyStateHandle(cell.clone());
+            cell.store(StrategyState::Failed, Ordering::Relaxed);
+            let observed = handle.state();
+            assert_eq!(observed, StrategyState::Failed);
+            assert_ne!(
+                observed,
+                StrategyState::Running,
+                "a failed strategy must never read back as healthy"
+            );
+        }
     }
 }
