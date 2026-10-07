@@ -352,10 +352,10 @@ impl Edgli {
             .into_iter()
             .collect();
 
-        // Balances of channels the strategy keeps and tops up (open, to a still-connected
-        // peer). Channels to disconnected peers are excluded: the strategy closes and
-        // replaces them rather than refilling, so they are neither a missing-channel deficit
-        // nor top-up headroom.
+        // Balances of open channels to still-connected peers. Channels to disconnected
+        // peers are excluded to keep this a floor: the fund pass can still refill a drained
+        // channel to a disconnected peer with recent ticket activity, so those channels are
+        // counted neither as a missing-channel deficit nor as top-up headroom.
         let open_to_connected_balances: Vec<HoprBalance> = all_channels
             .iter()
             .filter(|c| c.status == ChannelStatus::Open && connected.contains(&c.destination))
