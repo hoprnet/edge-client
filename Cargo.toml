@@ -88,8 +88,7 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "release/4.0",
 ] }
 hopr-chain-connector = { version = "0.22.3", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.4.0" }
-# TEMPORARY: using Git branch instead of published versions for v4 compat
-hopr-strategy = { git = "https://github.com/hoprnet/hopr-strategy", branch = "compat/v4", features = [
+hopr-strategy = { version = "0.28.3", features = [
   "strategy-channel-lifecycle",
 ] }
 hopr-ticket-manager = { version = "0.5.2" }
