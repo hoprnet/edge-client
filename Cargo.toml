@@ -81,10 +81,8 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
 url = { version = "2.5.8", optional = true }
 
-# INTEGRATION PIN (GNO-805): on the path-selection fix branch, which is cut from release/4.0 (so it
-# carries the already-merged redemption-balance fix #8485) plus the starved-channel path fix #8489.
-# Revert to branch = "release/4.0" once hoprnet#8489 merges.
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "fix/path/gno-805-extended-search-funding-rel40", features = [
+# TEMPORARY: using Git branch instead of published versions for v4 compat
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "release/4.0", features = [
   "session-client",
   "serde",
 ] }
