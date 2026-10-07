@@ -1,7 +1,9 @@
 use std::collections::HashSet;
+use std::future::Future;
 use std::sync::Arc;
 
 use futures::StreamExt;
+use futures::channel::oneshot;
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
 use hopr_ct_full_network::ProberConfig as FullNetworkProberConfig;
@@ -486,18 +488,30 @@ impl Edgli {
 
         let mut multi_strategy = MultiStrategy::new(strategies);
 
-        let (abortable, abort_handle) = futures::future::abortable(async move {
+        let (abort_handle, exited) = spawn_reactor_task(async move {
             if let Err(e) = multi_strategy.run().await {
                 tracing::error!(%e, "edge strategy reactor failed");
             }
         });
-
-        tokio::spawn(abortable);
         Ok(ReactorHandle {
             abort_handle,
             strategy_state,
+            exited,
         })
     }
+}
+
+/// The sender lives inside the task, so the receiver resolves on return, panic and abort alike.
+fn spawn_reactor_task(
+    reactor: impl Future<Output = ()> + Send + 'static,
+) -> (AbortHandle, oneshot::Receiver<()>) {
+    let (exited_tx, exited) = oneshot::channel::<()>();
+    let (abortable, abort_handle) = abortable(async move {
+        let _exited = exited_tx;
+        reactor.await;
+    });
+    tokio::spawn(abortable);
+    (abort_handle, exited)
 }
 
 /// Read handle to the channel-lifecycle strategy's externally observable
@@ -527,6 +541,8 @@ pub struct ReactorHandle {
     pub abort_handle: AbortHandle,
     /// Reads the channel-lifecycle strategy's externally observable state.
     pub strategy_state: StrategyStateHandle,
+    /// Resolves once the reactor task has ended, however it ended.
+    pub exited: oneshot::Receiver<()>,
 }
 
 #[cfg(test)]
@@ -682,6 +698,24 @@ mod tests {
                 StrategyState::Running,
                 "a failed strategy must never read back as healthy"
             );
+        }
+    }
+
+    mod reactor_handle {
+        use super::super::spawn_reactor_task;
+
+        #[tokio::test]
+        async fn exited_resolves_when_the_reactor_returns() {
+            let (_abort_handle, exited) = spawn_reactor_task(async {});
+            // The sender drops with the task, so the receiver sees Canceled rather than a value.
+            assert!(exited.await.is_err());
+        }
+
+        #[tokio::test]
+        async fn exited_resolves_when_the_reactor_is_aborted() {
+            let (abort_handle, exited) = spawn_reactor_task(std::future::pending());
+            abort_handle.abort();
+            assert!(exited.await.is_err());
         }
     }
 }
