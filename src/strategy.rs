@@ -377,7 +377,7 @@ pub struct PixEntryPool {
 
     /// The Curvy vault's token id for wxHOPR. Upstream default: 3 (the local Curvy deployment);
     /// on Gnosis it is 2.
-    pub token: u64,
+    pub token: Option<u64>,
 
     /// wxHOPR shielded from the Safe into the vault on the first deposit, gross of shield fees.
     /// Deposits are allocated out of it until it runs out; the pool does not top itself up.
