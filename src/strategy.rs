@@ -377,7 +377,7 @@ pub struct PixEntryPool {
 
     /// The Curvy vault's token id for wxHOPR. Upstream default: 3 (the local Curvy deployment);
     /// on Gnosis it is 2.
-    pub token: u64,
+    pub token: Option<u64>,
 
     /// wxHOPR shielded from the Safe into the vault on the first deposit, gross of shield fees.
     /// Deposits are allocated out of it until it runs out; the pool does not top itself up.
@@ -1888,7 +1888,7 @@ mod tests {
         let relayer: url::Url = "https://api.curvy.dev/".parse().unwrap();
         let upstream = PixEntryPool {
             max_deposit_tracking_time: Duration::from_secs(300),
-            token: 2,
+            token: Some(2),
             initial_funding: "25 wxHOPR".parse().unwrap(),
             submission: PixCurvySubmission::Relayer(relayer.clone()),
             ..Default::default()
@@ -1897,7 +1897,7 @@ mod tests {
 
         assert_eq!(upstream.blokli_url, blokli);
         assert_eq!(upstream.max_deposit_tracking_time, Duration::from_secs(300));
-        assert_eq!(upstream.token, 2);
+        assert_eq!(upstream.token, Some(2));
         assert_eq!(upstream.initial_funding, "25 wxHOPR".parse().unwrap());
         assert_eq!(
             upstream.state_path.as_deref(),
