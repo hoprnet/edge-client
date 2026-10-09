@@ -93,7 +93,7 @@ hopr-strategy = { version = "0.28.3", features = [
 ] }
 hopr-ticket-manager = { version = "0.5.2" }
 hopr-network-graph = { version = "0.5.0" }
-hopr-transport-p2p = { version = "0.9.5" }
+hopr-transport-p2p = { version = "0.9.7" }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
