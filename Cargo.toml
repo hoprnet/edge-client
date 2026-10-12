@@ -1,6 +1,6 @@
 [package]
 name = "edgli"
-version = "5.2.0"
+version = "5.3.0"
 authors = ["HOPR Association <tech@hoprnet.org>"]
 edition = "2024"
 description = "Light client implementing the minimum HOPR protocol to serve as an entry node into the mixnet."
@@ -101,7 +101,7 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", feat
 # Copied verbatim from the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
 hopr-chain-connector = { version = "0.28.0", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.7.0" }
-hopr-strategy = { version = "5.3.0", features = ["strategy-channel-lifecycle"] }
+hopr-strategy = { version = "5.4.0", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.8.0" }
 hopr-network-graph = { version = "0.8.0" }
 hopr-transport-p2p = { version = "0.12.1" }
