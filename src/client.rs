@@ -408,12 +408,16 @@ impl Edgli {
             .into_iter()
             .collect();
 
-        let open_to_connected = all_channels
+        // Disconnected peers' channels count neither as missing nor as headroom: keeps the figure a floor.
+        let open_to_connected_balances: Vec<HoprBalance> = all_channels
             .iter()
             .filter(|c| c.status == ChannelStatus::Open && connected.contains(&c.destination))
-            .count();
+            .map(|c| c.balance)
+            .collect();
 
-        let missing = cfg.target_open_channels.saturating_sub(open_to_connected);
+        let missing = cfg
+            .target_open_channels
+            .saturating_sub(open_to_connected_balances.len());
         // Zero for a running node — hopr-lib announces during startup — but
         // verified on-chain rather than assumed.
         // A running node cannot start without a Safe, so it is always deployed here.
@@ -424,6 +428,7 @@ impl Edgli {
             missing,
             costs,
             cfg,
+            &open_to_connected_balances,
             max_fee_per_gas,
         )
     }
@@ -517,12 +522,12 @@ impl Edgli {
     /// [`ChannelLifecycleStrategy`](hopr_strategy::channel_lifecycle::ChannelLifecycleStrategy)
     /// which owns open / fund / close / finalize for outgoing payment channels.
     ///
-    /// Returns an [`AbortHandle`] that stops the strategy reactor when aborted.
+    /// Errors without a channel-lifecycle strategy: faking `Running` would hide the misconfiguration.
     #[cfg(feature = "blokli")]
     pub fn run_reactor_from_cfg(
         &self,
         cfg: super::strategy::MultiStrategyConfig,
-    ) -> anyhow::Result<AbortHandle> {
+    ) -> anyhow::Result<ReactorHandle> {
         use super::strategy::EdgeStrategyKind;
         #[cfg(feature = "pix")]
         use hopr_strategy::pix::strategy::PixStrategy;
@@ -536,47 +541,56 @@ impl Edgli {
         // `build` became fallible in hopr-strategy 0.26. Propagate rather than unwrap: a strategy
         // that failed to construct would otherwise leave the reactor running with nothing driving
         // channel lifecycle, which looks like a healthy node that never opens a channel.
-        let strategies = cfg
-            .strategies
-            .into_iter()
-            .map(|kind| -> anyhow::Result<Box<dyn Strategy + Send>> {
-                match kind {
-                    EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
-                        Ok(ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::clone(&node))?)
+        let mut strategies: Vec<Box<dyn Strategy + Send>> =
+            Vec::with_capacity(cfg.strategies.len());
+        // Captured before the strategy moves into the reactor task: the shared cell is the only outside view.
+        let mut strategy_state: Option<StrategyStateHandle> = None;
+        for kind in cfg.strategies {
+            let built: Box<dyn Strategy + Send> = match kind {
+                EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
+                    let built = ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::clone(&node))?;
+                    if strategy_state.is_none() {
+                        strategy_state = Some(StrategyStateHandle(built.state_handle()));
                     }
-                    #[cfg(feature = "pix")]
-                    EdgeStrategyKind::Pix(sub_cfg) => {
-                        // Only trace of which pool this build picked, and anonymity differs between them -- worth logging.
-                        tracing::info!(
-                            pool = PIX_POOL,
-                            price_per_byte = %sub_cfg.strategy.price_per_byte,
-                            max_ssa_allocation = %sub_cfg.strategy.max_ssa_allocation,
-                            max_deposit_tracking_time = ?sub_cfg.pool.max_deposit_tracking_time,
-                            "enabling the PIX strategy"
-                        );
-                        // The pool checks `chain_key` against the node's identity at build time; it signs the sweep's gas top-up, which cannot go through the Safe module.
-                        #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
-                        let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
-                            .build_non_anonymous::<_, SpecDepositAddress>(
-                            Arc::clone(&node),
-                            self.chain_key.clone(),
-                            sub_cfg.pool.to_upstream(),
-                        )?;
-                        // The pool checks `chain_key` against the node's identity at build time; it signs the direct shield, which goes through the Safe module.
-                        #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
-                        let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
-                            .build_curvy::<_, SpecDepositAddress>(
-                            Arc::clone(&node),
-                            self.chain_key.clone(),
-                            sub_cfg
-                                .pool
-                                .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref()),
-                        )?;
-                        Ok(built)
-                    }
+                    built
                 }
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+                #[cfg(feature = "pix")]
+                EdgeStrategyKind::Pix(sub_cfg) => {
+                    // Only trace of which pool this build picked, and anonymity differs between them -- worth logging.
+                    tracing::info!(
+                        pool = PIX_POOL,
+                        price_per_byte = %sub_cfg.strategy.price_per_byte,
+                        max_ssa_allocation = %sub_cfg.strategy.max_ssa_allocation,
+                        max_deposit_tracking_time = ?sub_cfg.pool.max_deposit_tracking_time,
+                        "enabling the PIX strategy"
+                    );
+                    // The pool checks `chain_key` against the node's identity at build time; it signs the sweep's gas top-up, which cannot go through the Safe module.
+                    #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
+                    let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
+                        .build_non_anonymous::<_, SpecDepositAddress>(
+                        Arc::clone(&node),
+                        self.chain_key.clone(),
+                        sub_cfg.pool.to_upstream(),
+                    )?;
+                    // The pool checks `chain_key` against the node's identity at build time; it signs the direct shield, which goes through the Safe module.
+                    #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+                    let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
+                        .build_curvy::<_, SpecDepositAddress>(
+                        Arc::clone(&node),
+                        self.chain_key.clone(),
+                        sub_cfg
+                            .pool
+                            .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref()),
+                    )?;
+                    built
+                }
+            };
+            strategies.push(built);
+        }
+
+        let strategy_state = strategy_state.ok_or_else(|| {
+            anyhow::anyhow!("reactor requires a channel-lifecycle strategy to expose its state")
+        })?;
 
         let mut multi_strategy = MultiStrategy::new(strategies);
 
@@ -587,8 +601,27 @@ impl Edgli {
         });
 
         tokio::spawn(abortable);
-        Ok(abort_handle)
+        Ok(ReactorHandle {
+            abort_handle,
+            strategy_state,
+        })
     }
+}
+
+/// Live read of the channel-lifecycle strategy's own `Running` / `Degraded` / `Failed` verdict.
+#[derive(Clone)]
+pub struct StrategyStateHandle(Arc<super::strategy::AtomicStrategyState>);
+
+impl StrategyStateHandle {
+    pub fn state(&self) -> super::strategy::StrategyState {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Returned by [`Edgli::run_reactor_from_cfg`].
+pub struct ReactorHandle {
+    pub abort_handle: AbortHandle,
+    pub strategy_state: StrategyStateHandle,
 }
 
 #[cfg(test)]
@@ -711,5 +744,29 @@ mod tests {
     fn probeable_addresses_empty_input() {
         assert!(probeable_addresses(vec![], false).is_empty());
         assert!(probeable_addresses(vec![], true).is_empty());
+    }
+
+    mod strategy_state_handle {
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        use super::super::StrategyStateHandle;
+        use crate::strategy::{AtomicStrategyState, StrategyState};
+
+        #[test]
+        fn reads_degraded_when_the_strategy_reports_degraded() {
+            let cell = Arc::new(AtomicStrategyState::new(StrategyState::Running));
+            let handle = StrategyStateHandle(cell.clone());
+            cell.store(StrategyState::Degraded, Ordering::Relaxed);
+            assert_eq!(handle.state(), StrategyState::Degraded);
+        }
+
+        #[test]
+        fn reads_failed_never_silently_running() {
+            let cell = Arc::new(AtomicStrategyState::new(StrategyState::Running));
+            let handle = StrategyStateHandle(cell.clone());
+            cell.store(StrategyState::Failed, Ordering::Relaxed);
+            assert_eq!(handle.state(), StrategyState::Failed);
+        }
     }
 }
