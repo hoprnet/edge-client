@@ -443,9 +443,7 @@ impl Edgli {
     /// strategy's externally observable [`StrategyState`](super::strategy::StrategyState)
     /// while it runs.
     ///
-    /// Errors when `cfg` contains no strategy: a reactor with nothing to run has no
-    /// health to report, and faking [`Running`](super::strategy::StrategyState::Running)
-    /// would hide the misconfiguration.
+    /// Requires exactly one channel-lifecycle strategy: its state is the reactor's reported health.
     #[cfg(feature = "blokli")]
     pub fn run_reactor_from_cfg(
         &self,
@@ -471,10 +469,12 @@ impl Edgli {
         for kind in cfg.strategies {
             match kind {
                 EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
-                    let built = ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))?;
-                    if strategy_state.is_none() {
-                        strategy_state = Some(StrategyStateHandle(built.state_handle()));
+                    // Two would fight over the same channels, and one handle can't report both.
+                    if strategy_state.is_some() {
+                        anyhow::bail!("reactor supports a single channel-lifecycle strategy");
                     }
+                    let built = ChannelLifecycleStrategy::new(sub_cfg).build(Arc::clone(&node))?;
+                    strategy_state = Some(StrategyStateHandle(built.state_handle()));
                     strategies.push(built);
                 }
             }
