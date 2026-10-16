@@ -63,6 +63,12 @@ pub(crate) async fn query_max_fee_per_gas<C: BlokliQueryClient>(
     Ok(resolved)
 }
 
+/// Keyless `chainInfo.network` lookup so consumers can key per-network state on the chain's own name.
+pub async fn query_network(blokli_endpoint: &BlokliEndpoint) -> anyhow::Result<String> {
+    let info = blokli_endpoint.build_client().query_chain_info().await?;
+    Ok(info.network)
+}
+
 /// Constructs a fully-wired [`IncentiveOperations`] handle backed by a Blokli client.
 ///
 /// This is the only public entry point for obtaining an `IncentiveOperations` impl —
