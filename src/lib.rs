@@ -18,6 +18,22 @@ pub mod traits;
 
 pub use hopr_lib;
 
+/// Applies explicit mixer timing overrides on top of the operator's configured
+/// values. A `None` override leaves the operator's config-file value untouched.
+pub fn resolve_mixer_timings(
+    mut mixer: hopr_lib::config::MixerConfig,
+    min_delay_override: Option<std::time::Duration>,
+    delay_range_override: Option<std::time::Duration>,
+) -> hopr_lib::config::MixerConfig {
+    if let Some(min_delay) = min_delay_override {
+        mixer.min_delay = min_delay;
+    }
+    if let Some(delay_range) = delay_range_override {
+        mixer.delay_range = delay_range;
+    }
+    mixer
+}
+
 #[cfg(feature = "blokli")]
 pub use blokli::*;
 #[cfg(feature = "blokli")]
