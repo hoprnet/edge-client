@@ -18,22 +18,6 @@ pub mod traits;
 
 pub use hopr_lib;
 
-/// Applies explicit mixer timing overrides on top of the operator's configured
-/// values. A `None` override leaves the operator's config-file value untouched.
-pub fn resolve_mixer_timings(
-    mut mixer: hopr_lib::config::MixerConfig,
-    min_delay_override: Option<std::time::Duration>,
-    delay_range_override: Option<std::time::Duration>,
-) -> hopr_lib::config::MixerConfig {
-    if let Some(min_delay) = min_delay_override {
-        mixer.min_delay = min_delay;
-    }
-    if let Some(delay_range) = delay_range_override {
-        mixer.delay_range = delay_range;
-    }
-    mixer
-}
-
 #[cfg(feature = "blokli")]
 pub use blokli::*;
 #[cfg(feature = "blokli")]
@@ -109,3 +93,55 @@ pub use strategy::minimum_balance_recommendation;
 
 #[cfg(feature = "telemetry")]
 pub use hopr_lib::collect_hopr_metrics;
+
+/// Applies explicit mixer timing overrides on top of the operator's configured
+/// values. A `None` override leaves the operator's config-file value untouched.
+pub fn resolve_mixer_timings(
+    mut mixer: hopr_lib::config::MixerConfig,
+    min_delay_override: Option<std::time::Duration>,
+    delay_range_override: Option<std::time::Duration>,
+) -> hopr_lib::config::MixerConfig {
+    if let Some(min_delay) = min_delay_override {
+        mixer.min_delay = min_delay;
+    }
+    if let Some(delay_range) = delay_range_override {
+        mixer.delay_range = delay_range;
+    }
+    mixer
+}
+
+#[cfg(test)]
+mod mixer_timing_tests {
+    use std::time::Duration;
+
+    use hopr_lib::config::MixerConfig;
+
+    use super::resolve_mixer_timings;
+
+    #[test]
+    fn honors_operator_config_without_overrides() {
+        let operator_mixer = MixerConfig {
+            min_delay: Duration::from_millis(50),
+            delay_range: Duration::from_millis(200),
+            ..Default::default()
+        };
+        let resolved = resolve_mixer_timings(operator_mixer, None, None);
+        assert_eq!(resolved, operator_mixer);
+    }
+
+    #[test]
+    fn applies_explicit_overrides() {
+        let operator_mixer = MixerConfig {
+            min_delay: Duration::from_millis(50),
+            delay_range: Duration::from_millis(200),
+            ..Default::default()
+        };
+        let resolved = resolve_mixer_timings(
+            operator_mixer,
+            Some(Duration::from_millis(5)),
+            Some(Duration::from_millis(10)),
+        );
+        assert_eq!(resolved.min_delay, Duration::from_millis(5));
+        assert_eq!(resolved.delay_range, Duration::from_millis(10));
+    }
+}
