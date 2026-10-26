@@ -17,6 +17,7 @@ ignore = [
   "RUSTSEC-2026-0220", # `ruint` shift overflow, needs >=1.20.0, transitive from hoprnet
   "RUSTSEC-2026-0249", # `smartstring` [unmaintained], no patched version, transitive from hoprnet
   "RUSTSEC-2026-0253", # `lru` unsounde, need updating alloy on Curvy side
+  "RUSTSEC-2026-0387", # `crypto-bigint` timing variability, fixed in >=0.7.6; blocked on k256/alloy-signer's elliptic-curve 0.13.8 pin (needs >=0.14). No local secret-key signing via k256/alloy-signer in edge-client itself. Tracked: https://github.com/hoprnet/edge-client/issues/225
 ]
 informational_warnings = ["unmaintained"]
 severity_threshold = "low"

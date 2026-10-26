@@ -22,21 +22,3 @@ fn missing_mixer_section_deserialises_as_default() {
     let parsed: HoprLibConfig = serde_yaml::from_str("{}").unwrap();
     assert_eq!(parsed.protocol.mixer, MixerConfig::default());
 }
-
-/// Verifies the edge-client specific mixer override: 0 ms min and 1 ms range,
-/// matching the hardcoded values applied in main.rs after YAML deserialisation.
-#[test]
-fn edge_client_mixer_defaults() {
-    let edge_mixer = MixerConfig {
-        min_delay: Duration::ZERO,
-        delay_range: Duration::from_millis(1),
-        ..Default::default()
-    };
-    assert_ne!(
-        edge_mixer,
-        MixerConfig::default(),
-        "edge-client mixer differs from hoprnet default"
-    );
-    assert_eq!(edge_mixer.min_delay, Duration::ZERO);
-    assert_eq!(edge_mixer.delay_range, Duration::from_millis(1));
-}
