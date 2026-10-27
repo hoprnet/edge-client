@@ -1,20 +1,11 @@
 [advisories]
 ignore = [
   "RUSTSEC-2024-0436", # 'paste' dependency in 'libp2p' [unmaintained]
-  "RUSTSEC-2023-0071", # 'rsa' dependency in 'sqlx' [unfixed]
   "RUSTSEC-2024-0388", # 'derivative' in 'alloy' [unmaintained],
   "RUSTSEC-2024-0449", # 'unsafe-libyaml' via 'serde_yaml' [unmaintained], no maintained replacement without dropping serde_yaml
-  "RUSTSEC-2025-0073", # 'alloy-dyn-abi' in 'alloy' - will be removed in 4.0
-  "RUSTSEC-2025-0134", # `rustls-pemfile` [unmaintained], blokli-client needs to avoid rust-tls, see https://github.com/hoprnet/blokli/issues/107
-  "RUSTSEC-2025-0137", # `alloy` - held back until removed, see https://github.com/hoprnet/hoprnet/issues/7707
-  "RUSTSEC-2026-0049", # `rustls-webpki` - needs alloy removal
   "RUSTSEC-2026-0118", # `hickory-proto` 0.25.2 - no fix available yet, transitive from hoprnet
   "RUSTSEC-2026-0119", # `hickory-proto` CPU exhaustion, needs >=0.26.1, transitive from hoprnet
-  "RUSTSEC-2026-0120", # `hickory-net` NSEC3 loop, needs >=0.26.1, transitive from hoprnet
   "RUSTSEC-2026-0173", # `proc-macro-error2` [unmaintained], transitive dep via validator_derive
-  "RUSTSEC-2026-0185", # `quinn-proto` memory exhaustion, needs >=0.11.15, transitive from hoprnet
-  "RUSTSEC-2026-0204", # `crossbeam-epoch` pointer deref, needs >=0.9.20, transitive from hoprnet
-  "RUSTSEC-2026-0220", # `ruint` shift overflow, needs >=1.20.0, transitive from hoprnet
   "RUSTSEC-2026-0249", # `smartstring` [unmaintained], no patched version, transitive from hoprnet
   "RUSTSEC-2026-0253", # `lru` unsounde, need updating alloy on Curvy side
   "RUSTSEC-2026-0387", # `crypto-bigint` timing variability, fixed in >=0.7.6; blocked on k256/alloy-signer's elliptic-curve 0.13.8 pin (needs >=0.14). No local secret-key signing via k256/alloy-signer in edge-client itself. Tracked: https://github.com/hoprnet/edge-client/issues/225
