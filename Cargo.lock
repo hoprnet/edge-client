@@ -3700,7 +3700,7 @@ dependencies = [
  "hopr-lib",
  "hopr-network-graph",
  "hopr-strategy",
- "hopr-ticket-manager",
+ "hopr-ticket-manager 0.9.0",
  "hopr-transport-p2p",
  "mimalloc",
  "multiaddr",
@@ -3713,6 +3713,7 @@ dependencies = [
  "signal-hook",
  "smart-default",
  "strum",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -4862,7 +4863,7 @@ dependencies = [
  "hopr-chain-connector",
  "hopr-ct-full-network",
  "hopr-network-graph",
- "hopr-ticket-manager",
+ "hopr-ticket-manager 0.8.0",
  "hopr-transport",
  "hopr-transport-p2p",
  "hopr-utilities",
@@ -4930,7 +4931,7 @@ dependencies = [
  "hopr-api",
  "hopr-crypto-packet",
  "hopr-protocol-pix",
- "hopr-ticket-manager",
+ "hopr-ticket-manager 0.8.0",
  "hopr-utilities",
  "humantime-serde",
  "lazy_static",
@@ -5070,6 +5071,28 @@ name = "hopr-ticket-manager"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2219a766732e0970cc3f31fcf55ca86619a37733c8db40e2f18b20ef8dbc852"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "clap",
+ "dashmap",
+ "futures",
+ "hashbrown 0.17.1",
+ "hopr-api",
+ "hopr-utilities",
+ "parking_lot",
+ "postcard",
+ "redb",
+ "strum",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "hopr-ticket-manager"
+version = "0.9.0"
+source = "git+https://github.com/hoprnet/hopr-impls?branch=fix%2Fticket-index-persistence#17a0b17d9e4a50b6a89b57e0bf4e9d4eb8116410"
 dependencies = [
  "ahash",
  "anyhow",
@@ -7707,7 +7730,7 @@ dependencies = [
  "quinn-udp 0.5.16",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -7747,7 +7770,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -7760,7 +7783,7 @@ checksum = "47091c86514c2e11452cb228dee77037334b99d92a23e4c69aa5982261f39247"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "windows-sys 0.61.2",
 ]
 
@@ -9210,7 +9233,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::StreamExt;
@@ -18,7 +19,7 @@ use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::exports::network::types::addr::is_public_address;
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
 use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
-use hopr_ticket_manager::ticket_factory_from_chain;
+use hopr_ticket_manager::{HoprTicketFactory, RedbStore, ticket_factory_from_chain};
 use hopr_transport_p2p::{HoprLibp2pNetworkBuilder, HoprNetwork, PeerDiscovery};
 use multiaddr::Multiaddr;
 use strum::{AsRefStr, Display, EnumString};
@@ -118,12 +119,15 @@ fn probeable_addresses(addrs: Vec<Multiaddr>, probe_local_addresses: bool) -> Ve
 /// Returns an [`AbortHandle`] that stops the closure task when aborted.
 /// `Edgli` is kept alive for the entire duration of `f` so that background tasks
 /// remain active until `f` completes or the returned [`AbortHandle`] is used to cancel it.
+/// See [`Edgli::new`] for the arguments.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_hopr_edge_node_with<F, T>(
     cfg: HoprLibConfig,
     hopr_keys: HoprKeys,
     blokli_endpoint: BlokliEndpoint,
     blokli_connector_config: Option<BlockchainConnectorConfig>,
     probe_local_addresses: bool,
+    ticket_store_path: Option<PathBuf>,
     f: F,
     visitor: impl Fn(EdgliInitState) + Send + 'static,
 ) -> anyhow::Result<AbortHandle>
@@ -137,6 +141,7 @@ where
         blokli_endpoint,
         blokli_connector_config,
         probe_local_addresses,
+        ticket_store_path,
         visitor,
     )
     .await?;
@@ -151,6 +156,63 @@ where
     Ok(abort_handle)
 }
 
+/// How often the outgoing ticket indices are saved to the ticket store.
+///
+/// Indices issued after the last save are issued again if the process exits without a final save.
+const OUTGOING_TICKET_INDEX_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Saves the node's outgoing ticket indices every [`OUTGOING_TICKET_INDEX_SAVE_INTERVAL`] and once more on drop,
+/// so that a restarted node does not issue them again.
+struct OutgoingTicketIndices {
+    factory: Arc<HoprTicketFactory<RedbStore>>,
+    periodic_save: AbortHandle,
+}
+
+impl OutgoingTicketIndices {
+    fn start(factory: Arc<HoprTicketFactory<RedbStore>>) -> Self {
+        // Weak, so that the task does not keep the ticket store open
+        let weak_factory = Arc::downgrade(&factory);
+        let (periodic_save, abort_handle) = abortable(async move {
+            let mut interval = tokio::time::interval(OUTGOING_TICKET_INDEX_SAVE_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let Some(factory) = weak_factory.upgrade() else {
+                    break;
+                };
+                if let Err(error) = save_outgoing_ticket_indices(factory).await {
+                    tracing::error!(%error, "failed to save outgoing ticket indices");
+                }
+            }
+        });
+        let _jh = tokio::spawn(periodic_save);
+        Self {
+            factory,
+            periodic_save: abort_handle,
+        }
+    }
+
+    async fn save(&self) -> anyhow::Result<()> {
+        save_outgoing_ticket_indices(self.factory.clone()).await
+    }
+}
+
+impl Drop for OutgoingTicketIndices {
+    fn drop(&mut self) {
+        self.periodic_save.abort();
+        if let Err(error) = self.factory.save_outgoing_indices() {
+            tracing::error!(%error, "failed to save outgoing ticket indices on shutdown");
+        }
+    }
+}
+
+async fn save_outgoing_ticket_indices(
+    factory: Arc<HoprTicketFactory<RedbStore>>,
+) -> anyhow::Result<()> {
+    tokio::task::spawn_blocking(move || factory.save_outgoing_indices()).await??;
+    Ok(())
+}
+
 /// The primary edge-client handle.
 ///
 /// Wraps [`HoprEdgeClient`] and adds Blokli-specific functionality such as
@@ -160,6 +222,8 @@ where
 #[derive(Clone)]
 pub struct Edgli {
     hopr: Arc<HoprEdgeClient>,
+    /// Keeps the outgoing ticket indices saved; shared, so the final save happens when the last clone is dropped.
+    outgoing_ticket_indices: Arc<OutgoingTicketIndices>,
     /// The node's packet-layer public key, stored at construction for peer-ID access.
     packet_public_key: OffchainPublicKey,
     /// The node's chain keypair, which both PIX deposit pools sign with: the plain pool its sweep's
@@ -201,6 +265,10 @@ impl Edgli {
     /// * `probe_local_addresses` – when `true`, probe non-public (private,
     ///   loopback, link-local) peer addresses from announcements; when `false`
     ///   (default) they are filtered out before dialing
+    /// * `ticket_store_path` – file that keeps the outgoing ticket indices across
+    ///   restarts, created if missing; must not be shared with another node. With `None`,
+    ///   a temporary file is used and a restarted node issues already used indices again,
+    ///   which its peers reject as replays
     /// * `visitor` – called at each [`EdgliInitState`] transition for progress reporting
     pub async fn new(
         cfg: HoprLibConfig,
@@ -208,6 +276,7 @@ impl Edgli {
         blokli_endpoint: BlokliEndpoint,
         blokli_connector_config: Option<BlockchainConnectorConfig>,
         probe_local_addresses: bool,
+        ticket_store_path: Option<PathBuf>,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
         visitor(EdgliInitState::ValidatingConfig);
@@ -259,9 +328,27 @@ impl Edgli {
         };
         probe_cfg.validate_against_probe_timeout(cfg.protocol.probe.timeout)?;
 
-        let ticket_factory = ticket_factory_from_chain(&chain_connector)
+        let ticket_store = match &ticket_store_path {
+            Some(path) => {
+                info!(path = %path.display(), "Opening the ticket store");
+                RedbStore::new(path).map_err(|e| {
+                    anyhow::anyhow!("failed to open the ticket store at {}: {e}", path.display())
+                })?
+            }
+            None => {
+                tracing::warn!(
+                    "No ticket store file given: outgoing ticket indices will be issued again after a restart"
+                );
+                RedbStore::new_temp().map_err(|e| {
+                    anyhow::anyhow!("failed to create a temporary ticket store: {e}")
+                })?
+            }
+        };
+        let ticket_factory = ticket_factory_from_chain(&chain_connector, ticket_store)
             .await
             .map_err(|e| anyhow::anyhow!("failed to seed ticket factory: {e}"))?;
+        let outgoing_ticket_indices =
+            Arc::new(OutgoingTicketIndices::start(ticket_factory.clone()));
 
         let path_cfg = cfg.protocol.path_planner;
         let graph: SharedChannelGraph = Arc::new(ChannelGraph::with_edge_params(
@@ -326,6 +413,7 @@ impl Edgli {
         visitor(EdgliInitState::Ready);
         Ok(Self {
             hopr: node,
+            outgoing_ticket_indices,
             packet_public_key,
             #[cfg(feature = "pix")]
             chain_key: hopr_keys.chain_key,
@@ -337,6 +425,14 @@ impl Edgli {
     /// Returns the shared [`HoprEdgeClient`] handle.
     pub fn as_hopr(&self) -> Arc<HoprEdgeClient> {
         self.hopr.clone()
+    }
+
+    /// Saves the outgoing ticket indices to the ticket store.
+    ///
+    /// The indices are also saved periodically and when the last `Edgli` clone is dropped;
+    /// call this before shutting down when the process may exit without dropping it.
+    pub async fn save_outgoing_ticket_indices(&self) -> anyhow::Result<()> {
+        self.outgoing_ticket_indices.save().await
     }
 
     /// Subscribes to live `gvpn:exit` changes through the already-connected chain connector.
@@ -769,6 +865,43 @@ mod tests {
             let handle = StrategyStateHandle(cell.clone());
             cell.store(StrategyState::Failed, Ordering::Relaxed);
             assert_eq!(handle.state(), StrategyState::Failed);
+        }
+    }
+
+    mod outgoing_ticket_indices {
+        use hopr_lib::api::{chain::ChannelEntry, types::internal::channels::ChannelStatus};
+
+        use super::super::OutgoingTicketIndices;
+        use super::*;
+
+        fn open_channel() -> anyhow::Result<ChannelEntry> {
+            Ok(ChannelEntry::builder()
+                .between(&ChainKeypair::random(), &ChainKeypair::random())
+                .amount(10)
+                .ticket_index(0)
+                .status(ChannelStatus::Open)
+                .epoch(1)
+                .build()?)
+        }
+
+        #[tokio::test]
+        async fn are_saved_when_dropped() -> anyhow::Result<()> {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().join("tickets.redb");
+            let channel = open_channel()?;
+
+            let factory = Arc::new(HoprTicketFactory::new(RedbStore::new(&path)?));
+            factory.sync_from_outgoing_channels(&[channel])?;
+            let indices = OutgoingTicketIndices::start(factory.clone());
+            assert_eq!(0, factory.next_outgoing_ticket_index(&channel));
+            assert_eq!(1, factory.next_outgoing_ticket_index(&channel));
+            drop(indices);
+            drop(factory);
+
+            let factory = HoprTicketFactory::new(RedbStore::new(&path)?);
+            factory.sync_from_outgoing_channels(&[channel])?;
+            assert_eq!(2, factory.next_outgoing_ticket_index(&channel));
+            Ok(())
         }
     }
 }

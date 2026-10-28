@@ -84,6 +84,15 @@ pub struct CliArgs {
         default_value_t = false
     )]
     pub probe_local_addresses: bool,
+
+    /// Ticket store file path
+    #[arg(
+        long,
+        env = "HOPR_EDGE_TICKET_STORE_FILE_PATH",
+        help = "The path to the file keeping the outgoing ticket indices across restarts (default: a temporary file, so indices are issued again after a restart)",
+        required = false
+    )]
+    pub ticket_store_file_path: Option<PathBuf>,
 }
 
 fn init_logger() -> anyhow::Result<()> {
@@ -236,6 +245,7 @@ async fn main() -> anyhow::Result<()> {
         blokli_endpoint,
         None,
         args.probe_local_addresses,
+        args.ticket_store_file_path,
         |s| {
             info!(?s, "Initialization stage");
         },
@@ -251,7 +261,8 @@ async fn main() -> anyhow::Result<()> {
             }
             Signal::Int => {
                 info!("Received the INT signal... tearing down the node");
-                // Dropping Edgli aborts all background tasks via AbortableList.
+                // Dropping Edgli aborts all background tasks via AbortableList
+                // and saves the outgoing ticket indices one last time.
                 drop(edgli);
                 info!("All processes stopped... emulating the default handler...");
                 low_level::emulate_default_handler(signal as i32)?;

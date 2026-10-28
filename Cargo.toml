@@ -102,7 +102,7 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", feat
 hopr-chain-connector = { version = "0.28.0", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.7.0" }
 hopr-strategy = { version = "5.4.0", features = ["strategy-channel-lifecycle"] }
-hopr-ticket-manager = { version = "0.8.0" }
+hopr-ticket-manager = { version = "0.9.0" }
 hopr-network-graph = { version = "0.8.0" }
 hopr-transport-p2p = { version = "0.12.3" }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -122,6 +122,7 @@ hopr-chain-connector = { version = "0.28.0", features = [
 ] }
 # `full` for the async unit tests in src/ (#[tokio::test], spawn, time, sync).
 tokio = { version = "1.53.2", features = ["full"] }
+tempfile = "3.27.0"
 
 [build-dependencies]
 anyhow = "1.0.104"
@@ -136,3 +137,7 @@ anyhow = "1.0.104"
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
+
+# TODO: remove once hopr-ticket-manager 0.9.0 is released from hoprnet/hopr-impls
+[patch.crates-io]
+hopr-ticket-manager = { git = "https://github.com/hoprnet/hopr-impls", branch = "fix/ticket-index-persistence" }
