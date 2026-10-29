@@ -99,7 +99,7 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", feat
   "serde",
 ] }
 # Version requirements are kept compatible with the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
-hopr-chain-connector = { version = "0.28.0", features = ["runtime-tokio"] }
+hopr-chain-connector = { version = "0.29.0", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.7.0" }
 hopr-strategy = { version = "5.4.0", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.8.0" }
@@ -116,7 +116,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 
 [dev-dependencies]
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.
-hopr-chain-connector = { version = "0.28.0", features = [
+hopr-chain-connector = { version = "0.29.0", features = [
   "runtime-tokio",
   "testing",
 ] }

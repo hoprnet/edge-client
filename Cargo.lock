@@ -3425,7 +3425,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -3695,7 +3695,7 @@ dependencies = [
  "clap",
  "console-subscriber",
  "futures",
- "hopr-chain-connector",
+ "hopr-chain-connector 0.29.0",
  "hopr-ct-full-network",
  "hopr-lib",
  "hopr-network-graph",
@@ -4806,6 +4806,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "hopr-chain-connector"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0475324bfd638b3c796d58735337108b6c0979be6a1698ea2c97fd287fb9817f"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "async-broadcast",
+ "async-trait",
+ "atomic_enum",
+ "blokli-client",
+ "const-hex",
+ "dashmap",
+ "futures",
+ "futures-concurrency",
+ "futures-time",
+ "hopr-api",
+ "hopr-utilities",
+ "moka",
+ "parking_lot",
+ "petgraph",
+ "postcard",
+ "redb",
+ "serde_json",
+ "smart-default",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "validator",
+]
+
+[[package]]
 name = "hopr-crypto-packet"
 version = "2.1.0"
 source = "git+https://github.com/hoprnet/hoprnet?branch=master#1462e4a019db9babd14f32f941c3762563d57157"
@@ -4859,7 +4891,7 @@ dependencies = [
  "futures-time",
  "hex-literal",
  "hopr-api",
- "hopr-chain-connector",
+ "hopr-chain-connector 0.28.0",
  "hopr-ct-full-network",
  "hopr-network-graph",
  "hopr-ticket-manager",
@@ -5041,7 +5073,7 @@ dependencies = [
  "futures-concurrency",
  "futures-time",
  "hopr-api",
- "hopr-chain-connector",
+ "hopr-chain-connector 0.28.0",
  "hopr-utilities",
  "humantime-serde",
  "lazy_static",
@@ -7707,7 +7739,7 @@ dependencies = [
  "quinn-udp 0.5.16",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -7747,7 +7779,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -7760,7 +7792,7 @@ checksum = "47091c86514c2e11452cb228dee77037334b99d92a23e4c69aa5982261f39247"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "windows-sys 0.61.2",
 ]
 
@@ -9210,7 +9242,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
