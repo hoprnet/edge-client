@@ -101,12 +101,25 @@ pub fn resolve_mixer_timings(
     min_delay_override: Option<std::time::Duration>,
     delay_range_override: Option<std::time::Duration>,
 ) -> hopr_lib::config::MixerConfig {
+    use hopr_transport_mixer::config::{MixerType, UniformConfig};
+
+    let has_override = min_delay_override.is_some() || delay_range_override.is_some();
+    if !has_override {
+        return mixer;
+    }
+
+    // These knobs only exist for the uniform engine, so an override selects it.
+    let mut uniform = match mixer.mixer_type {
+        MixerType::Uniform(operator_uniform) => operator_uniform,
+        MixerType::Poisson(_) => UniformConfig::default(),
+    };
     if let Some(min_delay) = min_delay_override {
-        mixer.min_delay = min_delay;
+        uniform.min_delay = min_delay;
     }
     if let Some(delay_range) = delay_range_override {
-        mixer.delay_range = delay_range;
+        uniform.delay_range = delay_range;
     }
+    mixer.mixer_type = MixerType::Uniform(uniform);
     mixer
 }
 
@@ -115,33 +128,55 @@ mod mixer_timing_tests {
     use std::time::Duration;
 
     use hopr_lib::config::MixerConfig;
+    use hopr_transport_mixer::config::{MixerType, PoissonConfig, UniformConfig};
 
     use super::resolve_mixer_timings;
 
+    fn uniform_mixer(min_delay_ms: u64, delay_range_ms: u64) -> MixerConfig {
+        MixerConfig {
+            mixer_type: MixerType::Uniform(UniformConfig {
+                min_delay: Duration::from_millis(min_delay_ms),
+                delay_range: Duration::from_millis(delay_range_ms),
+            }),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn honors_operator_config_without_overrides() {
-        let operator_mixer = MixerConfig {
-            min_delay: Duration::from_millis(50),
-            delay_range: Duration::from_millis(200),
-            ..Default::default()
-        };
+        let operator_mixer = uniform_mixer(50, 200);
         let resolved = resolve_mixer_timings(operator_mixer, None, None);
         assert_eq!(resolved, operator_mixer);
+
+        let poisson_mixer = MixerConfig {
+            mixer_type: MixerType::Poisson(PoissonConfig::default()),
+            ..Default::default()
+        };
+        let resolved = resolve_mixer_timings(poisson_mixer, None, None);
+        assert_eq!(resolved, poisson_mixer);
     }
 
     #[test]
     fn applies_explicit_overrides() {
-        let operator_mixer = MixerConfig {
-            min_delay: Duration::from_millis(50),
-            delay_range: Duration::from_millis(200),
-            ..Default::default()
-        };
         let resolved = resolve_mixer_timings(
-            operator_mixer,
+            uniform_mixer(50, 200),
             Some(Duration::from_millis(5)),
             Some(Duration::from_millis(10)),
         );
-        assert_eq!(resolved.min_delay, Duration::from_millis(5));
-        assert_eq!(resolved.delay_range, Duration::from_millis(10));
+        assert_eq!(resolved, uniform_mixer(5, 10));
+    }
+
+    #[test]
+    fn an_override_switches_a_poisson_mixer_to_uniform() {
+        let poisson_mixer = MixerConfig {
+            mixer_type: MixerType::Poisson(PoissonConfig::default()),
+            ..Default::default()
+        };
+        let resolved = resolve_mixer_timings(poisson_mixer, Some(Duration::from_millis(5)), None);
+        let expected = MixerType::Uniform(UniformConfig {
+            min_delay: Duration::from_millis(5),
+            ..Default::default()
+        });
+        assert_eq!(resolved.mixer_type, expected);
     }
 }

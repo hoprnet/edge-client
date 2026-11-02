@@ -98,10 +98,15 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", feat
   "session-client",
   "serde",
 ] }
+# Same branch as hopr-lib so both resolve to one hoprnet rev; hopr-lib re-exports MixerConfig but not its engine types.
+hopr-transport-mixer = { git = "https://github.com/hoprnet/hoprnet", branch = "master", default-features = false, features = [
+  "uniform-channel",
+  "serde",
+] }
 # Version requirements are kept compatible with the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
 hopr-chain-connector = { version = "0.28.0", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.7.0" }
-hopr-strategy = { version = "5.4.0", features = ["strategy-channel-lifecycle"] }
+hopr-strategy = { version = "5.5.0", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.8.0" }
 hopr-network-graph = { version = "0.8.0" }
 hopr-transport-p2p = { version = "0.12.3" }
