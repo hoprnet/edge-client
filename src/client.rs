@@ -18,7 +18,7 @@ use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::exports::network::types::addr::is_public_address;
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
 use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
-use hopr_ticket_manager::ticket_factory_from_chain;
+use hopr_ticket_manager::{RedbStore, ticket_factory_from_chain};
 use hopr_transport_p2p::{HoprLibp2pNetworkBuilder, HoprNetwork, PeerDiscovery};
 use multiaddr::Multiaddr;
 use strum::{AsRefStr, Display, EnumString};
@@ -194,6 +194,8 @@ impl Edgli {
     /// * `cfg` – full HOPR node configuration; set `cfg.protocol.path_planner`
     ///   before calling to control the routing strategy.  Use
     ///   [`crate::latency_path_planner_config`] to obtain a latency-optimised default.
+    ///   `cfg.protocol.mixer` is pinned here to the Poisson engine with a 1 ms
+    ///   `max_delay`, so only its `capacity` is taken from the caller.
     /// * `hopr_keys` – chain and packet keypairs
     /// * `blokli_endpoint` – Blokli service URL and optional DNS override, built with
     ///   [`BlokliEndpoint::new`]; there is no default URL
@@ -210,6 +212,9 @@ impl Edgli {
         probe_local_addresses: bool,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
+        let mut cfg = cfg;
+        cfg.protocol.mixer = edge_mixer_config(cfg.protocol.mixer);
+
         visitor(EdgliInitState::ValidatingConfig);
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
             let ipv4: std::net::Ipv4Addr = address
@@ -259,7 +264,7 @@ impl Edgli {
         };
         probe_cfg.validate_against_probe_timeout(cfg.protocol.probe.timeout)?;
 
-        let ticket_factory = ticket_factory_from_chain(&chain_connector)
+        let ticket_factory = ticket_factory_from_chain(&chain_connector, RedbStore::new_temp()?)
             .await
             .map_err(|e| anyhow::anyhow!("failed to seed ticket factory: {e}"))?;
 
@@ -626,6 +631,19 @@ pub struct ReactorHandle {
     pub strategy_state: StrategyStateHandle,
 }
 
+/// The mixer config an edge node runs with: the Poisson engine with a 1 ms hard delay bound.
+///
+/// An edge node only mixes its own outgoing packets, so the operator's timing knobs are dropped
+/// and only `capacity` is carried over. Any added delay costs tunnel QoS for no anonymity gain.
+fn edge_mixer_config(
+    operator_mixer: hopr_lib::config::MixerConfig,
+) -> hopr_lib::config::MixerConfig {
+    hopr_lib::config::MixerConfig {
+        capacity: operator_mixer.capacity,
+        ..hopr_lib::config::MixerConfig::new_poisson(std::time::Duration::from_millis(1), 0.01)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -770,5 +788,32 @@ mod tests {
             cell.store(StrategyState::Failed, Ordering::Relaxed);
             assert_eq!(handle.state(), StrategyState::Failed);
         }
+    }
+
+    #[test]
+    fn edge_mixer_config_keeps_the_operator_capacity() {
+        let operator = hopr_lib::config::MixerConfig {
+            capacity: 2_048,
+            ..Default::default()
+        };
+        assert_eq!(edge_mixer_config(operator).capacity, 2_048);
+    }
+
+    #[test]
+    fn edge_mixer_config_pins_poisson_to_one_millisecond() {
+        let operator = hopr_lib::config::MixerConfig {
+            capacity: 2_048,
+            ..Default::default()
+        };
+        assert_eq!(
+            edge_mixer_config(operator),
+            hopr_lib::config::MixerConfig {
+                capacity: 2_048,
+                ..hopr_lib::config::MixerConfig::new_poisson(
+                    std::time::Duration::from_millis(1),
+                    0.01
+                )
+            }
+        );
     }
 }

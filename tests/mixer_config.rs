@@ -1,13 +1,9 @@
-use std::time::Duration;
-
 use hopr_lib::config::{HoprLibConfig, MixerConfig};
 
 #[test]
 fn mixer_section_round_trips_through_yaml() {
     let mut cfg = HoprLibConfig::default();
     cfg.protocol.mixer = MixerConfig {
-        min_delay: Duration::from_millis(1),
-        delay_range: Duration::from_millis(25),
         capacity: 2_048,
         ..Default::default()
     };
