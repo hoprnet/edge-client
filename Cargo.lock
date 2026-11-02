@@ -3425,7 +3425,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -3685,7 +3685,7 @@ dependencies = [
 
 [[package]]
 name = "edgli"
-version = "5.2.0"
+version = "5.3.0"
 dependencies = [
  "anyhow",
  "async-signal",
@@ -4826,9 +4826,8 @@ dependencies = [
 
 [[package]]
 name = "hopr-ct-full-network"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95cfe06f2b8a510183e0da5d12a7fb5063711274e31a19411ecd0a4e4fe7f9c6"
+version = "0.7.1"
+source = "git+https://github.com/hoprnet/hopr-impls?branch=feat%2Fegress-control-v4#483d28d3a555316e2ab5937b5af17da6f46e3921"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -4838,6 +4837,7 @@ dependencies = [
  "hopr-network-graph",
  "hopr-utilities",
  "smart-default",
+ "tokio",
  "tracing",
  "validator",
 ]
@@ -4884,9 +4884,8 @@ dependencies = [
 
 [[package]]
 name = "hopr-network-graph"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "009f463e7c597f55aa8fda7b5a4c5df5d28cec3f119e9cc13b94628c7cc2c386"
+version = "0.8.1"
+source = "git+https://github.com/hoprnet/hopr-impls?branch=feat%2Fegress-control-v4#483d28d3a555316e2ab5937b5af17da6f46e3921"
 dependencies = [
  "anyhow",
  "bimap",
@@ -7707,7 +7706,7 @@ dependencies = [
  "quinn-udp 0.5.16",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -7747,7 +7746,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -7760,7 +7759,7 @@ checksum = "47091c86514c2e11452cb228dee77037334b99d92a23e4c69aa5982261f39247"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "windows-sys 0.61.2",
 ]
 
@@ -9210,7 +9209,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

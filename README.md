@@ -89,6 +89,17 @@ chain connector's domain event stream; periodic reads reconcile entries whose
 node has lost its Safe binding. `watch_exit_nodes` needs the `runtime-tokio`
 feature and must be called inside a Tokio runtime with timers enabled.
 
+Probing and cover traffic can be steered while the node runs:
+
+```rust
+edgli.set_probing_level(Some(ProbingLevel::Low)); // Low, Medium or High (default); None stops probing
+edgli.set_probing_focus(exits);                   // bias loopback probing towards these exits
+edgli.clear_probing_focus();
+edgli.set_cover_traffic(true);                    // off by default, independent of the level
+```
+
+A focus is a bias, not a filter: other peers keep being probed at the base rate.
+
 `BlokliEndpoint`, `BlokliDnsOverride` and `make_incentive_operations` are
 blokli-specific: they are only available with the `blokli` feature enabled (it
 is on by default).
