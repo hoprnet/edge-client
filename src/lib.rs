@@ -94,8 +94,8 @@ pub use strategy::minimum_balance_recommendation;
 #[cfg(feature = "telemetry")]
 pub use hopr_lib::collect_hopr_metrics;
 
-/// Applies explicit mixer timing overrides on top of the operator's configured
-/// values. A `None` override leaves the operator's config-file value untouched.
+/// Applies mixer timing overrides; any override forces the uniform engine, replacing a configured Poisson one.
+/// Without overrides the operator's mixer config is returned untouched.
 pub fn resolve_mixer_timings(
     mut mixer: hopr_lib::config::MixerConfig,
     min_delay_override: Option<std::time::Duration>,
