@@ -210,6 +210,14 @@ impl Edgli {
         probe_local_addresses: bool,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
+        let mut cfg = cfg;
+        // An edge node only mixes its own outgoing packets; anything above 1 ms costs tunnel QoS.
+        cfg.protocol.mixer.mixer_type =
+            hopr_transport_mixer::MixerType::Poisson(hopr_transport_mixer::PoissonConfig {
+                max_delay: std::time::Duration::from_millis(1),
+                ..Default::default()
+            });
+
         visitor(EdgliInitState::ValidatingConfig);
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
             let ipv4: std::net::Ipv4Addr = address
