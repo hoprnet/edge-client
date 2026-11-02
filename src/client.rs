@@ -213,11 +213,7 @@ impl Edgli {
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
         let mut cfg = cfg;
-        // An edge node only mixes its own outgoing packets; anything above 1 ms costs tunnel QoS.
-        cfg.protocol.mixer = hopr_lib::config::MixerConfig {
-            capacity: cfg.protocol.mixer.capacity,
-            ..hopr_lib::config::MixerConfig::new_poisson(std::time::Duration::from_millis(1), 0.01)
-        };
+        cfg.protocol.mixer = edge_mixer_config(cfg.protocol.mixer);
 
         visitor(EdgliInitState::ValidatingConfig);
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
@@ -635,6 +631,19 @@ pub struct ReactorHandle {
     pub strategy_state: StrategyStateHandle,
 }
 
+/// The mixer config an edge node runs with: the Poisson engine with a 1 ms hard delay bound.
+///
+/// An edge node only mixes its own outgoing packets, so the operator's timing knobs are dropped
+/// and only `capacity` is carried over. Any added delay costs tunnel QoS for no anonymity gain.
+fn edge_mixer_config(
+    operator_mixer: hopr_lib::config::MixerConfig,
+) -> hopr_lib::config::MixerConfig {
+    hopr_lib::config::MixerConfig {
+        capacity: operator_mixer.capacity,
+        ..hopr_lib::config::MixerConfig::new_poisson(std::time::Duration::from_millis(1), 0.01)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -779,5 +788,32 @@ mod tests {
             cell.store(StrategyState::Failed, Ordering::Relaxed);
             assert_eq!(handle.state(), StrategyState::Failed);
         }
+    }
+
+    #[test]
+    fn edge_mixer_config_keeps_the_operator_capacity() {
+        let operator = hopr_lib::config::MixerConfig {
+            capacity: 2_048,
+            ..Default::default()
+        };
+        assert_eq!(edge_mixer_config(operator).capacity, 2_048);
+    }
+
+    #[test]
+    fn edge_mixer_config_pins_poisson_to_one_millisecond() {
+        let operator = hopr_lib::config::MixerConfig {
+            capacity: 2_048,
+            ..Default::default()
+        };
+        assert_eq!(
+            edge_mixer_config(operator),
+            hopr_lib::config::MixerConfig {
+                capacity: 2_048,
+                ..hopr_lib::config::MixerConfig::new_poisson(
+                    std::time::Duration::from_millis(1),
+                    0.01
+                )
+            }
+        );
     }
 }
