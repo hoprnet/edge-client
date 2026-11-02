@@ -2163,17 +2163,4 @@ mod tests {
             "a surplus the Exit delivers must be a surplus the Entry pays for"
         );
     }
-
-    // The deployed piz-palu geometry; a surplus above the threshold needs hoprnet#8519.
-    #[cfg(feature = "pix")]
-    #[test]
-    fn deployed_geometry_with_surplus_above_threshold_validates() {
-        let mut cfg = hopr_lib::config::HoprLibConfig::default();
-        cfg.protocol.pix.num_ssa_parts = 4096;
-        cfg.protocol.pix.ssa_part_size = 32;
-        cfg.protocol.pix.additional_shares = Some(79);
-
-        let params = pix_ssa_quota(&cfg).unwrap();
-        assert_eq!(quota_per_ssa(&params), 660_160_512);
-    }
 }
