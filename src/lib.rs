@@ -93,3 +93,69 @@ pub use strategy::minimum_balance_recommendation;
 
 #[cfg(feature = "telemetry")]
 pub use hopr_lib::collect_hopr_metrics;
+
+/// Applies explicit mixer timing overrides on top of the operator's configured
+/// values. A `None` override leaves the operator's config-file value untouched.
+pub fn resolve_mixer_timings(
+    mut mixer: hopr_lib::config::MixerConfig,
+    min_delay_override: Option<std::time::Duration>,
+    delay_range_override: Option<std::time::Duration>,
+) -> hopr_lib::config::MixerConfig {
+    use hopr_transport_mixer::config::{MixerType, UniformConfig};
+
+    let has_override = min_delay_override.is_some() || delay_range_override.is_some();
+    if !has_override {
+        return mixer;
+    }
+
+    // These knobs only exist for the uniform engine, so an override selects it.
+    let mut uniform = match mixer.mixer_type {
+        MixerType::Uniform(operator_uniform) => operator_uniform,
+        MixerType::Poisson(_) => UniformConfig::default(),
+    };
+    if let Some(min_delay) = min_delay_override {
+        uniform.min_delay = min_delay;
+    }
+    if let Some(delay_range) = delay_range_override {
+        uniform.delay_range = delay_range;
+    }
+    mixer.mixer_type = MixerType::Uniform(uniform);
+    mixer
+}
+
+#[cfg(test)]
+mod mixer_timing_tests {
+    use std::time::Duration;
+
+    use hopr_lib::config::MixerConfig;
+    use hopr_transport_mixer::config::{MixerType, UniformConfig};
+
+    use super::resolve_mixer_timings;
+
+    fn uniform_mixer(min_delay_ms: u64, delay_range_ms: u64) -> MixerConfig {
+        MixerConfig {
+            mixer_type: MixerType::Uniform(UniformConfig {
+                min_delay: Duration::from_millis(min_delay_ms),
+                delay_range: Duration::from_millis(delay_range_ms),
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn honors_operator_config_without_overrides() {
+        let operator_mixer = uniform_mixer(50, 200);
+        let resolved = resolve_mixer_timings(operator_mixer, None, None);
+        assert_eq!(resolved, operator_mixer);
+    }
+
+    #[test]
+    fn applies_explicit_overrides() {
+        let resolved = resolve_mixer_timings(
+            uniform_mixer(50, 200),
+            Some(Duration::from_millis(5)),
+            Some(Duration::from_millis(10)),
+        );
+        assert_eq!(resolved, uniform_mixer(5, 10));
+    }
+}

@@ -3701,6 +3701,7 @@ dependencies = [
  "hopr-network-graph",
  "hopr-strategy",
  "hopr-ticket-manager",
+ "hopr-transport-mixer",
  "hopr-transport-p2p",
  "mimalloc",
  "multiaddr",
