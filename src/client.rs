@@ -194,6 +194,8 @@ impl Edgli {
     /// * `cfg` – full HOPR node configuration; set `cfg.protocol.path_planner`
     ///   before calling to control the routing strategy.  Use
     ///   [`crate::latency_path_planner_config`] to obtain a latency-optimised default.
+    ///   `cfg.protocol.mixer` is pinned here to the Poisson engine with a 1 ms
+    ///   `max_delay`, so only its `capacity` is taken from the caller.
     /// * `hopr_keys` – chain and packet keypairs
     /// * `blokli_endpoint` – Blokli service URL and optional DNS override, built with
     ///   [`BlokliEndpoint::new`]; there is no default URL
