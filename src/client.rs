@@ -212,11 +212,10 @@ impl Edgli {
     ) -> anyhow::Result<Self> {
         let mut cfg = cfg;
         // An edge node only mixes its own outgoing packets; anything above 1 ms costs tunnel QoS.
-        cfg.protocol.mixer.mixer_type =
-            hopr_transport_mixer::MixerType::Poisson(hopr_transport_mixer::PoissonConfig {
-                max_delay: std::time::Duration::from_millis(1),
-                ..Default::default()
-            });
+        cfg.protocol.mixer = hopr_lib::config::MixerConfig {
+            capacity: cfg.protocol.mixer.capacity,
+            ..hopr_lib::config::MixerConfig::new_poisson(std::time::Duration::from_millis(1), 0.01)
+        };
 
         visitor(EdgliInitState::ValidatingConfig);
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
