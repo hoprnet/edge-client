@@ -18,7 +18,7 @@ use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::exports::network::types::addr::is_public_address;
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
 use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
-use hopr_ticket_manager::ticket_factory_from_chain;
+use hopr_ticket_manager::{RedbStore, ticket_factory_from_chain};
 use hopr_transport_p2p::{HoprLibp2pNetworkBuilder, HoprNetwork, PeerDiscovery};
 use multiaddr::Multiaddr;
 use strum::{AsRefStr, Display, EnumString};
@@ -210,6 +210,15 @@ impl Edgli {
         probe_local_addresses: bool,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
+        let mut cfg = cfg;
+        // An edge node only mixes its own outgoing packets. Any mean delay above 1 ms is spent
+        // straight out of tunnel QoS, so the timing is pinned to the Poisson engine whatever the
+        // operator's config says; the heap capacity stays the configured one.
+        cfg.protocol.mixer = hopr_lib::config::MixerConfig {
+            capacity: cfg.protocol.mixer.capacity,
+            ..hopr_lib::config::MixerConfig::new_poisson(std::time::Duration::from_millis(1), 0.01)
+        };
+
         visitor(EdgliInitState::ValidatingConfig);
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
             let ipv4: std::net::Ipv4Addr = address
@@ -259,7 +268,12 @@ impl Edgli {
         };
         probe_cfg.validate_against_probe_timeout(cfg.protocol.probe.timeout)?;
 
-        let ticket_factory = ticket_factory_from_chain(&chain_connector)
+        // `ticket_factory_from_chain` takes the index store from the caller since 0.10.0. A
+        // temporary redb store is what the crate itself used to create internally, so this keeps
+        // the previous behaviour: outgoing indices are re-seeded from the chain on every start.
+        let ticket_store = RedbStore::new_temp()
+            .map_err(|e| anyhow::anyhow!("failed to open the ticket index store: {e}"))?;
+        let ticket_factory = ticket_factory_from_chain(&chain_connector, ticket_store)
             .await
             .map_err(|e| anyhow::anyhow!("failed to seed ticket factory: {e}"))?;
 
