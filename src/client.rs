@@ -258,6 +258,8 @@ impl Edgli {
     /// * `cfg` – full HOPR node configuration; set `cfg.protocol.path_planner`
     ///   before calling to control the routing strategy.  Use
     ///   [`crate::latency_path_planner_config`] to obtain a latency-optimised default.
+    ///   `cfg.protocol.mixer` is pinned here to the Poisson engine with a 1 ms
+    ///   `max_delay`, so only its `capacity` is taken from the caller.
     /// * `hopr_keys` – chain and packet keypairs
     /// * `blokli_endpoint` – Blokli service URL and optional DNS override, built with
     ///   [`BlokliEndpoint::new`]; there is no default URL
@@ -279,6 +281,9 @@ impl Edgli {
         ticket_store_path: Option<PathBuf>,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
     ) -> anyhow::Result<Self> {
+        let mut cfg = cfg;
+        cfg.protocol.mixer = edge_mixer_config(cfg.protocol.mixer);
+
         visitor(EdgliInitState::ValidatingConfig);
         if let hopr_lib::config::HostType::IPv4(address) = &cfg.host.address {
             let ipv4: std::net::Ipv4Addr = address
@@ -722,6 +727,19 @@ pub struct ReactorHandle {
     pub strategy_state: StrategyStateHandle,
 }
 
+/// The mixer config an edge node runs with: the Poisson engine with a 1 ms hard delay bound.
+///
+/// An edge node only mixes its own outgoing packets, so the operator's timing knobs are dropped
+/// and only `capacity` is carried over. Any added delay costs tunnel QoS for no anonymity gain.
+fn edge_mixer_config(
+    operator_mixer: hopr_lib::config::MixerConfig,
+) -> hopr_lib::config::MixerConfig {
+    hopr_lib::config::MixerConfig {
+        capacity: operator_mixer.capacity,
+        ..hopr_lib::config::MixerConfig::new_poisson(std::time::Duration::from_millis(1), 0.01)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -903,5 +921,32 @@ mod tests {
             assert_eq!(2, factory.next_outgoing_ticket_index(&channel));
             Ok(())
         }
+    }
+
+    #[test]
+    fn edge_mixer_config_keeps_the_operator_capacity() {
+        let operator = hopr_lib::config::MixerConfig {
+            capacity: 2_048,
+            ..Default::default()
+        };
+        assert_eq!(edge_mixer_config(operator).capacity, 2_048);
+    }
+
+    #[test]
+    fn edge_mixer_config_pins_poisson_to_one_millisecond() {
+        let operator = hopr_lib::config::MixerConfig {
+            capacity: 2_048,
+            ..Default::default()
+        };
+        assert_eq!(
+            edge_mixer_config(operator),
+            hopr_lib::config::MixerConfig {
+                capacity: 2_048,
+                ..hopr_lib::config::MixerConfig::new_poisson(
+                    std::time::Duration::from_millis(1),
+                    0.01
+                )
+            }
+        );
     }
 }
