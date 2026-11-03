@@ -137,7 +137,3 @@ anyhow = "1.0.104"
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
-
-# TODO: remove once hopr-ticket-manager 0.9.0 is released from hoprnet/hopr-impls
-[patch.crates-io]
-hopr-ticket-manager = { git = "https://github.com/hoprnet/hopr-impls", branch = "fix/ticket-index-persistence" }

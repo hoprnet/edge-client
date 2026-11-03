@@ -7748,7 +7748,7 @@ dependencies = [
  "quinn-udp 0.5.16",
  "rustc-hash",
  "rustls",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -7788,7 +7788,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -7801,7 +7801,7 @@ checksum = "47091c86514c2e11452cb228dee77037334b99d92a23e4c69aa5982261f39247"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "windows-sys 0.61.2",
 ]
 
@@ -10523,8 +10523,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "hopr-ticket-manager"
-version = "0.9.0"
-source = "git+https://github.com/hoprnet/hopr-impls?branch=fix%2Fticket-index-persistence#17a0b17d9e4a50b6a89b57e0bf4e9d4eb8116410"
