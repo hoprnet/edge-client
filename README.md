@@ -46,6 +46,7 @@ async fn run(cfg: HoprLibConfig, keys: HoprKeys) -> anyhow::Result<()> {
         BlokliEndpoint::new("https://blokli.example.com".parse()?), // system DNS
         None,  // BlockchainConnectorConfig (optional)
         false, // probe_local_addresses: filter non-public peer addresses
+        Some("tickets.redb".into()), // ticket store: keeps outgoing ticket indices across restarts
         |state: EdgliInitState| tracing::info!(?state, "init"),
     )
     .await?;
@@ -315,6 +316,13 @@ Key inputs handed to `Edgli::new`:
   provided (`--blokli-url` / `HOPR_EDGE_BLOKLI_URL` on the CLI).
 - `BlockchainConnectorConfig` — connector tuning (optional; defaults applied
   when omitted).
+- Ticket store path — a file that keeps the outgoing ticket indices across
+  restarts (`--ticket-store-file-path` / `HOPR_EDGE_TICKET_STORE_FILE_PATH` on
+  the CLI). Without it a temporary file is used, and a restarted node issues
+  ticket indices again that its peers already accepted, so they reject its
+  packets as replays. The indices are saved every few seconds and once more when
+  the last `Edgli` handle is dropped; call `Edgli::save_outgoing_ticket_indices`
+  before exiting without dropping it.
 
 ## Troubleshooting
 
