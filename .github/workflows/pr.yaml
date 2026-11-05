@@ -72,6 +72,37 @@ jobs:
           if [[ "$HEAD_REPO" != "$BASE_REPO" ]]; then
             gh pr edit "$PR_NUMBER" --add-label "external"
           fi
+  changes:
+    name: Detect changes
+    runs-on: depot-ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
+      lockfile: ${{ github.event_name != 'pull_request' || steps.filter.outputs.lockfile == 'true' }}
+    steps:
+      - name: Filter changed paths
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            rust:
+              - "src/**"
+              - "tests/**"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "rust-toolchain.toml"
+              - ".cargo/**"
+              - "flake.nix"
+              - "flake.lock"
+              - "nix/**"
+              - ".github/workflows/**"
+            lockfile:
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - ".cargo/audit.toml"
   validate-release-branch-deps:
     name: Release branch dependencies
     # Only PRs onto a `release/*` branch, which is where tracking a hoprnet release branch is the
@@ -137,6 +168,7 @@ jobs:
     # while each `Check / *` still reports (green). Only Integration throughput
     # does real work in the queue (see merge-queue.yaml). `!= 'merge_group'` keeps
     # normal PR behaviour untouched.
+    needs: changes
     uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@d0cffaf9e9209c8eca00e8c74e82ac3f5f3cf7bb # workflow-checks-v2
     permissions:
       contents: read
@@ -144,8 +176,8 @@ jobs:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
       format: ${{ github.event_name != 'merge_group' }}
       pre_commit: ${{ github.event_name != 'merge_group' }}
-      lint: ${{ github.event_name != 'merge_group' }}
-      audit: ${{ github.event_name != 'merge_group' }}
+      lint: ${{ github.event_name != 'merge_group' && needs.changes.outputs.rust == 'true' }}
+      audit: ${{ github.event_name != 'merge_group' && needs.changes.outputs.lockfile == 'true' }}
       lint_command: "nix build -L .#checks.x86_64-linux.clippy"
       deps: false
       audit_command: "nix run -L .#audit"
@@ -157,15 +189,17 @@ jobs:
     name: Test
     # Runs on merge_group too, but the enable booleans are off there so the
     # `Test / *` contexts report (skipped = passing) without re-running (see `checks`).
+    needs: [changes, checks]
+    if: ${{ !cancelled() && !failure() }}
     uses: hoprnet/hopr-workflows/.github/workflows/tests.yaml@798d791de5c5485c3043049781dfd0938539a36a # workflow-tests-v6
     permissions:
       contents: read
       id-token: write # Codecov OIDC upload in the coverage job
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
-      enable_unit_tests: ${{ github.event_name != 'merge_group' }}
+      enable_unit_tests: ${{ github.event_name != 'merge_group' && needs.changes.outputs.rust == 'true' }}
       unit_test_command: "nix develop -c cargo nextest run --no-tests=pass"
-      enable_unit_coverage: ${{ github.event_name != 'merge_group' }}
+      enable_unit_coverage: ${{ github.event_name != 'merge_group' && needs.changes.outputs.rust == 'true' }}
       unit_coverage_command: "nix run .#coverage-unit"
       runner_unit: depot-ubuntu-24.04-8
       test_timeout: 30
@@ -191,6 +225,8 @@ jobs:
             runner: macos-15-xlarge
             build_command: nix build -L .#lib-edgli-aarch64-darwin
             required_label: binary:aarch64-darwin
+    needs: [changes, checks, tests]
+    if: ${{ !cancelled() && !failure() }}
     uses: hoprnet/hopr-workflows/.github/workflows/build-library.yaml@5ef5e50e028143b53da6545c1ca92477b70f42fc # build-library-v1
     permissions:
       contents: read
@@ -199,7 +235,7 @@ jobs:
       architecture: ${{ matrix.architecture }}
       build_command: ${{ matrix.build_command }}
       runner: ${{ matrix.runner }}
-      enabled: ${{ github.event_name != 'merge_group' && (matrix.required_label == '' || contains(github.event.pull_request.labels.*.name, matrix.required_label)) }}
+      enabled: ${{ github.event_name != 'merge_group' && needs.changes.outputs.rust == 'true' && (matrix.required_label == '' || contains(github.event.pull_request.labels.*.name, matrix.required_label)) }}
     secrets:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
   # Single aggregate merge gate: green only if every other job in this run
@@ -211,6 +247,7 @@ jobs:
     name: Merge gate
     if: always()
     needs:
+      - changes
       - validate-pr-title
       - label
       - validate-release-branch-deps
@@ -227,7 +264,8 @@ jobs:
           # validate-pr-title and label run on pull_request only, and
           # validate-release-branch-deps only for PRs onto release/*. In the
           # merge queue every enable input of checks, tests and build-library is
-          # off, so the callers report skipped there; on a pull_request they must
-          # run, so their skip is allowed on merge_group only. A failed job reds
-          # the gate either way.
-          allowed-skips: ${{ github.event_name == 'merge_group' && 'validate-pr-title, label, validate-release-branch-deps, checks, tests, build-library' || 'validate-pr-title, label, validate-release-branch-deps' }}
+          # off, so the callers report skipped there. On a pull_request, tests
+          # and build-library may skip only when the path filter finds no Rust
+          # change; checks always runs format and pre-commit. A failed job reds
+          # the gate either way, and so does a skipped later stage after a failure.
+          allowed-skips: ${{ github.event_name == 'merge_group' && 'validate-pr-title, label, validate-release-branch-deps, checks, tests, build-library' || (needs.changes.outputs.rust == 'true' && 'validate-pr-title, label, validate-release-branch-deps' || 'validate-pr-title, label, validate-release-branch-deps, tests, build-library') }}
