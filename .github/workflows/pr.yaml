@@ -43,6 +43,7 @@ jobs:
   label:
     name: Add labels
     if: github.event_name == 'pull_request'
+    continue-on-error: true
     runs-on: depot-ubuntu-24.04
     permissions:
       contents: read
