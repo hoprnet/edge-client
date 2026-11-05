@@ -8,11 +8,9 @@ on:
       - synchronize
       - reopened
       - ready_for_review
-permissions:
-  contents: read
-  id-token: write # zizmor: ignore[excessive-permissions]
+permissions: {}
 concurrency:
-  group: ${{ github.event.pull_request.head.ref || github.ref_name }}-pr
+  group: ${{ github.event.pull_request.number || github.ref }}-pr
   cancel-in-progress: true
 jobs:
   validate-pr-title:
@@ -36,6 +34,8 @@ jobs:
             refactor
             perf
             test
+            ci
+            revert
           requireScope: false
           ignoreLabels: |
             bot
@@ -58,7 +58,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/labeler@77a4082b841706ac431479b7e2bb11216ffef250 # main on 20.02.2025
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
         with:
           sync-labels: true
       - name: Add "external" label for forked PRs
@@ -137,6 +137,8 @@ jobs:
     # does real work in the queue (see merge-queue.yaml). `!= 'merge_group'` keeps
     # normal PR behaviour untouched.
     uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@d0cffaf9e9209c8eca00e8c74e82ac3f5f3cf7bb # workflow-checks-v2
+    permissions:
+      contents: read
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
       format: ${{ github.event_name != 'merge_group' }}
@@ -155,6 +157,9 @@ jobs:
     # Runs on merge_group too, but the enable booleans are off there so the
     # `Test / *` contexts report (skipped = passing) without re-running (see `checks`).
     uses: hoprnet/hopr-workflows/.github/workflows/tests.yaml@798d791de5c5485c3043049781dfd0938539a36a # workflow-tests-v6
+    permissions:
+      contents: read
+      id-token: write # Codecov OIDC upload in the coverage job
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
       enable_unit_tests: ${{ github.event_name != 'merge_group' }}
@@ -196,3 +201,32 @@ jobs:
       enabled: ${{ github.event_name != 'merge_group' && (matrix.required_label == '' || contains(github.event.pull_request.labels.*.name, matrix.required_label)) }}
     secrets:
       cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+  # Single aggregate merge gate: green only if every other job in this run
+  # succeeded. Mark THIS one as the required check in the branch ruleset, so
+  # adding, renaming, or removing a job never needs a ruleset change.
+  # `if: always()` runs it even when a dependency fails; alls-green then reds
+  # the gate on any non-success (a failed job, or a skip that is not allowed).
+  merge-gate:
+    name: Merge gate
+    if: always()
+    needs:
+      - validate-pr-title
+      - label
+      - validate-release-branch-deps
+      - checks
+      - tests
+      - build-library
+    runs-on: depot-ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Require all jobs to pass
+        uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          jobs: ${{ toJSON(needs) }}
+          # validate-pr-title and label run on pull_request only, and
+          # validate-release-branch-deps only for PRs onto release/*. In the
+          # merge queue every enable input of checks, tests and build-library is
+          # off, so the callers report skipped there; on a pull_request they must
+          # run, so their skip is allowed on merge_group only. A failed job reds
+          # the gate either way.
+          allowed-skips: ${{ github.event_name == 'merge_group' && 'validate-pr-title, label, validate-release-branch-deps, checks, tests, build-library' || 'validate-pr-title, label, validate-release-branch-deps' }}

@@ -12,6 +12,7 @@ on:
           - patch
           - minor
           - major
+permissions: {}
 concurrency:
   group: release
   cancel-in-progress: false
