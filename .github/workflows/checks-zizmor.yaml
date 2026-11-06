@@ -9,11 +9,9 @@ on:
     paths:
       - ".github/**"
 concurrency:
-  group: ${{ github.event.pull_request.head.ref || github.ref_name }}-zizmor
+  group: ${{ github.event.pull_request.number || github.ref }}-zizmor
   cancel-in-progress: true
-permissions:
-  contents: read
-  security-events: write
+permissions: {}
 jobs:
   zizmor:
     uses: hoprnet/hopr-workflows/.github/workflows/checks-zizmor.yaml@bbd22e57cf954c15f0a6051d59329857809141dd # workflow-checks-zizmor-v1
