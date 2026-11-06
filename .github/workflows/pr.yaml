@@ -167,7 +167,8 @@ jobs:
     # workflow's `enable`/skip booleans are turned off there, which skips the work
     # while each `Check / *` still reports (green). Only Integration throughput
     # does real work in the queue (see merge-queue.yaml). `!= 'merge_group'` keeps
-    # normal PR behaviour untouched.
+    # format and pre_commit on for every PR; lint and audit are also gated on the
+    # `changes` path filter (rust, lockfile).
     needs: changes
     uses: hoprnet/hopr-workflows/.github/workflows/checks.yaml@d0cffaf9e9209c8eca00e8c74e82ac3f5f3cf7bb # workflow-checks-v2
     permissions:
@@ -243,6 +244,7 @@ jobs:
   # adding, renaming, or removing a job never needs a ruleset change.
   # `if: always()` runs it even when a dependency fails; alls-green then reds
   # the gate on any non-success (a failed job, or a skip that is not allowed).
+  # Exception: `label` is best-effort (continue-on-error), so its failure is ignored.
   merge-gate:
     name: Merge gate
     if: always()
@@ -264,8 +266,11 @@ jobs:
           # validate-pr-title and label run on pull_request only, and
           # validate-release-branch-deps only for PRs onto release/*. In the
           # merge queue every enable input of checks, tests and build-library is
-          # off, so the callers report skipped there. On a pull_request, tests
-          # and build-library may skip only when the path filter finds no Rust
-          # change; checks always runs format and pre-commit. A failed job reds
-          # the gate either way, and so does a skipped later stage after a failure.
+          # off. checks stays green there (its reusable matrix job has no
+          # job-level `if`, only its steps skip); tests and build-library report
+          # skipped. On a pull_request, tests and build-library may skip only when
+          # the path filter finds no Rust change; checks always runs format and
+          # pre-commit. A failed job reds the gate either way (except `label`,
+          # which is best-effort and ignored), and so does a skipped later stage
+          # after a failure.
           allowed-skips: ${{ github.event_name == 'merge_group' && 'validate-pr-title, label, validate-release-branch-deps, checks, tests, build-library' || (needs.changes.outputs.rust == 'true' && 'validate-pr-title, label, validate-release-branch-deps' || 'validate-pr-title, label, validate-release-branch-deps, tests, build-library') }}
