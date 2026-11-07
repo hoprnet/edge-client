@@ -94,7 +94,7 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 url = { version = "2.5.8", optional = true }
 validator = { version = "0.21.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "kauki/fix/transport/min-loopback-rate", features = [
   "session-client",
   "serde",
 ] }
@@ -138,7 +138,7 @@ anyhow = "1.0.104"
 inherits = "release"
 debug-assertions = true
 
-# TEST ONLY (GNO-1183): unreleased hopr-api#158 and hopr-impls#78. Drop once released and repinned.
+# TEST ONLY (GNO-1183): unreleased hopr-api#158 and hopr-impls#78, and hopr-lib from hoprnet#8637. Drop once released and repinned.
 [patch.crates-io]
 hopr-api = { git = "https://github.com/hoprnet/hopr-api", branch = "kauki/fix/graph/first-hop-loopback-gate" }
 hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "kauki/fix/graph/loopback-first-hop-evidence" }
