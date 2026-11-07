@@ -137,3 +137,8 @@ anyhow = "1.0.104"
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
+
+# TEST ONLY (GNO-1183): unreleased hopr-api#158 and hopr-impls#78. Drop once released and repinned.
+[patch.crates-io]
+hopr-api = { git = "https://github.com/hoprnet/hopr-api", branch = "kauki/fix/graph/first-hop-loopback-gate" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "kauki/fix/graph/loopback-first-hop-evidence" }
