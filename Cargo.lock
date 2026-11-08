@@ -4746,7 +4746,7 @@ dependencies = [
 [[package]]
 name = "hopr-api"
 version = "5.1.0"
-source = "git+https://github.com/hoprnet/hopr-api?branch=kauki%2Ffix%2Fgraph%2Ffirst-hop-loopback-gate#c90432df87d4f678ee2b179e068ffd71935aa889"
+source = "git+https://github.com/hoprnet/hopr-api?branch=kauki%2Ffix%2Fgraph%2Ffirst-hop-loopback-gate#74224b0585373b27c711b862f33ae31f6a53938f"
 dependencies = [
  "async-trait",
  "atomic_enum",
@@ -4816,7 +4816,7 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-packet"
 version = "2.2.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "bimap",
  "const-hex",
@@ -4853,7 +4853,7 @@ dependencies = [
 [[package]]
 name = "hopr-lib"
 version = "5.0.0-rc.6"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -4894,7 +4894,7 @@ dependencies = [
 [[package]]
 name = "hopr-network-graph"
 version = "0.10.1"
-source = "git+https://github.com/hoprnet/hopr-impls?branch=kauki%2Ffix%2Fgraph%2Floopback-first-hop-evidence#2b9b9aac48bd87bc3a32c2dbddcb39bb559311f8"
+source = "git+https://github.com/hoprnet/hopr-impls?branch=kauki%2Ffix%2Fgraph%2Floopback-first-hop-evidence#03e4ed6037b35adb8ea4a370bf2a91e149a230e1"
 dependencies = [
  "anyhow",
  "bimap",
@@ -4914,7 +4914,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-app"
 version = "1.2.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "hopr-crypto-packet",
  "hopr-types",
@@ -4927,7 +4927,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-hopr"
 version = "6.5.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4957,7 +4957,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-pix"
 version = "0.3.1"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "ahash",
  "auto_impl",
@@ -4980,7 +4980,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-session"
 version = "1.6.2"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "aquamarine",
  "asynchronous-codec",
@@ -5011,7 +5011,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-start"
 version = "3.1.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "aquamarine",
  "flagset",
@@ -5100,7 +5100,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport"
 version = "0.52.3"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "ahash",
  "anyhow",
@@ -5147,7 +5147,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-mixer"
 version = "1.0.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "futures",
  "futures-timer",
@@ -5187,7 +5187,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-probe"
 version = "0.9.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5213,7 +5213,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-session"
 version = "0.34.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5247,7 +5247,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-tag-allocator"
 version = "0.2.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#ca0bee877c0019882d3e117579d7fe0f326ef86a"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#e185fe4ace2284d31b4d5eddbe87928f75c5c1b2"
 dependencies = [
  "hopr-protocol-app",
  "serde",
