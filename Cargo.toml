@@ -94,7 +94,7 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 url = { version = "2.5.8", optional = true }
 validator = { version = "0.21.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "kauki/fix/transport/min-loopback-rate", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "ronnyesterluss/gno-1183-genuine-ack-witness", features = [
   "session-client",
   "serde",
 ] }
@@ -142,5 +142,5 @@ debug-assertions = true
 # Cargo ignores the `[patch]` table of a dependency, so the hoprnet branch's own patch does not apply here and
 # this workspace has to carry these entries itself, as the host application.
 [patch.crates-io]
-hopr-api = { git = "https://github.com/hoprnet/hopr-api", branch = "kauki/fix/graph/first-hop-loopback-gate" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "kauki/fix/graph/loopback-first-hop-evidence" }
+hopr-api = { git = "https://github.com/hoprnet/hopr-api", branch = "ronnyesterluss/gno-1183-genuine-ack-witness" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "ronnyesterluss/gno-1183-genuine-ack-witness" }

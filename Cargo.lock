@@ -4746,7 +4746,7 @@ dependencies = [
 [[package]]
 name = "hopr-api"
 version = "5.1.0"
-source = "git+https://github.com/hoprnet/hopr-api?branch=kauki%2Ffix%2Fgraph%2Ffirst-hop-loopback-gate#74224b0585373b27c711b862f33ae31f6a53938f"
+source = "git+https://github.com/hoprnet/hopr-api?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#d27173a389b2641431589e6032b086d14b4a33c8"
 dependencies = [
  "async-trait",
  "atomic_enum",
@@ -4816,7 +4816,7 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-packet"
 version = "2.2.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "bimap",
  "const-hex",
@@ -4853,7 +4853,7 @@ dependencies = [
 [[package]]
 name = "hopr-lib"
 version = "5.0.0-rc.6"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -4894,7 +4894,7 @@ dependencies = [
 [[package]]
 name = "hopr-network-graph"
 version = "0.10.1"
-source = "git+https://github.com/hoprnet/hopr-impls?branch=kauki%2Ffix%2Fgraph%2Floopback-first-hop-evidence#3573d28aeebe3bbf9a94fe6b53d00faa30f6ebb8"
+source = "git+https://github.com/hoprnet/hopr-impls?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#c7ad88b6292d4a647de91b5af1f39114db579a9c"
 dependencies = [
  "anyhow",
  "bimap",
@@ -4914,7 +4914,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-app"
 version = "1.2.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "hopr-crypto-packet",
  "hopr-types",
@@ -4927,7 +4927,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-hopr"
 version = "6.5.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4957,7 +4957,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-pix"
 version = "0.3.1"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "ahash",
  "auto_impl",
@@ -4980,7 +4980,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-session"
 version = "1.6.2"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "aquamarine",
  "asynchronous-codec",
@@ -5011,7 +5011,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-start"
 version = "3.1.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "aquamarine",
  "flagset",
@@ -5100,7 +5100,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport"
 version = "0.52.3"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "ahash",
  "anyhow",
@@ -5147,7 +5147,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-mixer"
 version = "1.0.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "futures",
  "futures-timer",
@@ -5187,7 +5187,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-probe"
 version = "0.9.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5213,7 +5213,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-session"
 version = "0.34.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5247,7 +5247,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-tag-allocator"
 version = "0.2.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#afbf40d5c1593544d44fbbc0cd6fdb81c1a2ce53"
+source = "git+https://github.com/hoprnet/hoprnet?branch=ronnyesterluss%2Fgno-1183-genuine-ack-witness#9bca8e5650ecd62f5a1dc70118b85eb98df38424"
 dependencies = [
  "hopr-protocol-app",
  "serde",
