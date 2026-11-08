@@ -94,7 +94,7 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 url = { version = "2.5.8", optional = true }
 validator = { version = "0.21.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "ronnyesterluss/gno-1183-sender-counts-random", features = [
   "session-client",
   "serde",
 ] }
