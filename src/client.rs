@@ -366,7 +366,8 @@ impl Edgli {
             .with_starvation(hopr_network_graph::StarvationParams {
                 min_loopbacks_for_rate: path_cfg.min_loopbacks_for_rate,
                 min_return_rate: path_cfg.min_loopback_return_rate,
-            }),
+            })
+            .map_err(|e| anyhow::anyhow!("invalid loopback starvation config: {e}"))?,
         );
         let graph_for_ct = graph.clone();
         let safe_address = cfg.safe_module.safe_address;
