@@ -138,8 +138,8 @@ anyhow = "1.0.104"
 inherits = "release"
 debug-assertions = true
 
-# TEST ONLY (GNO-1183): unreleased hopr-impls#78, and hopr-lib from hoprnet#8637. Drop once released and repinned.
+# TEST ONLY (GNO-1183): unreleased hopr-impls#78, #82 and #84 (the branch holds all three), and hopr-lib from hoprnet#8637. Drop once released and repinned.
 # Cargo ignores the `[patch]` table of a dependency, so the hoprnet branch's own patch does not apply here and
 # this workspace has to carry these entries itself, as the host application.
 [patch.crates-io]
-hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "kauki/fix/graph/loopback-first-hop-evidence" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "kauki/fix/graph/exclude-starved-from-routing" }
