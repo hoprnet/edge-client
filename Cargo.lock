@@ -4817,7 +4817,7 @@ dependencies = [
 [[package]]
 name = "hopr-crypto-packet"
 version = "2.2.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "bimap",
  "const-hex",
@@ -4854,7 +4854,7 @@ dependencies = [
 [[package]]
 name = "hopr-lib"
 version = "5.0.0-rc.6"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -4895,7 +4895,7 @@ dependencies = [
 [[package]]
 name = "hopr-network-graph"
 version = "0.10.3"
-source = "git+https://github.com/hoprnet/hopr-impls?branch=kauki%2Ffix%2Fgraph%2Fexclude-starved-from-routing#617eadab3a7ff99bd03d89bdf1da848a6e28766e"
+source = "git+https://github.com/hoprnet/hopr-impls?branch=kauki%2Ffix%2Fgraph%2Fstarvation-config#9e61ca152ca3e4f0328d97934e19eb5cfcae7448"
 dependencies = [
  "anyhow",
  "bimap",
@@ -4915,7 +4915,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-app"
 version = "1.2.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "hopr-crypto-packet",
  "hopr-types",
@@ -4928,7 +4928,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-hopr"
 version = "6.5.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4958,7 +4958,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-pix"
 version = "0.3.1"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "ahash",
  "auto_impl",
@@ -4981,7 +4981,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-session"
 version = "1.6.2"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "aquamarine",
  "asynchronous-codec",
@@ -5012,7 +5012,7 @@ dependencies = [
 [[package]]
 name = "hopr-protocol-start"
 version = "3.1.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "aquamarine",
  "flagset",
@@ -5101,7 +5101,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport"
 version = "0.52.3"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "ahash",
  "anyhow",
@@ -5148,7 +5148,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-mixer"
 version = "1.0.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "futures",
  "futures-timer",
@@ -5188,7 +5188,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-probe"
 version = "0.9.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5214,7 +5214,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-session"
 version = "0.34.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5248,7 +5248,7 @@ dependencies = [
 [[package]]
 name = "hopr-transport-tag-allocator"
 version = "0.2.0"
-source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#86ebd5876fe0263dd71d94baca1154cf80ef1af5"
+source = "git+https://github.com/hoprnet/hoprnet?branch=kauki%2Ffix%2Ftransport%2Fmin-loopback-rate#42daffa8d9c0e28d9ad02cc9f099ce3eca832ecf"
 dependencies = [
  "hopr-protocol-app",
  "serde",
@@ -7749,7 +7749,7 @@ dependencies = [
  "quinn-udp 0.5.16",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -7789,7 +7789,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -7802,7 +7802,7 @@ checksum = "47091c86514c2e11452cb228dee77037334b99d92a23e4c69aa5982261f39247"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "windows-sys 0.61.2",
 ]
 

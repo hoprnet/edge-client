@@ -361,7 +361,11 @@ impl Edgli {
             path_cfg.edge_penalty,
             path_cfg.min_ack_rate,
             path_cfg.max_plausible_loopback_rtt,
-        ));
+        )
+        .with_starvation(hopr_network_graph::StarvationParams {
+            min_loopbacks_for_rate: path_cfg.min_loopbacks_for_rate,
+            min_return_rate: path_cfg.min_loopback_return_rate,
+        }));
         let graph_for_ct = graph.clone();
         let safe_address = cfg.safe_module.safe_address;
         let module_address = cfg.safe_module.module_address;
