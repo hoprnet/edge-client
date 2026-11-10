@@ -2,31 +2,28 @@
   description = "HOPR Edge client";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/release-26.05";
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-utils.url = "github:numtide/flake-utils";
 
     # HOPR Nix Library (provides reusable build functions)
-    nix-lib.url = "github:hoprnet/nix-lib/v1.1.0";
-
-    crane.url = "github:ipetkov/crane";
+    nix-lib.url = "github:hoprnet/nix-lib/v2.1.7";
+    # nix-lib anchors the heavy pins (nixpkgs, rust-overlay, crane) so every hoprnet flake on the
+    # same nix-lib release shares them. To bump them, point nix-lib.url at the new release tag,
+    # then run `nix flake update nix-lib`.
+    nixpkgs.follows = "nix-lib/nixpkgs";
+    crane.follows = "nix-lib/crane";
+    rust-overlay.follows = "nix-lib/rust-overlay";
 
     pre-commit.url = "github:cachix/git-hooks.nix";
 
     treefmt-nix.url = "github:numtide/treefmt-nix";
 
-    rust-overlay.url = "github:oxalica/rust-overlay";
-
     # Input dependency optimization
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
-    nix-lib.inputs.nixpkgs.follows = "nixpkgs";
-    nix-lib.inputs.crane.follows = "crane";
-    nix-lib.inputs.rust-overlay.follows = "rust-overlay";
     nix-lib.inputs.flake-utils.follows = "flake-utils";
     nix-lib.inputs.flake-parts.follows = "flake-parts";
     nix-lib.inputs.treefmt-nix.follows = "treefmt-nix";
     pre-commit.inputs.nixpkgs.follows = "nixpkgs";
-    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
