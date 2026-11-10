@@ -103,7 +103,7 @@ hopr-chain-connector = { version = "0.31.0", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.9.0" }
 hopr-strategy = { version = "7.0.0", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.10.0" }
-hopr-network-graph = { version = "0.10.0" }
+hopr-network-graph = { version = "0.10.3" }
 hopr-transport-p2p = { version = "0.14.0" }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
@@ -137,9 +137,3 @@ anyhow = "1.0.104"
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
-
-# TEST ONLY (GNO-1183): unreleased hopr-impls#78, #82, #84 and #85 with its fixes (the branch holds all four), and hopr-lib from hoprnet#8637. Drop once released and repinned.
-# Cargo ignores the `[patch]` table of a dependency, so the hoprnet branch's own patch does not apply here and
-# this workspace has to carry these entries itself, as the host application.
-[patch.crates-io]
-hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "kauki/fix/graph/starvation-config" }
