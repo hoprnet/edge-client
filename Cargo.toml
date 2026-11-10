@@ -103,7 +103,7 @@ hopr-chain-connector = { version = "0.31.0", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.9.0" }
 hopr-strategy = { version = "7.0.0", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.10.0" }
-hopr-network-graph = { version = "0.10.0" }
+hopr-network-graph = { version = "0.10.3" }
 hopr-transport-p2p = { version = "0.14.0" }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
