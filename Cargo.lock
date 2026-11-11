@@ -3693,7 +3693,7 @@ dependencies = [
 
 [[package]]
 name = "edgli"
-version = "5.2.0"
+version = "5.3.0"
 dependencies = [
  "anyhow",
  "async-signal",
@@ -3704,9 +3704,9 @@ dependencies = [
  "console-subscriber",
  "futures",
  "hopr-chain-connector",
- "hopr-ct-full-network",
+ "hopr-ct-full-network 0.10.0",
  "hopr-lib",
- "hopr-network-graph",
+ "hopr-network-graph 0.11.0",
  "hopr-strategy",
  "hopr-ticket-manager",
  "hopr-transport-p2p",
@@ -3876,7 +3876,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4844,9 +4844,28 @@ dependencies = [
  "futures",
  "futures-time",
  "hopr-api",
- "hopr-network-graph",
+ "hopr-network-graph 0.10.3",
  "hopr-utilities",
  "smart-default",
+ "tracing",
+ "validator",
+]
+
+[[package]]
+name = "hopr-ct-full-network"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "344e82a1e789dfe44edfaa1ad483effdfdda1b67133db0af008b8273bff6a75c"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "futures",
+ "futures-time",
+ "hopr-api",
+ "hopr-network-graph 0.11.0",
+ "hopr-utilities",
+ "smart-default",
+ "tokio",
  "tracing",
  "validator",
 ]
@@ -4869,8 +4888,8 @@ dependencies = [
  "hex-literal",
  "hopr-api",
  "hopr-chain-connector",
- "hopr-ct-full-network",
- "hopr-network-graph",
+ "hopr-ct-full-network 0.9.0",
+ "hopr-network-graph 0.10.3",
  "hopr-ticket-manager",
  "hopr-transport",
  "hopr-transport-p2p",
@@ -4897,6 +4916,27 @@ name = "hopr-network-graph"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bd1852424489abfe1c58bec954bbb83ad0f847507663d0620c6665e9643b858"
+dependencies = [
+ "anyhow",
+ "bimap",
+ "futures",
+ "hopr-api",
+ "hopr-utilities",
+ "indexmap 2.14.2",
+ "lazy_static",
+ "parking_lot 0.12.5",
+ "petgraph",
+ "rand 0.10.3",
+ "smallvec",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "hopr-network-graph"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "053f0d252ace2004a36423758640118c9103fba9d55c1729b980370cf6f11087"
 dependencies = [
  "anyhow",
  "bimap",
@@ -7792,7 +7832,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.5",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7804,7 +7844,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "socket2 0.6.5",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8327,7 +8367,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8386,7 +8426,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9265,7 +9305,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10031,7 +10071,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

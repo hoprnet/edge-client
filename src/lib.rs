@@ -27,6 +27,8 @@ pub use endpoint::*;
 #[cfg(feature = "blokli")]
 pub use hopr_chain_connector::{BlockchainConnectorConfig, DEFAULT_REQUEST_TIMEOUT};
 pub use hopr_lib::exports::transport::path::PathPlannerConfig;
+// Re-exported so consumers can pass a level to `Edgli::set_probing_level`.
+pub use hopr_ct_full_network::ProbingLevel;
 // Re-exported so consumers can set per-session flow control (the `flow_control`
 // field of `HoprSessionClientConfig`) without reaching into `hopr_lib` internals.
 pub use hopr_lib::exports::transport::FlowControlConfig;

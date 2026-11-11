@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
-use hopr_ct_full_network::ProberConfig as FullNetworkProberConfig;
+use hopr_ct_full_network::{EgressConfig, EgressControl, FullNetworkDiscovery, ProbingLevel};
 use hopr_lib::api::{
     chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
     node::{HasChainApi, IncentiveChannelOperations},
@@ -226,6 +226,8 @@ pub struct Edgli {
     outgoing_ticket_indices: Arc<OutgoingTicketIndices>,
     /// The node's packet-layer public key, stored at construction for peer-ID access.
     packet_public_key: OffchainPublicKey,
+    /// Runtime control over the node's probing and cover traffic, shared with the running prober.
+    egress: EgressControl,
     /// The node's chain keypair, which both PIX deposit pools sign with: the plain pool its sweep's
     /// gas top-up, the Curvy pool its direct shield through the Safe module.
     ///
@@ -326,7 +328,7 @@ impl Edgli {
         visitor(EdgliInitState::CreatingNode);
         info!("Building HOPR edge node directly via HoprBuilder");
 
-        let probe_cfg = FullNetworkProberConfig {
+        let probe_cfg = EgressConfig {
             interval: std::time::Duration::from_secs(3),
             shuffle_ttl: std::time::Duration::from_secs(3),
             ..Default::default()
@@ -369,7 +371,9 @@ impl Edgli {
             })
             .map_err(|e| anyhow::anyhow!("invalid loopback starvation config: {e}"))?,
         );
-        let graph_for_ct = graph.clone();
+        // Built before the node so the control handle outlives the move into the builder.
+        let discovery = FullNetworkDiscovery::new(packet_public_key, probe_cfg, graph.clone());
+        let egress = discovery.control();
         let safe_address = cfg.safe_module.safe_address;
         let module_address = cfg.safe_module.module_address;
 
@@ -411,13 +415,7 @@ impl Edgli {
                         .map_err(|e| hopr_lib::errors::HoprLibError::GeneralError(e.to_string()))
                     })
                 })
-                .with_cover_traffic(move |ctx| {
-                    hopr_ct_full_network::FullNetworkDiscovery::new(
-                        *ctx.packet_key.public(),
-                        probe_cfg,
-                        graph_for_ct,
-                    )
-                })
+                .with_cover_traffic(move |_ctx| discovery)
                 .build_edge(ticket_factory)
                 .await?,
         );
@@ -427,6 +425,7 @@ impl Edgli {
             hopr: node,
             outgoing_ticket_indices,
             packet_public_key,
+            egress,
             #[cfg(feature = "pix")]
             chain_key: hopr_keys.chain_key,
             #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
@@ -486,6 +485,35 @@ impl Edgli {
     /// Derived from the packet key stored at construction time.
     pub fn me_peer_id(&self) -> String {
         self.packet_public_key.to_peerid_str()
+    }
+
+    /// Sets the probing pace: `Some(level)` scales it, `None` stops probing.
+    ///
+    /// Takes effect on the running prober. Cover traffic is not affected, see
+    /// [`Edgli::set_cover_traffic`].
+    pub fn set_probing_level(&self, level: Option<ProbingLevel>) {
+        self.egress.set_level(level);
+    }
+
+    /// The current probing level, `None` while probing is stopped.
+    pub fn probing_level(&self) -> Option<ProbingLevel> {
+        self.egress.level()
+    }
+
+    /// Switches cover traffic on or off. Off by default.
+    pub fn set_cover_traffic(&self, enabled: bool) {
+        self.egress.set_noise(enabled);
+    }
+
+    /// Biases loopback probing towards the subgraph around the given exits, replacing any earlier
+    /// focus. Pass no exits to clear it, same as [`Edgli::clear_probing_focus`].
+    pub fn set_probing_focus(&self, exits: impl IntoIterator<Item = OffchainPublicKey>) {
+        self.egress.set_focus(exits);
+    }
+
+    /// Returns loopback probing to the default of every announced or seen peer.
+    pub fn clear_probing_focus(&self) {
+        self.egress.clear_focus();
     }
 
     /// Returns the ideal recommended wxHOPR and xDAI for this node to reach
