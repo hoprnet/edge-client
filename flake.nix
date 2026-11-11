@@ -6,7 +6,7 @@
     flake-utils.url = "github:numtide/flake-utils";
 
     # HOPR Nix Library (provides reusable build functions)
-    nix-lib.url = "github:hoprnet/nix-lib/v2.1.7";
+    nix-lib.url = "github:hoprnet/nix-lib/v2.2.1";
     # nix-lib anchors the heavy pins (nixpkgs, rust-overlay, crane) so every hoprnet flake on the
     # same nix-lib release shares them. To bump them, point nix-lib.url at the new release tag,
     # then run `nix flake update nix-lib`.
