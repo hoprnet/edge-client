@@ -99,12 +99,12 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "f01142bae07eaf09
   "serde",
 ] }
 # Version requirements are kept compatible with the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
-hopr-chain-connector = { version = "0.31.0", features = ["runtime-tokio"] }
-hopr-ct-full-network = { version = "0.10.0" }
-hopr-strategy = { version = "7.0.0", features = ["strategy-channel-lifecycle"] }
-hopr-ticket-manager = { version = "0.10.0" }
-hopr-network-graph = { version = "0.11.0" }
-hopr-transport-p2p = { version = "0.14.0" }
+hopr-chain-connector = { git = "https://github.com/hoprnet/hopr-impls", rev = "e371c44295e030575675d8e0834745862f031dd9", features = ["runtime-tokio"] }
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hopr-impls", rev = "e371c44295e030575675d8e0834745862f031dd9" }
+hopr-strategy = { git = "https://github.com/hoprnet/hopr-strategy", rev = "a73bd247aaafea5b9d04c7ff64dbde04d28ceaeb", features = ["strategy-channel-lifecycle"] }
+hopr-ticket-manager = { git = "https://github.com/hoprnet/hopr-impls", rev = "e371c44295e030575675d8e0834745862f031dd9" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", rev = "e371c44295e030575675d8e0834745862f031dd9" }
+hopr-transport-p2p = { git = "https://github.com/hoprnet/hopr-impls", rev = "e371c44295e030575675d8e0834745862f031dd9" }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
@@ -116,7 +116,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 
 [dev-dependencies]
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.
-hopr-chain-connector = { version = "0.31.0", features = [
+hopr-chain-connector = { git = "https://github.com/hoprnet/hopr-impls", rev = "e371c44295e030575675d8e0834745862f031dd9", features = [
   "runtime-tokio",
   "testing",
 ] }
