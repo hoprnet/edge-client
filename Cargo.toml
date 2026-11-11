@@ -141,4 +141,4 @@ debug-assertions = true
 # feat/egress-control-v4) until it is released. Drop with the repin.
 [patch.crates-io]
 hopr-ct-full-network = { git = "https://github.com/hoprnet/hopr-impls", branch = "feat/egress-control-v4" }
-hopr-network-graph   = { git = "https://github.com/hoprnet/hopr-impls", branch = "feat/egress-control-v4" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "feat/egress-control-v4" }
