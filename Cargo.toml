@@ -99,12 +99,12 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", feat
   "serde",
 ] }
 # Version requirements are kept compatible with the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
-hopr-chain-connector = { version = "0.28.0", features = ["runtime-tokio"] }
-hopr-ct-full-network = { version = "0.7.1" }
-hopr-strategy = { version = "5.4.0", features = ["strategy-channel-lifecycle"] }
-hopr-ticket-manager = { version = "0.8.0" }
-hopr-network-graph = { version = "0.8.1" }
-hopr-transport-p2p = { version = "0.12.3" }
+hopr-chain-connector = { version = "0.31.0", features = ["runtime-tokio"] }
+hopr-ct-full-network = { version = "0.10.0" }
+hopr-strategy = { version = "7.0.0", features = ["strategy-channel-lifecycle"] }
+hopr-ticket-manager = { version = "0.10.0" }
+hopr-network-graph = { version = "0.11.0" }
+hopr-transport-p2p = { version = "0.14.0" }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
@@ -116,12 +116,13 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 
 [dev-dependencies]
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.
-hopr-chain-connector = { version = "0.28.0", features = [
+hopr-chain-connector = { version = "0.31.0", features = [
   "runtime-tokio",
   "testing",
 ] }
 # `full` for the async unit tests in src/ (#[tokio::test], spawn, time, sync).
 tokio = { version = "1.53.2", features = ["full"] }
+tempfile = "3.27.0"
 
 [build-dependencies]
 anyhow = "1.0.104"
@@ -136,9 +137,3 @@ anyhow = "1.0.104"
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
-
-# Temporary: both crates come from the hopr-api 4 backport of hoprnet/hopr-impls#70 (branch
-# feat/egress-control-v4) until it is released. Drop with the repin.
-[patch.crates-io]
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hopr-impls", branch = "feat/egress-control-v4" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "feat/egress-control-v4" }

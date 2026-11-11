@@ -22,7 +22,9 @@
     "schedule": [
       "at any time"
     ],
-    "automerge": true
+    "automerge": true,
+    "groupName": "security updates",
+    "commitMessageTopic": "security updates"
   },
   "packageRules": [
     {
@@ -31,7 +33,14 @@
       ],
       "groupName": "github-actions",
       "pinDigests": true,
-      "commitMessageTopic": "GitHub Actions"
+      "commitMessageTopic": "GitHub Actions",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pin",
+        "pinDigest"
+      ]
     },
     {
       "description": "Disable hoprnet/hopr-workflows reusable workflow bumps \u2014 non-semver tag scheme, bumped manually",
@@ -53,24 +62,6 @@
       ],
       "groupName": "cargo dependencies",
       "commitMessageTopic": "Cargo dependencies"
-    },
-    {
-      "description": "Expedite cargo security updates \u2014 bypass weekly schedule",
-      "matchManagers": [
-        "cargo"
-      ],
-      "matchCategories": [
-        "security"
-      ],
-      "schedule": [
-        "at any time"
-      ],
-      "automerge": true,
-      "labels": [
-        "security"
-      ],
-      "groupName": "cargo security updates",
-      "commitMessageTopic": "Cargo security updates"
     },
     {
       "description": "Disable git-pinned hopr-* deps from hoprnet/hoprnet \u2014 bumped manually in lockstep with hopr-lib master",
@@ -99,5 +90,8 @@
       ],
       "enabled": false
     }
-  ]
+  ],
+  "lockFileMaintenance": {
+    "enabled": true
+  }
 }

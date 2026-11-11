@@ -84,6 +84,15 @@ pub struct CliArgs {
         default_value_t = false
     )]
     pub probe_local_addresses: bool,
+
+    /// Ticket store file path
+    #[arg(
+        long,
+        env = "HOPR_EDGE_TICKET_STORE_FILE_PATH",
+        help = "The path to the file keeping the outgoing ticket indices across restarts (default: a temporary file, so indices are issued again after a restart)",
+        required = false
+    )]
+    pub ticket_store_file_path: Option<PathBuf>,
 }
 
 fn init_logger() -> anyhow::Result<()> {
@@ -197,19 +206,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut cfg: HoprLibConfig = serde_yaml::from_str(&std::fs::read_to_string(args.config)?)?;
-    // Operator-configured mixer timings are honored by default; an env var only
-    // overrides them when explicitly set.
-    let env_ms = |var: &str| -> Option<std::time::Duration> {
-        std::env::var(var)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(std::time::Duration::from_millis)
-    };
-    cfg.protocol.mixer = edgli::resolve_mixer_timings(
-        cfg.protocol.mixer,
-        env_ms("HOPR_INTERNAL_MIXER_MINIMUM_DELAY_IN_MS"),
-        env_ms("HOPR_INTERNAL_MIXER_DELAY_RANGE_IN_MS"),
-    );
     cfg.protocol.path_planner = edgli::latency_path_planner_config(0.1);
 
     // Find or create an identity
@@ -236,6 +232,7 @@ async fn main() -> anyhow::Result<()> {
         blokli_endpoint,
         None,
         args.probe_local_addresses,
+        args.ticket_store_file_path,
         |s| {
             info!(?s, "Initialization stage");
         },
@@ -251,7 +248,8 @@ async fn main() -> anyhow::Result<()> {
             }
             Signal::Int => {
                 info!("Received the INT signal... tearing down the node");
-                // Dropping Edgli aborts all background tasks via AbortableList.
+                // Dropping Edgli aborts all background tasks via AbortableList
+                // and saves the outgoing ticket indices one last time.
                 drop(edgli);
                 info!("All processes stopped... emulating the default handler...");
                 low_level::emulate_default_handler(signal as i32)?;
