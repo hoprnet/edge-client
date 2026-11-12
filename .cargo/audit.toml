@@ -14,6 +14,11 @@ ignore = [
   "RUSTSEC-2026-0489", # `hickory-proto` 0.25.2, needs >=0.26.2; pinned by libp2p-dns 0.44, transitive from hoprnet
   "RUSTSEC-2026-0490", # `hickory-proto` zone file lexer panic, needs >=0.26.2; pinned by libp2p-dns 0.44, transitive from hoprnet
   "RUSTSEC-2026-0491", # `hickory-proto` 0.25.2, needs >=0.26.2; pinned by libp2p-dns 0.44, transitive from hoprnet
+  "RUSTSEC-2026-0504", # `hickory-proto` 0.25.2 inverted NSEC3 comparison, no fix available yet; pinned by libp2p-dns 0.44, transitive from hoprnet
+  "RUSTSEC-2026-0505", # `hickory-proto` 0.25.2 NSEC3 owner not checked against zone, no fix available yet; pinned by libp2p-dns 0.44, transitive from hoprnet
+  "RUSTSEC-2026-0511", # `hickory-proto` 0.25.2 NXDOMAIN for empty non-terminal, no fix available yet; pinned by libp2p-dns 0.44, transitive from hoprnet
+  "RUSTSEC-2026-0512", # `hickory-proto` 0.25.2 unrelated signed RRset accepted, no fix available yet; pinned by libp2p-dns 0.44, transitive from hoprnet
+  "RUSTSEC-2026-0514", # `hickory-resolver` 0.25.2 lookup returns DNSSEC-failed records, no fix available yet; pinned by libp2p-dns 0.44, transitive from hoprnet
 ]
 informational_warnings = ["unmaintained"]
 severity_threshold = "low"
