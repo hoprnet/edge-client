@@ -14,6 +14,11 @@ ignore = [
   "RUSTSEC-2026-0489", # `hickory-proto` 0.25.2, needs >=0.26.2; pinned by libp2p-dns 0.44, transitive from hoprnet
   "RUSTSEC-2026-0490", # `hickory-proto` zone file lexer panic, needs >=0.26.2; pinned by libp2p-dns 0.44, transitive from hoprnet
   "RUSTSEC-2026-0491", # `hickory-proto` 0.25.2, needs >=0.26.2; pinned by libp2p-dns 0.44, transitive from hoprnet
+  "RUSTSEC-2026-0504", # `hickory-proto` 0.25.2 DNSSEC advisories published 2026-11-12, no fixed 0.25.x; pinned by libp2p-dns 0.44, transitive from hoprnet
+  "RUSTSEC-2026-0505", # same batch; the 0.26.3 copy in this lock is not affected
+  "RUSTSEC-2026-0511", # same batch
+  "RUSTSEC-2026-0512", # same batch
+  "RUSTSEC-2026-0514", # same batch (hickory-resolver)
 ]
 informational_warnings = ["unmaintained"]
 severity_threshold = "low"
