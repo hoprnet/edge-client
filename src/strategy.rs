@@ -14,6 +14,9 @@ pub use hopr_strategy::channel_lifecycle::{
 };
 // Re-exported so consumers can read strategy health without depending on `hopr_strategy`.
 pub use hopr_strategy::strategy::{AtomicStrategyState, StrategyState};
+// Re-exported so consumers can fill `PixEntryConfig::state_password`; it redacts itself in `Debug`.
+#[cfg(feature = "pix")]
+pub use hopr_strategy::pix::strategy::PixRecoveryPassword;
 
 /// Paid downstream relay hops a ticket's face value covers.
 ///
@@ -104,7 +107,7 @@ pub enum EdgeStrategyKind {
 /// is what lets this outer type stay the same whichever pool the build selected — and what stops a
 /// value meant for one pool reaching the other.
 #[cfg(feature = "pix")]
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PixEntryConfig {
     /// Pricing and the per-deposit ceiling. Pool-agnostic.
     pub strategy: PixEntryStrategy,
@@ -117,6 +120,8 @@ pub struct PixEntryConfig {
     /// start); the secp256k1 pool ignores it. `None` leaves the pool at its upstream default, the
     /// working directory.
     pub state_dir: Option<std::path::PathBuf>,
+    /// Seals the Curvy pool's state; must be the same on every start, and losing it strands the float.
+    pub state_password: PixRecoveryPassword,
 }
 
 /// Deposit-pool knobs a caller can set without knowing which pool the build selected; turn them
@@ -238,13 +243,13 @@ impl Default for PixEntryStrategy {
 
 #[cfg(feature = "pix")]
 impl PixEntryStrategy {
-    /// The upstream form, with the Exit-side fields left at their defaults.
-    ///
-    /// `pix_recovery_db_path` and `pix_recovery_password_env` must stay *both* unset: the strategy
-    /// refuses to build if exactly one of them is given, and an Entry has no recovered key to
-    /// persist either way.
-    pub(crate) fn to_upstream(&self) -> hopr_strategy::pix::strategy::PixStrategyConfig {
+    /// The upstream form; an Entry has no recovered key to persist, so only the state password is carried.
+    pub(crate) fn to_upstream(
+        &self,
+        state_password: &PixRecoveryPassword,
+    ) -> hopr_strategy::pix::strategy::PixStrategyConfig {
         hopr_strategy::pix::strategy::PixStrategyConfig {
+            pix_recovery_password: Some(state_password.clone()),
             price_per_byte: self.price_per_byte,
             max_ssa_allocation: self.max_ssa_allocation,
             max_spend_per_window: self.max_spend_per_window,
@@ -2005,7 +2010,7 @@ mod tests {
             spend_window: Duration::from_secs(900),
             deposit_buffer_period: Duration::from_millis(250),
         }
-        .to_upstream();
+        .to_upstream(&test_password());
 
         assert_eq!(strategy.price_per_byte, "0.0001 wxHOPR".parse().unwrap());
         assert_eq!(strategy.max_ssa_allocation, "10 wxHOPR".parse().unwrap());
@@ -2034,6 +2039,11 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "pix")]
+    fn test_password() -> PixRecoveryPassword {
+        "test password".to_owned().into()
+    }
+
     /// The two halves are independent: overriding one must not disturb the other's defaults.
     #[cfg(feature = "pix")]
     #[test]
@@ -2043,7 +2053,9 @@ mod tests {
                 price_per_byte: "0.0001 wxHOPR".parse().unwrap(),
                 ..Default::default()
             },
-            ..Default::default()
+            pool: PixEntryPool::default(),
+            state_dir: None,
+            state_password: test_password(),
         };
         assert_eq!(cfg.pool, PixEntryPool::default());
         assert_eq!(
@@ -2052,16 +2064,20 @@ mod tests {
         );
     }
 
-    /// The Exit-side fields an Entry never reaches must come out at their upstream defaults, and
-    /// the recovery pair must come out *both* unset in particular: `PixStrategy::build_with_pool`
-    /// refuses to build when exactly one of the two is given, so a half-filled pair would turn a
-    /// field this node has no use for into a startup failure.
+    /// Exit-side fields stay at upstream defaults; only the password the Curvy pool needs is carried.
     #[cfg(feature = "pix")]
     #[test]
     fn pix_entry_leaves_the_exit_side_alone() {
-        let strategy = PixEntryStrategy::default().to_upstream();
+        let strategy = PixEntryStrategy::default().to_upstream(&test_password());
         assert!(strategy.pix_recovery_db_path.is_none());
         assert!(strategy.pix_recovery_password_env.is_none());
+        assert_eq!(
+            strategy
+                .pix_recovery_password("test")
+                .expect("the password is carried"),
+            "test password"
+        );
+        assert!(!format!("{strategy:?}").contains("test password"));
         assert_eq!(
             strategy.withdrawal_buffer_period,
             hopr_strategy::pix::strategy::PixStrategyConfig::default().withdrawal_buffer_period

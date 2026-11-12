@@ -25,7 +25,9 @@ fn readme_pix_snippet_compiles_and_runs() -> anyhow::Result<()> {
                 max_ssa_allocation: "10 wxHOPR".parse()?,
                 ..Default::default()
             },
-            ..Default::default()
+            pool: Default::default(),
+            state_dir: None,
+            state_password: "correct horse battery staple".to_owned().into(),
         })));
     assert_eq!(strategies.strategies.len(), 2);
 
