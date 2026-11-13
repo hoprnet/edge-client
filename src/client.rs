@@ -35,6 +35,11 @@ use crate::errors::EdgliError;
 type SpecDepositAddress =
     <hopr_lib::exports::transport::HoprPixSpec as hopr_lib::exports::transport::PixSpec>::DepositAddress;
 
+#[cfg(feature = "pix-curvy")]
+use hopr_lib::api::chain::DepositPool as _;
+#[cfg(feature = "pix-curvy")]
+use hopr_strategy::pix::pools::curvy::CurvyDepositPool;
+
 /// The deposit pool this build selected, for the startup log line.
 #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
 const PIX_POOL: &str = "non-anonymous-secp256k1";
@@ -681,6 +686,8 @@ impl Edgli {
             Vec::with_capacity(cfg.strategies.len());
         // Captured before the strategy moves into the reactor task: the shared cell is the only outside view.
         let mut strategy_state: Option<StrategyStateHandle> = None;
+        #[cfg(feature = "pix-curvy")]
+        let mut pix_float: Option<PixFloatHandle> = None;
         for kind in cfg.strategies {
             let built: Box<dyn Strategy + Send> = match kind {
                 EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
@@ -704,22 +711,36 @@ impl Edgli {
                     );
                     // The pool checks `chain_key` against the node's identity at build time; it signs the sweep's gas top-up, which cannot go through the Safe module.
                     #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
-                    let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
-                        .build_non_anonymous::<_, SpecDepositAddress>(
-                        Arc::clone(&node),
-                        self.chain_key.clone(),
-                        sub_cfg.pool.to_upstream(),
-                    )?;
+                    let built =
+                        PixStrategy::new(sub_cfg.strategy.to_upstream(&sub_cfg.state_password))
+                            .build_non_anonymous::<_, SpecDepositAddress>(
+                            Arc::clone(&node),
+                            self.chain_key.clone(),
+                            sub_cfg.pool.to_upstream(),
+                        )?;
                     // The pool checks `chain_key` against the node's identity at build time; it signs the direct shield, which goes through the Safe module.
+                    // Built here rather than by `build_curvy` so the float handle can share the pool with the strategy.
                     #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
-                    let built = PixStrategy::new(sub_cfg.strategy.to_upstream())
-                        .build_curvy::<_, SpecDepositAddress>(
-                        Arc::clone(&node),
-                        self.chain_key.clone(),
-                        sub_cfg
-                            .pool
-                            .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref()),
-                    )?;
+                    let built = {
+                        let upstream = sub_cfg.strategy.to_upstream(&sub_cfg.state_password);
+                        let password = upstream.pix_recovery_password(
+                            "the Curvy pool's state file is sealed under it",
+                        )?;
+                        let pool = Arc::new(CurvyDepositPool::new(
+                            Arc::clone(&node),
+                            self.chain_key.clone(),
+                            sub_cfg
+                                .pool
+                                .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref()),
+                            &password,
+                        )?);
+                        pix_float = Some(PixFloatHandle(Arc::clone(&pool)));
+                        PixStrategy::new(upstream)
+                            .build_curvy_with_pool::<_, _, SpecDepositAddress>(
+                                pool,
+                                Arc::clone(&node),
+                            )?
+                    };
                     built
                 }
             };
@@ -742,6 +763,8 @@ impl Edgli {
         Ok(ReactorHandle {
             abort_handle,
             strategy_state,
+            #[cfg(feature = "pix-curvy")]
+            pix_float,
         })
     }
 }
@@ -756,10 +779,31 @@ impl StrategyStateHandle {
     }
 }
 
+/// The Curvy pool's shielded float: what deposits are paid from, topped up from the Safe.
+#[cfg(feature = "pix-curvy")]
+#[derive(Clone)]
+pub struct PixFloatHandle(Arc<CurvyDepositPool<HoprEdgeClient>>);
+
+#[cfg(feature = "pix-curvy")]
+impl PixFloatHandle {
+    /// The pool's own ledger: counts a shield from submission, so keep a margin when topping up against it.
+    pub async fn available_balance(&self) -> anyhow::Result<HoprBalance> {
+        Ok(self.0.available_balance().await?)
+    }
+
+    /// Shields `amount` from the Safe into the float, on top of what it holds.
+    pub async fn fund(&self, amount: HoprBalance) -> anyhow::Result<()> {
+        Ok(self.0.fund(amount).await?)
+    }
+}
+
 /// Returned by [`Edgli::run_reactor_from_cfg`].
 pub struct ReactorHandle {
     pub abort_handle: AbortHandle,
     pub strategy_state: StrategyStateHandle,
+    /// `Some` when a PIX strategy runs on the Curvy pool.
+    #[cfg(feature = "pix-curvy")]
+    pub pix_float: Option<PixFloatHandle>,
 }
 
 /// The mixer config an edge node runs with: the Poisson engine with a 1 ms hard delay bound.

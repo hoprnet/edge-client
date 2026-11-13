@@ -153,7 +153,10 @@ strategies.strategies.push(EdgeStrategyKind::Pix(Box::new(PixEntryConfig {
         max_ssa_allocation: "10 wxHOPR".parse()?,
         ..Default::default()
     },
-    ..Default::default()
+    pool: Default::default(),
+    state_dir: None,
+    // Seals the pool's state: the same on every start, and losing it strands the float.
+    state_password: "correct horse battery staple".to_owned().into(),
 })));
 let _reactor = edgli.run_reactor_from_cfg(strategies)?;
 
@@ -222,8 +225,11 @@ default is `Operator`, because a relayer URL is deliberately not defaulted); and
 the vault's `token` id for wxHOPR, which is 2 on Gnosis rather than the
 default 3. Set `PixEntryConfig::state_dir` so the pool's state
 (`curvy-pix.redb`) is found again on every start; without it the file lands in
-the working directory. Its Safe module must also have the Curvy aggregator
-scoped as a target, or the first shield reverts. The pool reads its
+the working directory. The file is sealed under
+`PixEntryConfig::state_password`: use the same one on every start, since the
+sealed identity owns the float. `ReactorHandle::pix_float` reads the float's
+balance and tops it up from the Safe. Its Safe module must also have the Curvy
+aggregator scoped as a target, or the first shield reverts. The pool reads its
 `HOPRD_CURVY_*` environment overrides on top of `PixEntryPool` when the strategy
 is built.
 
