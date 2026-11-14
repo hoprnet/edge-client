@@ -829,7 +829,7 @@ pub fn xdai_fee_per_tx(max_fee_per_gas: u128) -> XDaiBalance {
 pub struct BalanceRecommendation {
     /// wxHOPR to stake the missing channels plus top-ups for half the target population.
     pub channel_stakes: HoprBalance,
-    /// wxHOPR the PIX pool shields from the Safe once, before its first deposit; zero without one.
+    /// wxHOPR the PIX pool shields from the Safe once, on its first deposit; zero without one.
     pub pix_float: HoprBalance,
     /// Refill for drained open channels; kept out of [`total_wxhopr`](Self::total_wxhopr), which stays from-scratch.
     pub topup_headroom: HoprBalance,
