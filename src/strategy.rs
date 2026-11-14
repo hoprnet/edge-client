@@ -755,11 +755,7 @@ pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<Fu
     })
 }
 
-/// wxHOPR the Safe must hold to open `missing_channels` channels and carry the target
-/// population through one round of top-ups.
-///
-/// The top-up round is headroom: funded to the opens alone, a node goes degraded as soon as
-/// its first channel drains to the lower threshold.
+/// wxHOPR to open `missing_channels` channels plus one top-up for half the target population.
 fn channel_stakes(
     ticket_price: HoprBalance,
     win_prob: f64,
@@ -768,7 +764,8 @@ fn channel_stakes(
 ) -> anyhow::Result<HoprBalance> {
     let funding = compute_funding_config(sizing)?;
     let resolved = resolve_funding(&funding, ticket_price, win_prob);
-    Ok(resolved.required_safe_balance(sizing.target_open_channels, missing_channels))
+    // Half a round: the opens carry the expected spend, a full round mostly idles in the Safe.
+    Ok(resolved.required_safe_balance(sizing.target_open_channels.div_ceil(2), missing_channels))
 }
 
 /// Floor of the fund pass's refill: proactive top-ups need per-channel history not available here.
@@ -827,11 +824,13 @@ pub fn xdai_fee_per_tx(max_fee_per_gas: u128) -> XDaiBalance {
     XDaiBalance::from(max_fee_per_gas.saturating_mul(gas_limit as u128))
 }
 
-/// Everything still needed for this node to be fully up and running.
+/// Everything still needed for this node to get going.
 #[derive(Clone, Copy, Debug)]
 pub struct BalanceRecommendation {
-    /// wxHOPR to stake the missing channels plus one top-up round for the target population.
+    /// wxHOPR to stake the missing channels plus top-ups for half the target population.
     pub channel_stakes: HoprBalance,
+    /// wxHOPR the PIX pool shields from the Safe once, before its first deposit; zero without one.
+    pub pix_float: HoprBalance,
     /// Refill for drained open channels; kept out of [`total_wxhopr`](Self::total_wxhopr), which stays from-scratch.
     pub topup_headroom: HoprBalance,
     /// One-time fee still owed before the node can start (today the
@@ -854,9 +853,9 @@ pub struct BalanceRecommendation {
 }
 
 impl BalanceRecommendation {
-    /// Total wxHOPR to fund: channel stakes plus the fee to start.
+    /// Total wxHOPR to fund: channel stakes, the PIX float and the fee to start.
     pub fn total_wxhopr(&self) -> HoprBalance {
-        self.channel_stakes + self.fee_to_start
+        self.channel_stakes + self.pix_float + self.fee_to_start
     }
 }
 
@@ -900,7 +899,7 @@ pub struct Capacity {
 }
 
 /// Compute the recommended wxHOPR and xDAI balances for `missing_channels` new channels,
-/// with one top-up round of headroom for the target population.
+/// without the PIX float, which only onboarding adds (see [`minimum_balance_recommendation`]).
 ///
 /// `costs` are the one-time startup costs (fee and remaining transactions)
 /// reported as their own fields next to the channel stakes; callers obtain
@@ -929,6 +928,7 @@ pub(crate) fn compute_balance_recommendation(
     };
     Ok(BalanceRecommendation {
         channel_stakes: stake,
+        pix_float: HoprBalance::zero(),
         topup_headroom: topup_headroom(ticket_price, win_prob, sizing, open_channel_balances)?,
         fee_to_start: costs.fee_to_start,
         txs_to_start: costs.txs_to_start,
@@ -1023,7 +1023,9 @@ where
 }
 
 /// Returns the minimum recommended wxHOPR and xDAI for this node to open
-/// `cfg.target_open_channels` channels from scratch and carry them through one top-up round.
+/// `cfg.target_open_channels` channels from scratch and shield `pix_float` into its PIX pool.
+///
+/// `pix_float` is the PIX pool's initial funding, drawn from the same Safe; zero without a pool.
 ///
 /// Queries ticket pricing from the safeless chain interactor so this can be
 /// called before the full node is started (e.g. during onboarding). The
@@ -1033,12 +1035,13 @@ where
 pub async fn minimum_balance_recommendation(
     incentive_ops: &dyn crate::blokli::IncentiveOperations,
     cfg: &IncentiveConfiguration,
+    pix_float: HoprBalance,
 ) -> anyhow::Result<BalanceRecommendation> {
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
     let costs = incentive_ops.compute_costs_to_start().await?;
     let max_fee_per_gas = incentive_ops.max_fee_per_gas().await?;
-    compute_balance_recommendation(
+    let rec = compute_balance_recommendation(
         stats.ticket_price,
         win_prob,
         cfg.target_open_channels,
@@ -1047,7 +1050,8 @@ pub async fn minimum_balance_recommendation(
         // Onboarding: no open channels yet, so nothing to top up.
         &[],
         max_fee_per_gas,
-    )
+    )?;
+    Ok(BalanceRecommendation { pix_float, ..rec })
 }
 
 /// Returns the default [`MultiStrategyConfig`] for an edge client reactor.
@@ -1266,14 +1270,14 @@ mod tests {
 
     #[test]
     fn balance_recommendation_matches_strategy_initial_stake() {
-        // One opening stake per missing channel, plus a top-up round for the target
-        // population. Never less than what the strategy locks.
+        // One opening stake per missing channel plus the half top-up round.
         for price in [HoprBalance::new_base(10), HoprBalance::from(100u32)] {
             for p in [1.0, 0.01, 0.001] {
                 let sizing = IncentiveConfiguration::default();
                 let cfg = compute_funding_config(&sizing).unwrap();
                 let resolved = resolve_funding(&cfg, price, p);
-                let topup_round = resolved.topup_balance * sizing.target_open_channels as u64;
+                let half_round =
+                    resolved.topup_balance * sizing.target_open_channels.div_ceil(2) as u64;
 
                 for missing in [1usize, 64] {
                     let rec = compute_balance_recommendation(
@@ -1288,7 +1292,7 @@ mod tests {
                     .unwrap();
                     assert_eq!(
                         rec.channel_stakes,
-                        resolved.initial_balance * missing as u64 + topup_round,
+                        resolved.initial_balance * missing as u64 + half_round,
                         "price={price}, p={p}, missing={missing}"
                     );
                 }
@@ -1297,8 +1301,8 @@ mod tests {
     }
 
     #[test]
-    fn balance_recommendation_covers_a_first_round_of_topups() {
-        // The headroom is exactly one top-up per channel in the target population.
+    fn balance_recommendation_tops_up_half_the_target_population() {
+        // 8 target channels → 4 top-ups of headroom.
         let price = HoprBalance::new_base(10);
         let sizing = IncentiveConfiguration::default();
         for p in WIN_PROBS {
@@ -1316,7 +1320,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 rec.channel_stakes - resolved.initial_balance,
-                resolved.topup_balance * sizing.target_open_channels as u64,
+                resolved.topup_balance * 4u64,
                 "p={p}"
             );
         }
@@ -1335,7 +1339,7 @@ mod tests {
         for p in [1.0, 0.01, 0.001] {
             let cfg = compute_funding_config(&requested_cfg).unwrap();
             let expected = resolve_funding(&cfg, price, p)
-                .required_safe_balance(requested_cfg.target_open_channels, 1);
+                .required_safe_balance(requested_cfg.target_open_channels.div_ceil(2), 1);
             let rec = compute_balance_recommendation(
                 price,
                 p,
@@ -1555,11 +1559,41 @@ mod tests {
             HoprBalance::new_base(10),
             1.0,
         )
-        .required_safe_balance(IncentiveConfiguration::default().target_open_channels, 8);
+        .required_safe_balance(
+            IncentiveConfiguration::default()
+                .target_open_channels
+                .div_ceil(2),
+            8,
+        );
         assert_eq!(rec.channel_stakes, stakes);
         assert_eq!(rec.fee_to_start, fee);
         assert_eq!(rec.txs_to_start, 3);
         assert_eq!(rec.total_wxhopr(), stakes + fee);
+    }
+
+    #[test]
+    fn total_wxhopr_includes_pix_float() {
+        let fee = HoprBalance::new_base(10);
+        let rec = compute_balance_recommendation(
+            HoprBalance::new_base(10),
+            1.0,
+            8,
+            StartupCosts {
+                fee_to_start: fee,
+                txs_to_start: 3,
+            },
+            &IncentiveConfiguration::default(),
+            &[],
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
+        assert_eq!(rec.pix_float, HoprBalance::zero());
+        let float = HoprBalance::new_base(35);
+        let onboarding = BalanceRecommendation {
+            pix_float: float,
+            ..rec
+        };
+        assert_eq!(onboarding.total_wxhopr(), rec.channel_stakes + float + fee);
     }
 
     #[test]
@@ -1588,12 +1622,11 @@ mod tests {
 
     #[test]
     fn compute_balance_recommendation_scales_by_missing_channels() {
-        // Only the opening stakes scale with the missing count; the top-up round is fixed
-        // by the target population.
+        // Only the opening stakes scale with the missing count; the half round is fixed.
         let price = HoprBalance::new_base(10);
         let sizing = IncentiveConfiguration::default();
         let resolved = resolve_funding(&compute_funding_config(&sizing).unwrap(), price, 1.0);
-        let topup_round = resolved.topup_balance * sizing.target_open_channels as u64;
+        let half_round = resolved.topup_balance * sizing.target_open_channels.div_ceil(2) as u64;
         let rec = compute_balance_recommendation(
             price,
             1.0,
@@ -1604,7 +1637,7 @@ mod tests {
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
-        let eight = resolved.initial_balance * 8u64 + topup_round;
+        let eight = resolved.initial_balance * 8u64 + half_round;
         assert_eq!(rec.channel_stakes, eight);
         let one = compute_balance_recommendation(
             price,
