@@ -755,11 +755,7 @@ pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<Fu
     })
 }
 
-/// wxHOPR the Safe must hold to open `missing_channels` channels and top up half the target
-/// population once.
-///
-/// Half a round is headroom, not a full one: the opens carry the expected spend, so a full
-/// round mostly sits idle in the Safe.
+/// wxHOPR to open `missing_channels` channels plus one top-up for half the target population.
 fn channel_stakes(
     ticket_price: HoprBalance,
     win_prob: f64,
@@ -768,6 +764,7 @@ fn channel_stakes(
 ) -> anyhow::Result<HoprBalance> {
     let funding = compute_funding_config(sizing)?;
     let resolved = resolve_funding(&funding, ticket_price, win_prob);
+    // Half a round: the opens carry the expected spend, a full round mostly idles in the Safe.
     Ok(resolved.required_safe_balance(sizing.target_open_channels.div_ceil(2), missing_channels))
 }
 
@@ -1028,8 +1025,7 @@ where
 /// Returns the minimum recommended wxHOPR and xDAI for this node to open
 /// `cfg.target_open_channels` channels from scratch and shield `pix_float` into its PIX pool.
 ///
-/// `pix_float` is the pool's initial funding, taken from the same Safe as the channel
-/// stakes; pass zero without a PIX pool.
+/// `pix_float` is the PIX pool's initial funding, drawn from the same Safe; zero without a pool.
 ///
 /// Queries ticket pricing from the safeless chain interactor so this can be
 /// called before the full node is started (e.g. during onboarding). The
@@ -1274,8 +1270,7 @@ mod tests {
 
     #[test]
     fn balance_recommendation_matches_strategy_initial_stake() {
-        // One opening stake per missing channel plus the half top-up round. Never less than
-        // what the strategy locks.
+        // One opening stake per missing channel plus the half top-up round.
         for price in [HoprBalance::new_base(10), HoprBalance::from(100u32)] {
             for p in [1.0, 0.01, 0.001] {
                 let sizing = IncentiveConfiguration::default();
@@ -1627,8 +1622,7 @@ mod tests {
 
     #[test]
     fn compute_balance_recommendation_scales_by_missing_channels() {
-        // Only the opening stakes scale with the missing count; the half top-up round is fixed
-        // by the target population.
+        // Only the opening stakes scale with the missing count; the half round is fixed.
         let price = HoprBalance::new_base(10);
         let sizing = IncentiveConfiguration::default();
         let resolved = resolve_funding(&compute_funding_config(&sizing).unwrap(), price, 1.0);
