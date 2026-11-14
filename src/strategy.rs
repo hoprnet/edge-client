@@ -824,7 +824,7 @@ pub fn xdai_fee_per_tx(max_fee_per_gas: u128) -> XDaiBalance {
     XDaiBalance::from(max_fee_per_gas.saturating_mul(gas_limit as u128))
 }
 
-/// Everything still needed for this node to be fully up and running.
+/// Everything still needed for this node to get going.
 #[derive(Clone, Copy, Debug)]
 pub struct BalanceRecommendation {
     /// wxHOPR to stake the missing channels plus top-ups for half the target population.
