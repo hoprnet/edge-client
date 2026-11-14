@@ -755,10 +755,11 @@ pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<Fu
     })
 }
 
-/// wxHOPR the Safe must hold to open `missing_channels` channels.
+/// wxHOPR the Safe must hold to open `missing_channels` channels and top up half the target
+/// population once.
 ///
-/// No top-up round: the recommendation is the minimum to get going, and a drained channel
-/// shows up as [`BalanceRecommendation::topup_headroom`] once the node runs.
+/// Half a round is headroom, not a full one: the opens carry the expected spend, so a full
+/// round mostly sits idle in the Safe.
 fn channel_stakes(
     ticket_price: HoprBalance,
     win_prob: f64,
@@ -767,7 +768,7 @@ fn channel_stakes(
 ) -> anyhow::Result<HoprBalance> {
     let funding = compute_funding_config(sizing)?;
     let resolved = resolve_funding(&funding, ticket_price, win_prob);
-    Ok(resolved.required_safe_balance(0, missing_channels))
+    Ok(resolved.required_safe_balance(sizing.target_open_channels.div_ceil(2), missing_channels))
 }
 
 /// Floor of the fund pass's refill: proactive top-ups need per-channel history not available here.
@@ -829,7 +830,7 @@ pub fn xdai_fee_per_tx(max_fee_per_gas: u128) -> XDaiBalance {
 /// Everything still needed for this node to be fully up and running.
 #[derive(Clone, Copy, Debug)]
 pub struct BalanceRecommendation {
-    /// wxHOPR to stake the missing channels.
+    /// wxHOPR to stake the missing channels plus top-ups for half the target population.
     pub channel_stakes: HoprBalance,
     /// wxHOPR the PIX pool shields from the Safe once, before its first deposit; zero without one.
     pub pix_float: HoprBalance,
@@ -1273,12 +1274,15 @@ mod tests {
 
     #[test]
     fn balance_recommendation_matches_strategy_initial_stake() {
-        // One opening stake per missing channel, exactly what the strategy locks.
+        // One opening stake per missing channel plus the half top-up round. Never less than
+        // what the strategy locks.
         for price in [HoprBalance::new_base(10), HoprBalance::from(100u32)] {
             for p in [1.0, 0.01, 0.001] {
                 let sizing = IncentiveConfiguration::default();
                 let cfg = compute_funding_config(&sizing).unwrap();
                 let resolved = resolve_funding(&cfg, price, p);
+                let half_round =
+                    resolved.topup_balance * sizing.target_open_channels.div_ceil(2) as u64;
 
                 for missing in [1usize, 64] {
                     let rec = compute_balance_recommendation(
@@ -1293,7 +1297,7 @@ mod tests {
                     .unwrap();
                     assert_eq!(
                         rec.channel_stakes,
-                        resolved.initial_balance * missing as u64,
+                        resolved.initial_balance * missing as u64 + half_round,
                         "price={price}, p={p}, missing={missing}"
                     );
                 }
@@ -1302,8 +1306,8 @@ mod tests {
     }
 
     #[test]
-    fn balance_recommendation_funds_no_topup_round() {
-        // The minimum to get going: top-ups are left to later funding.
+    fn balance_recommendation_tops_up_half_the_target_population() {
+        // 8 target channels → 4 top-ups of headroom.
         let price = HoprBalance::new_base(10);
         let sizing = IncentiveConfiguration::default();
         for p in WIN_PROBS {
@@ -1319,7 +1323,11 @@ mod tests {
                 TEST_MAX_FEE_PER_GAS,
             )
             .unwrap();
-            assert_eq!(rec.channel_stakes, resolved.initial_balance, "p={p}");
+            assert_eq!(
+                rec.channel_stakes - resolved.initial_balance,
+                resolved.topup_balance * 4u64,
+                "p={p}"
+            );
         }
     }
 
@@ -1335,7 +1343,8 @@ mod tests {
         };
         for p in [1.0, 0.01, 0.001] {
             let cfg = compute_funding_config(&requested_cfg).unwrap();
-            let expected = resolve_funding(&cfg, price, p).required_safe_balance(0, 1);
+            let expected = resolve_funding(&cfg, price, p)
+                .required_safe_balance(requested_cfg.target_open_channels.div_ceil(2), 1);
             let rec = compute_balance_recommendation(
                 price,
                 p,
@@ -1555,7 +1564,12 @@ mod tests {
             HoprBalance::new_base(10),
             1.0,
         )
-        .required_safe_balance(0, 8);
+        .required_safe_balance(
+            IncentiveConfiguration::default()
+                .target_open_channels
+                .div_ceil(2),
+            8,
+        );
         assert_eq!(rec.channel_stakes, stakes);
         assert_eq!(rec.fee_to_start, fee);
         assert_eq!(rec.txs_to_start, 3);
@@ -1613,10 +1627,12 @@ mod tests {
 
     #[test]
     fn compute_balance_recommendation_scales_by_missing_channels() {
-        // Only the opening stakes make up the channel figure, one per missing channel.
+        // Only the opening stakes scale with the missing count; the half top-up round is fixed
+        // by the target population.
         let price = HoprBalance::new_base(10);
         let sizing = IncentiveConfiguration::default();
         let resolved = resolve_funding(&compute_funding_config(&sizing).unwrap(), price, 1.0);
+        let half_round = resolved.topup_balance * sizing.target_open_channels.div_ceil(2) as u64;
         let rec = compute_balance_recommendation(
             price,
             1.0,
@@ -1627,7 +1643,7 @@ mod tests {
             TEST_MAX_FEE_PER_GAS,
         )
         .unwrap();
-        let eight = resolved.initial_balance * 8u64;
+        let eight = resolved.initial_balance * 8u64 + half_round;
         assert_eq!(rec.channel_stakes, eight);
         let one = compute_balance_recommendation(
             price,
