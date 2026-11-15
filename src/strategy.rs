@@ -368,11 +368,10 @@ impl PixEntryPool {
 /// [`Self::submission`]. A production Entry sets `submission` explicitly either way.
 ///
 /// Upstream still applies its `HOPRD_CURVY_*` environment overrides (shielding, submission, relayer
-/// URL, note source, indexer URL, token, initial funding) on top of this when the pool is built, and
-/// validates the result there.
+/// URL, note source, indexer URL, token) on top of this when the pool is built, and validates the
+/// result there.
 ///
-/// `Default` and the conversion to upstream both destructure rather than using `..`, so a field
-/// upstream adds is a compile error here instead of a knob silently pinned to its default.
+/// Not destructured exhaustively, since upstream's deprecated `initial_funding` would warn; mirror new upstream fields by hand.
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PixEntryPool {
@@ -382,15 +381,18 @@ pub struct PixEntryPool {
     /// Upstream default: 60 s.
     pub max_deposit_tracking_time: Duration,
 
+    /// Lag budget of one shield into the vault. Upstream default: 5 min.
+    pub max_funding_time: Duration,
+
+    /// Wait for an unconfirmed direct shield before resending it. Upstream default: 3 min.
+    pub direct_shield_settle_grace: Duration,
+
     /// The Curvy vault's token id for wxHOPR. Upstream default: 3 (the local Curvy deployment);
     /// on Gnosis it is 2.
     pub token: Option<u64>,
 
-    /// wxHOPR shielded from the Safe into the vault on the first deposit, gross of shield fees.
-    /// Deposits are allocated out of it until it runs out; the pool does not top itself up.
-    ///
-    /// Upstream default: 100 wxHOPR.
-    pub initial_funding: HoprBalance,
+    /// The pool never funds itself; without a policy only `PixFloatHandle::fund` refills the float. Upstream default: unset.
+    pub funding: Option<PixFundingPolicy>,
 
     /// Name of the environment variable holding the Curvy operator's private key; only read under
     /// [`PixCurvySubmission::Operator`] or [`CurvyShielding::Portal`].
@@ -422,6 +424,9 @@ pub struct PixEntryPool {
 
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
 pub use hopr_strategy::pix::pools::curvy::CurvyShielding;
+
+#[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+pub use hopr_strategy::pix::strategy::PixFundingPolicy;
 
 /// How the Curvy pool gets its proofs on chain: upstream's `CurvySubmission`, with the relayer's
 /// URL held by the variant that needs it.
@@ -484,32 +489,20 @@ impl PixCurvyNoteSource {
 
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
 impl Default for PixEntryPool {
-    /// Upstream's defaults, except `submission` (see the field). The URL-carrying pair is read
-    /// through the `_` bindings only to keep the destructure exhaustive.
+    /// Upstream's defaults, except `submission` (see the field).
     fn default() -> Self {
-        let hopr_strategy::pix::pools::curvy::PoolConfig {
-            blokli_url: _,
-            max_deposit_tracking_time,
-            token,
-            initial_funding,
-            state_path: _,
-            operator_key_env,
-            shielding,
-            submission: _,
-            relayer_url: _,
-            note_source: _,
-            curvy_indexer_url: _,
-            safe_multisend_address,
-        } = hopr_strategy::pix::pools::curvy::PoolConfig::default();
+        let upstream = hopr_strategy::pix::pools::curvy::PoolConfig::default();
         Self {
-            max_deposit_tracking_time,
-            token,
-            initial_funding,
-            operator_key_env,
-            shielding,
+            max_deposit_tracking_time: upstream.max_deposit_tracking_time,
+            max_funding_time: upstream.max_funding_time,
+            direct_shield_settle_grace: upstream.direct_shield_settle_grace,
+            token: upstream.token,
+            funding: hopr_strategy::pix::strategy::PixStrategyConfig::default().funding,
+            operator_key_env: upstream.operator_key_env,
+            shielding: upstream.shielding,
             submission: PixCurvySubmission::Operator,
             note_source: PixCurvyNoteSource::Blokli,
-            safe_multisend_address,
+            safe_multisend_address: upstream.safe_multisend_address,
         }
     }
 }
@@ -554,8 +547,11 @@ impl PixEntryPool {
     ) -> hopr_strategy::pix::pools::curvy::PoolConfig {
         let Self {
             max_deposit_tracking_time,
+            max_funding_time,
+            direct_shield_settle_grace,
             token,
-            initial_funding,
+            // Carried to the strategy config instead, at build time.
+            funding: _,
             operator_key_env,
             shielding,
             submission,
@@ -568,8 +564,9 @@ impl PixEntryPool {
         hopr_strategy::pix::pools::curvy::PoolConfig {
             blokli_url: blokli_url.clone(),
             max_deposit_tracking_time,
+            max_funding_time,
+            direct_shield_settle_grace,
             token,
-            initial_funding,
             state_path: state_dir
                 .map(|dir| dir.join(Self::STATE_FILE))
                 .or(upstream_default.state_path),
@@ -580,6 +577,7 @@ impl PixEntryPool {
             note_source,
             curvy_indexer_url,
             safe_multisend_address,
+            ..upstream_default
         }
     }
 }
@@ -2008,8 +2006,8 @@ mod tests {
         let relayer: url::Url = "https://api.curvy.dev/".parse().unwrap();
         let upstream = PixEntryPool {
             max_deposit_tracking_time: Duration::from_secs(300),
+            max_funding_time: Duration::from_secs(600),
             token: Some(2),
-            initial_funding: "25 wxHOPR".parse().unwrap(),
             submission: PixCurvySubmission::Relayer(relayer.clone()),
             ..Default::default()
         }
@@ -2017,8 +2015,8 @@ mod tests {
 
         assert_eq!(upstream.blokli_url, blokli);
         assert_eq!(upstream.max_deposit_tracking_time, Duration::from_secs(300));
+        assert_eq!(upstream.max_funding_time, Duration::from_secs(600));
         assert_eq!(upstream.token, Some(2));
-        assert_eq!(upstream.initial_funding, "25 wxHOPR".parse().unwrap());
         assert_eq!(
             upstream.state_path.as_deref(),
             Some(std::path::Path::new("/var/lib/node/curvy-pix.redb"))

@@ -5032,9 +5032,9 @@ dependencies = [
 
 [[package]]
 name = "hopr-strategy"
-version = "8.0.0"
+version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49fd6c61217f56ceb2be8186f9caf1204c7bf80bdb818e2ce1b06d4e62e4c063"
+checksum = "bf4296a69e01af54ceea370e7d4c4d19326dbe93408e3a5ca1b9b741bb6cda69"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7803,7 +7803,7 @@ dependencies = [
  "quinn-udp 0.5.16",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -7843,7 +7843,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -7856,7 +7856,7 @@ checksum = "47091c86514c2e11452cb228dee77037334b99d92a23e4c69aa5982261f39247"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "windows-sys 0.61.2",
 ]
 

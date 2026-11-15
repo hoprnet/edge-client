@@ -236,10 +236,10 @@ pub struct Edgli {
     /// The node's chain keypair, which both PIX deposit pools sign with: the plain pool its sweep's
     /// gas top-up, the Curvy pool its direct shield through the Safe module.
     ///
-    /// Held because the pools cannot get it any other way: `HoprEdgeClient` keeps a
+    /// Held because the secp256k1 pool cannot get it any other way: `HoprEdgeClient` keeps a
     /// `NodeOnchainIdentity`, not the keypair, and exposes no accessor. Storing it is what keeps
     /// [`Edgli::run_reactor_from_cfg`] from having to take a private key as an argument.
-    #[cfg(feature = "pix")]
+    #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
     chain_key: ChainKeypair,
     /// The Blokli this node was constructed with, which the Curvy pool also talks to (deployment
     /// discovery, note index, submissions).
@@ -431,7 +431,7 @@ impl Edgli {
             outgoing_ticket_indices,
             packet_public_key,
             egress,
-            #[cfg(feature = "pix")]
+            #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
             chain_key: hopr_keys.chain_key,
             #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
             blokli_url: blokli_endpoint.url,
@@ -718,17 +718,19 @@ impl Edgli {
                             self.chain_key.clone(),
                             sub_cfg.pool.to_upstream(),
                         )?;
-                    // The pool checks `chain_key` against the node's identity at build time; it signs the direct shield, which goes through the Safe module.
                     // Built here rather than by `build_curvy` so the float handle can share the pool with the strategy.
                     #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
                     let built = {
-                        let upstream = sub_cfg.strategy.to_upstream(&sub_cfg.state_password);
+                        // Upstream keeps the funding policy on the strategy, but only this pool accepts one.
+                        let upstream = hopr_strategy::pix::strategy::PixStrategyConfig {
+                            funding: sub_cfg.pool.funding.clone(),
+                            ..sub_cfg.strategy.to_upstream(&sub_cfg.state_password)
+                        };
                         let password = upstream.pix_recovery_password(
                             "the Curvy pool's state file is sealed under it",
                         )?;
                         let pool = Arc::new(CurvyDepositPool::new(
                             Arc::clone(&node),
-                            self.chain_key.clone(),
                             sub_cfg
                                 .pool
                                 .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref()),
@@ -791,7 +793,7 @@ impl PixFloatHandle {
         Ok(self.0.available_balance().await?)
     }
 
-    /// Shields `amount` from the Safe into the float, on top of what it holds.
+    /// Shields `amount` from the Safe into the float, on top of what it holds; the funding policy, if any, tops up on its own.
     pub async fn fund(&self, amount: HoprBalance) -> anyhow::Result<()> {
         Ok(self.0.fund(amount).await?)
     }
