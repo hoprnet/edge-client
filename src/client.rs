@@ -233,8 +233,7 @@ pub struct Edgli {
     packet_public_key: OffchainPublicKey,
     /// Runtime control over the node's probing and cover traffic, shared with the running prober.
     egress: EgressControl,
-    /// The node's chain keypair, which both PIX deposit pools sign with: the plain pool its sweep's
-    /// gas top-up, the Curvy pool its direct shield through the Safe module.
+    /// The node's chain keypair, which the plain pool signs its sweep's gas top-up with.
     ///
     /// Held because the secp256k1 pool cannot get it any other way: `HoprEdgeClient` keeps a
     /// `NodeOnchainIdentity`, not the keypair, and exposes no accessor. Storing it is what keeps
