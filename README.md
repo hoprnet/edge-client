@@ -210,28 +210,29 @@ whatever the channels need.
 
 #### Under `pix-curvy`, the Safe funds a shielded float
 
-The Curvy pool does not pay each deposit from the Safe. On its first deposit it
-shields `PixEntryPool::initial_funding` from the Safe into the Curvy vault —
-directly, as one Safe-module transaction bundling the approval with the shield —
-and then allocates every deposit out of that float as a private note, proved and
-and then allocates every deposit out of that float as a private note, proved and
-submitted per its `submission` mode — by the operator by default, or through the
-relayer. When the float runs out, deposits fail; the pool does not top itself
-up. So the Entry needs a Curvy deployment to talk to: the node's own Blokli (the
-one passed to `Edgli::new`) must index Curvy, since the pool uses it rather than
-a URL of its own; a `submission` mode (`PixCurvySubmission::Relayer(url)` for
-the Curvy relayer, or `Operator` with the operator key in the environment; the
-default is `Operator`, because a relayer URL is deliberately not defaulted); and
-the vault's `token` id for wxHOPR, which is 2 on Gnosis rather than the
-default 3. Set `PixEntryConfig::state_dir` so the pool's state
-(`curvy-pix.redb`) is found again on every start; without it the file lands in
-the working directory. The file is sealed under
-`PixEntryConfig::state_password`: use the same one on every start, since the
-sealed identity owns the float. `ReactorHandle::pix_float` reads the float's
-balance and tops it up from the Safe. Its Safe module must also have the Curvy
-aggregator scoped as a target, or the first shield reverts. The pool reads its
-`HOPRD_CURVY_*` environment overrides on top of `PixEntryPool` when the strategy
-is built.
+The Curvy pool does not pay each deposit from the Safe. It shields wxHOPR from
+the Safe into the Curvy vault — directly, through the node's transaction
+sequencer — and then allocates every deposit out of that float as a private
+note, proved and submitted per its `submission` mode — by the operator by
+default, or through the relayer. The pool never funds itself: either
+`PixEntryPool::funding` (`min_available`, `top_up`, `fund_at_startup`) tops the
+float up ahead of a deposit flush whenever it can pay less than `min_available`,
+or `PixFloatHandle::fund` does it on demand. Without either, deposits fail once
+the float is spent. So the Entry needs a Curvy deployment to talk to: the node's
+own Blokli (the one passed to `Edgli::new`) must index Curvy, since the pool
+uses it rather than a URL of its own; a `submission` mode
+(`PixCurvySubmission::Relayer(url)` for the Curvy relayer, or `Operator` with
+the operator key in the environment; the default is `Operator`, because a
+relayer URL is deliberately not defaulted); and the vault's `token` id for
+wxHOPR, which is 2 on Gnosis rather than the default 3. Set
+`PixEntryConfig::state_dir` so the pool's state (`curvy-pix.redb`) is found
+again on every start; without it the file lands in the working directory. The
+file is sealed under `PixEntryConfig::state_password`: use the same one on every
+start, since the sealed identity owns the float. `ReactorHandle::pix_float`
+reads the float's balance and tops it up from the Safe. Its Safe module must
+also have the Curvy aggregator scoped as a target, or the first shield reverts.
+The pool reads its `HOPRD_CURVY_*` environment overrides on top of
+`PixEntryPool` when the strategy is built.
 
 #### `pix-test` is not for production
 
