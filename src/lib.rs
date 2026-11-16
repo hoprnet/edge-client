@@ -16,6 +16,10 @@ pub mod endpoint;
 pub mod strategy;
 pub mod traits;
 
+// Reports through the concrete client's components, so it needs what `client` needs.
+#[cfg(all(feature = "state-dump", feature = "blokli"))]
+mod state_dump;
+
 pub use hopr_lib;
 
 #[cfg(feature = "blokli")]
