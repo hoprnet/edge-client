@@ -46,17 +46,14 @@ const PIX_POOL: &str = "non-anonymous-secp256k1";
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
 const PIX_POOL: &str = "curvy";
 
-/// The concrete HOPR edge node type used by this client.
-pub type HoprEdgeClient = hopr_lib::Hopr<
-    Arc<
-        hopr_chain_connector::HoprBlockchainSafeConnector<
-            hopr_chain_connector::blokli_client::BlokliClient,
-        >,
-    >,
-    SharedChannelGraph,
-    HoprNetwork,
-    (),
+/// The chain connector this client talks to Blokli with.
+pub type EdgeChainConnector = hopr_chain_connector::HoprBlockchainSafeConnector<
+    hopr_chain_connector::blokli_client::BlokliClient,
 >;
+
+/// The concrete HOPR edge node type used by this client.
+pub type HoprEdgeClient =
+    hopr_lib::Hopr<Arc<EdgeChainConnector>, SharedChannelGraph, HoprNetwork, ()>;
 
 /// Represents the initialization states of the Edgli client.
 /// Each state corresponds to a step in the `new()` function.
@@ -382,47 +379,49 @@ impl Edgli {
         let module_address = cfg.safe_module.module_address;
 
         visitor(EdgliInitState::StartingNode);
-        let node = Arc::new(
-            HoprBuilder
-                .with_identity(chain_key, packet_key)
-                .with_config(cfg)
-                .with_safe_module(&safe_address, &module_address)
-                .with_chain_api(move |_ctx| chain_connector)
-                .with_graph(move |_ctx| graph)
-                .with_network(move |ctx| {
-                    Box::pin(async move {
-                        let peer_discovery_rx = ctx.take_peer_discovery_rx().ok_or(
-                            hopr_lib::errors::HoprLibError::BuilderError(
-                                "peer_discovery_rx already taken",
-                            ),
-                        )?;
-                        let multiaddresses = vec![
-                            (&ctx.cfg.host)
-                                .try_into()
-                                .map_err(hopr_lib::errors::HoprLibError::TransportError)?,
-                        ];
-                        let nb = HoprLibp2pNetworkBuilder::new(peer_discovery_rx.map(
-                            move |(peer_id, addrs)| {
-                                PeerDiscovery::Announce(
-                                    peer_id,
-                                    probeable_addresses(addrs, probe_local_addresses),
-                                )
-                            },
-                        ));
-                        nb.build(
-                            &ctx.packet_key,
-                            multiaddresses,
-                            "/hopr/mix/1.1.0",
-                            ctx.cfg.protocol.transport.prefer_local_addresses,
-                        )
-                        .await
-                        .map_err(|e| hopr_lib::errors::HoprLibError::GeneralError(e.to_string()))
-                    })
+        #[cfg(feature = "state-dump")]
+        let state_dump =
+            crate::state_dump::EdgeStateDump::new(chain_key.public().to_address().to_string());
+        let builder = HoprBuilder
+            .with_identity(chain_key, packet_key)
+            .with_config(cfg)
+            .with_safe_module(&safe_address, &module_address)
+            .with_chain_api(move |_ctx| chain_connector)
+            .with_graph(move |_ctx| graph)
+            .with_network(move |ctx| {
+                Box::pin(async move {
+                    let peer_discovery_rx = ctx.take_peer_discovery_rx().ok_or(
+                        hopr_lib::errors::HoprLibError::BuilderError(
+                            "peer_discovery_rx already taken",
+                        ),
+                    )?;
+                    let multiaddresses = vec![
+                        (&ctx.cfg.host)
+                            .try_into()
+                            .map_err(hopr_lib::errors::HoprLibError::TransportError)?,
+                    ];
+                    let nb = HoprLibp2pNetworkBuilder::new(peer_discovery_rx.map(
+                        move |(peer_id, addrs)| {
+                            PeerDiscovery::Announce(
+                                peer_id,
+                                probeable_addresses(addrs, probe_local_addresses),
+                            )
+                        },
+                    ));
+                    nb.build(
+                        &ctx.packet_key,
+                        multiaddresses,
+                        "/hopr/mix/1.1.0",
+                        ctx.cfg.protocol.transport.prefer_local_addresses,
+                    )
+                    .await
+                    .map_err(|e| hopr_lib::errors::HoprLibError::GeneralError(e.to_string()))
                 })
-                .with_cover_traffic(move |_ctx| discovery)
-                .build_edge(ticket_factory)
-                .await?,
-        );
+            })
+            .with_cover_traffic(move |_ctx| discovery);
+        #[cfg(feature = "state-dump")]
+        let builder = builder.with_state_dump(state_dump);
+        let node = Arc::new(builder.build_edge(ticket_factory).await?);
 
         visitor(EdgliInitState::Ready);
         Ok(Self {
