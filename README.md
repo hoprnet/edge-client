@@ -344,9 +344,15 @@ Key inputs handed to `Edgli::new`:
 
 ## Troubleshooting
 
-- **Logging.** Controlled by `RUST_LOG` (see `tracing_subscriber`). Set
-  `HOPRD_LOG_FORMAT=json` for structured output. Sensible defaults are applied
-  when `RUST_LOG` is unset.
+- **Logging.** Controlled by `RUST_LOG` (see `tracing_subscriber`), `info` when
+  unset. Set `HOPRD_LOG_FORMAT=json` for structured output. Keep field logs at
+  `info`: every minute the node logs one `event="component_state"` line each for
+  `chain` (Safe balance and allowance, channels, announced peers), `graph` (own
+  edges with probe rates and latency, empty path searches), `transport`
+  (connected and discovered peers) and `paths` (path resolves and SURBs per
+  destination). `HOPR_STATE_DUMP_INTERVAL` sets the seconds (0 turns the lines
+  off). DEBUG or TRACE can add gigabytes per hour, so use them only for a short
+  run of one target, such as `RUST_LOG=info,hopr_strategy=debug`.
 - **Loopback address rejected.** `Edgli::new` refuses to announce a loopback
   host unless `protocol.transport.prefer_local_addresses = true`.
 - **Local peers not probed.** By default non-public (private, loopback,
