@@ -18,7 +18,7 @@ path = "src/main.rs"
 required-features = ["runtime-tokio", "blokli"]
 
 [features]
-default = ["runtime-tokio", "blokli", "pix-curvy"]
+default = ["runtime-tokio", "blokli", "pix-curvy", "state-dump"]
 runtime-tokio = [
   "dep:tokio",
   "hopr-lib/runtime-tokio",
@@ -35,6 +35,16 @@ telemetry = [
 ]
 testing = ["hopr-lib/testing"]
 blokli = ["dep:tokio", "dep:url", "dep:serde", "dep:serde_json"]
+# Periodic component diagnostics, managed with the node's other background tasks.
+state-dump = [
+  "runtime-tokio",
+  "hopr-lib/state-dump",
+  "hopr-chain-connector/state-dump",
+  "hopr-network-graph/state-dump",
+  "hopr-transport-p2p/state-dump",
+  "dep:serde",
+  "dep:serde_json",
+]
 
 # PIX settlement: Entry deposits wxHOPR per Session. Pulls runtime-tokio, which the strategy needs to run.
 pix = ["runtime-tokio", "dep:validator"]
@@ -103,7 +113,7 @@ hopr-chain-connector = { version = "0.33.0", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.11.0" }
 hopr-strategy = { version = "9.0.0", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.11.0" }
-hopr-network-graph = { version = "0.12.0" }
+hopr-network-graph = { version = "0.12.1" }
 hopr-transport-p2p = { version = "0.15.0" }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
