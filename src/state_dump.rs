@@ -330,6 +330,42 @@ mod tests {
 
     use super::*;
 
+    #[derive(Clone, Default)]
+    struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedLogs {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl CapturedLogs {
+        fn json_subscriber(&self) -> impl tracing::Subscriber + Send + Sync + 'static {
+            let writer = self.clone();
+            tracing_subscriber::fmt()
+                .json()
+                .without_time()
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(move || writer.clone())
+                .finish()
+        }
+
+        fn records(&self) -> Vec<serde_json::Value> {
+            self.0
+                .lock()
+                .unwrap()
+                .split(|byte| *byte == b'\n')
+                .filter(|line| !line.is_empty())
+                .map(|line| serde_json::from_slice(line).expect("valid JSON log record"))
+                .collect()
+        }
+    }
+
     fn offchain(seed: u8) -> hopr_lib::api::types::crypto::prelude::OffchainPublicKey {
         use hopr_lib::api::types::crypto::prelude::{Keypair, OffchainKeypair};
         *OffchainKeypair::from_secret(&[seed.wrapping_add(1); 32])
@@ -369,6 +405,178 @@ mod tests {
         for invalid in ["", "-1", "1", "4", "86401", "1.5", " 60", "60 ", "invalid"] {
             assert!(parse_interval(invalid).is_err(), "accepted {invalid:?}");
         }
+    }
+
+    #[test]
+    fn factory_prepares_interval_from_the_startup_environment() {
+        const CHILD_CASE: &str = "EDGLI_TEST_STATE_DUMP_ENV_CASE";
+        if let Ok(case) = std::env::var(CHILD_CASE) {
+            let mut factory = EdgeStateDump::new("test-node");
+            let result = factory.prepare();
+            assert_eq!(factory.instance, "test-node");
+            match case.as_str() {
+                "default" => {
+                    result.unwrap();
+                    assert_eq!(factory.interval, Some(DEFAULT_INTERVAL));
+                }
+                "disabled" => {
+                    result.unwrap();
+                    assert_eq!(factory.interval, None);
+                }
+                "enabled" => {
+                    result.unwrap();
+                    assert_eq!(factory.interval, Some(Duration::from_secs(5)));
+                }
+                "invalid" => assert!(result.is_err()),
+                "non-utf8" => assert!(result.unwrap_err().to_string().contains("UTF-8")),
+                _ => panic!("unknown case {case}"),
+            }
+            return;
+        }
+
+        // Each case gets a fresh process: changing environment variables inside
+        // the parallel test runner would race with other component reporters.
+        let run = |case: &str, interval: Option<std::ffi::OsString>| {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "state_dump::tests::factory_prepares_interval_from_the_startup_environment",
+                    "--nocapture",
+                ])
+                .env(CHILD_CASE, case)
+                .env_remove(INTERVAL_ENV);
+            if let Some(interval) = interval {
+                command.env(INTERVAL_ENV, interval);
+            }
+            let output = command.output().expect("start environment test child");
+            assert!(
+                output.status.success(),
+                "{case}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run("default", None);
+        run("disabled", Some("0".into()));
+        run("enabled", Some("5".into()));
+        run("invalid", Some("4".into()));
+        run("invalid", Some(" 60 ".into()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            run("non-utf8", Some(std::ffi::OsString::from_vec(vec![0xff])));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn periodic_reports_emit_info_with_fresh_counts_and_sections() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        let logs = CapturedLogs::default();
+        let _subscriber = tracing::subscriber::set_default(logs.json_subscriber());
+        let paths = PathCounters::default();
+        let interval = Duration::from_secs(5);
+        let revision = Arc::new(AtomicU64::new(1));
+        let section_revision = revision.clone();
+        let sections: StateDumpSections = vec![(
+            "application",
+            Arc::new(
+                move || serde_json::json!({"revision": section_revision.load(Ordering::Relaxed)}),
+            ),
+        )];
+        let mut reporter = Box::pin(report_paths(&paths, "test-node", interval, &sections));
+        assert!(futures::poll!(reporter.as_mut()).is_pending());
+        paths.record(resolved(1, PathDirection::Forward, true));
+        paths.record(resolved(1, PathDirection::Return, true));
+        paths.record(surbs(1, 4, 3));
+
+        tokio::time::advance(Duration::from_secs(4)).await;
+        assert!(futures::poll!(reporter.as_mut()).is_pending());
+        assert!(
+            logs.records().is_empty(),
+            "wait for a complete first interval"
+        );
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(futures::poll!(reporter.as_mut()).is_pending());
+        let first = logs.records();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0]["level"], "INFO");
+        let fields = &first[0]["fields"];
+        assert_eq!(fields["event"], "component_state");
+        assert_eq!(fields["component"], "paths");
+        assert_eq!(fields["instance"], "test-node");
+        assert_eq!(fields["sequence"], 0);
+        assert_eq!(fields["reason"], "paths_ok");
+        assert_eq!(fields["analysis_required"], false);
+        let state: serde_json::Value =
+            serde_json::from_str(fields["state"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            state["destinations"][0]["destination"],
+            offchain(1).to_string()
+        );
+        assert_eq!(state["destinations"][0]["forward_resolved"], 1);
+        assert_eq!(state["destinations"][0]["return_resolved"], 1);
+        assert_eq!(state["destinations"][0]["surbs_minted"], 4);
+        assert_eq!(state["destinations"][0]["surbs_returned"], 3);
+        assert_eq!(state["sections"]["application"]["revision"], 1);
+
+        revision.store(2, Ordering::Relaxed);
+        paths.record(resolved(1, PathDirection::Forward, false));
+        tokio::time::advance(interval).await;
+        assert!(futures::poll!(reporter.as_mut()).is_pending());
+        let records = logs.records();
+        assert_eq!(records.len(), 2);
+        let fields = &records[1]["fields"];
+        assert_eq!(records[1]["level"], "INFO");
+        assert_eq!(fields["sequence"], 1);
+        assert_eq!(fields["analysis_required"], true);
+        assert_eq!(fields["reason"], "no_path_to_destination");
+        let state: serde_json::Value =
+            serde_json::from_str(fields["state"].as_str().unwrap()).unwrap();
+        assert_eq!(state["destinations"][0]["forward_failed"], 1);
+        assert_eq!(state["destinations"][0]["forward_resolved"], 0);
+        assert_eq!(state["destinations"][0]["surbs_minted"], 0);
+        assert_eq!(state["sections"]["application"]["revision"], 2);
+
+        tokio::time::advance(interval).await;
+        assert!(futures::poll!(reporter.as_mut()).is_pending());
+        let records = logs.records();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[2]["fields"]["sequence"], 2);
+        assert_eq!(records[2]["fields"]["reason"], "no_path_activity");
+        assert_eq!(records[2]["fields"]["analysis_required"], false);
+        drop(reporter);
+        tokio::time::advance(interval * 2).await;
+        assert_eq!(
+            logs.records().len(),
+            3,
+            "dropping the reporter stops emission"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn missed_intervals_do_not_burst_empty_reports() {
+        let logs = CapturedLogs::default();
+        let _subscriber = tracing::subscriber::set_default(logs.json_subscriber());
+        let paths = PathCounters::default();
+        let sections = Vec::new();
+        let interval = Duration::from_secs(5);
+        let mut reporter = Box::pin(report_paths(&paths, "test-node", interval, &sections));
+        assert!(futures::poll!(reporter.as_mut()).is_pending());
+        tokio::time::advance(interval * 4).await;
+        assert!(futures::poll!(reporter.as_mut()).is_pending());
+        assert_eq!(logs.records().len(), 1);
+        let state: serde_json::Value =
+            serde_json::from_str(logs.records()[0]["fields"]["state"].as_str().unwrap()).unwrap();
+        assert!(state.get("sections").is_none());
+        tokio::time::advance(Duration::from_secs(4)).await;
+        assert!(futures::poll!(reporter.as_mut()).is_pending());
+        assert_eq!(logs.records().len(), 1);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(futures::poll!(reporter.as_mut()).is_pending());
+        assert_eq!(logs.records().len(), 2);
+        assert_eq!(logs.records()[1]["fields"]["sequence"], 1);
     }
 
     #[test]
@@ -504,20 +712,7 @@ mod tests {
 
     #[test]
     fn component_errors_are_logged_while_other_reporters_keep_running() {
-        #[derive(Clone)]
-        struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
-        impl std::io::Write for CapturedLogs {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let logs = CapturedLogs(Arc::default());
+        let logs = CapturedLogs::default();
         let writer = logs.clone();
         let subscriber = tracing_subscriber::fmt()
             .without_time()

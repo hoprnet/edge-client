@@ -129,7 +129,8 @@ hopr-chain-connector = { version = "0.33.0", features = [
   "testing",
 ] }
 # `full` for the async unit tests in src/ (#[tokio::test], spawn, time, sync).
-tokio = { version = "1.53.2", features = ["full"] }
+# `test-util` for deterministic state-dump interval tests using a paused clock.
+tokio = { version = "1.53.2", features = ["full", "test-util"] }
 tempfile = "3.27.0"
 
 [build-dependencies]
