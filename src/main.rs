@@ -99,13 +99,12 @@ fn init_logger() -> anyhow::Result<()> {
     let env_filter = match tracing_subscriber::EnvFilter::try_from_default_env() {
         Ok(filter) => filter,
         Err(_) => tracing_subscriber::filter::EnvFilter::new("info")
-            .add_directive("libp2p_swarm=info".parse()?)
-            .add_directive("libp2p_mplex=info".parse()?)
-            .add_directive("libp2p_tcp=info".parse()?)
-            .add_directive("libp2p_dns=info".parse()?)
-            .add_directive("multistream_select=info".parse()?)
             .add_directive("isahc=error".parse()?),
     };
+    // Checked before the filter moves into the subscriber; logged once the subscriber is up.
+    let verbose = env_filter
+        .max_level_hint()
+        .is_some_and(|level| level > tracing::level_filters::LevelFilter::INFO);
 
     #[cfg(feature = "prof")]
     let registry = tracing_subscriber::Registry::default()
@@ -173,6 +172,13 @@ fn init_logger() -> anyhow::Result<()> {
         else {
             tracing::subscriber::set_global_default(registry)?
         }
+    }
+
+    if verbose {
+        // The node's state lines cover what DEBUG used to be needed for, at a tiny share of the size.
+        tracing::warn!(
+            "RUST_LOG enables DEBUG or TRACE: logs can grow by gigabytes per hour; use it only for a short, targeted run"
+        );
     }
 
     Ok(())
