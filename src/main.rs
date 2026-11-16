@@ -98,8 +98,9 @@ pub struct CliArgs {
 fn init_logger() -> anyhow::Result<()> {
     let env_filter = match tracing_subscriber::EnvFilter::try_from_default_env() {
         Ok(filter) => filter,
-        Err(_) => tracing_subscriber::filter::EnvFilter::new("info")
-            .add_directive("isahc=error".parse()?),
+        Err(_) => {
+            tracing_subscriber::filter::EnvFilter::new("info").add_directive("isahc=error".parse()?)
+        }
     };
     // Checked before the filter moves into the subscriber; logged once the subscriber is up.
     let verbose = env_filter

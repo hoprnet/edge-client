@@ -47,16 +47,13 @@ const PIX_POOL: &str = "non-anonymous-secp256k1";
 const PIX_POOL: &str = "curvy";
 
 /// The chain connector this client talks to Blokli with.
-pub type EdgeChainConnector =
-    hopr_chain_connector::HoprBlockchainSafeConnector<hopr_chain_connector::blokli_client::BlokliClient>;
+pub type EdgeChainConnector = hopr_chain_connector::HoprBlockchainSafeConnector<
+    hopr_chain_connector::blokli_client::BlokliClient,
+>;
 
 /// The concrete HOPR edge node type used by this client.
-pub type HoprEdgeClient = hopr_lib::Hopr<
-    Arc<EdgeChainConnector>,
-    SharedChannelGraph,
-    HoprNetwork,
-    (),
->;
+pub type HoprEdgeClient =
+    hopr_lib::Hopr<Arc<EdgeChainConnector>, SharedChannelGraph, HoprNetwork, ()>;
 
 /// Represents the initialization states of the Edgli client.
 /// Each state corresponds to a step in the `new()` function.
