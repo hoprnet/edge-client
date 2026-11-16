@@ -11,20 +11,15 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    future::Future,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
 use hopr_lib::{
-    api::types::primitive::prelude::Address,
+    api::types::{internal::NodeId, primitive::prelude::Address},
     errors::HoprLibError,
-    exports::transport::{
-        TransportObserver,
-        observer::{PathDirection, TransportEvent},
-    },
+    exports::transport::observer::{PathDirection, TransportEvent},
     state_dump::{StateDump, StateDumpFactory, StateDumpSections},
 };
 use hopr_network_graph::SharedChannelGraph;
@@ -42,17 +37,21 @@ const MAX_REPORTED_DESTINATIONS: usize = 16;
 
 /// Reads the reporting interval the same way the components do; `None` means turned off.
 fn interval_from_env() -> Result<Option<Duration>, HoprLibError> {
-    let seconds = match std::env::var(INTERVAL_ENV) {
-        Ok(value) => value.trim().parse::<u64>().map_err(|_| {
-            HoprLibError::GeneralError(format!("{INTERVAL_ENV} must be whole seconds"))
-        })?,
-        Err(std::env::VarError::NotPresent) => return Ok(Some(DEFAULT_INTERVAL)),
-        Err(_) => {
-            return Err(HoprLibError::GeneralError(format!(
-                "{INTERVAL_ENV} is not valid UTF-8"
-            )));
-        }
-    };
+    match std::env::var(INTERVAL_ENV) {
+        Ok(value) => parse_interval(&value),
+        Err(std::env::VarError::NotPresent) => Ok(Some(DEFAULT_INTERVAL)),
+        Err(_) => Err(HoprLibError::GeneralError(format!(
+            "{INTERVAL_ENV} is not valid UTF-8"
+        ))),
+    }
+}
+
+fn parse_interval(value: &str) -> Result<Option<Duration>, HoprLibError> {
+    // Match the component reporters: whitespace is invalid, too. Accepting it
+    // here would let startup succeed while those reporters immediately fail.
+    let seconds = value
+        .parse::<u64>()
+        .map_err(|_| HoprLibError::GeneralError(format!("{INTERVAL_ENV} must be whole seconds")))?;
     match seconds {
         0 => Ok(None),
         5..=86400 => Ok(Some(Duration::from_secs(seconds))),
@@ -94,36 +93,38 @@ impl StateDumpFactory<Arc<EdgeChainConnector>, SharedChannelGraph, HoprNetwork> 
     ) -> Option<StateDump> {
         let interval = self.interval?;
         let paths = Arc::new(PathCounters::default());
-        let observer: TransportObserver = {
+        let observer = {
             let paths = paths.clone();
             Arc::new(move |event| paths.record(event))
         };
         let instance = self.instance;
 
         Some(StateDump::new(Some(observer), async move {
-            let (chain_result, graph_result, network_result, ()) = futures::join!(
+            futures::join!(
                 // No funding policy yet: the chain line reports funding values as unknown.
-                chain.run_state_reporting(&instance, safe, None),
+                report_component("chain", chain.run_state_reporting(&instance, safe, None)),
                 // No path sample: the graph line covers edges and searches only.
-                graph.run_state_reporting(&instance, Vec::new),
-                network.run_state_reporting(&instance),
+                report_component("graph", graph.run_state_reporting(&instance, Vec::new)),
+                report_component("transport", network.run_state_reporting(&instance)),
                 report_paths(&paths, &instance, interval, &sections),
             );
-            for (component, result) in [
-                ("chain", chain_result),
-                ("graph", graph_result),
-                ("transport", network_result),
-            ] {
-                if let Err(error) = result {
-                    tracing::warn!(component, %error, "component state reporting stopped");
-                }
-            }
         }))
     }
 }
 
+async fn report_component(
+    component: &'static str,
+    reporting: impl Future<Output = Result<(), String>>,
+) {
+    // Report failures immediately: the other reporters are long-running, so
+    // waiting for the outer join before inspecting results would hide errors.
+    if let Err(error) = reporting.await {
+        tracing::warn!(component, %error, "component state reporting stopped");
+    }
+}
+
 /// What happened for one destination in the current interval.
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Serialize)]
 struct DestinationCounts {
     forward_resolved: u64,
     forward_failed: u64,
@@ -141,31 +142,64 @@ impl DestinationCounts {
     }
 
     fn total(&self) -> u64 {
-        self.forward_resolved + self.return_resolved + self.failures() + self.surbs_minted
+        self.forward_resolved
+            + self.return_resolved
+            + self.failures()
+            + self.surbs_minted
+            + self.surbs_returned
     }
 }
 
 #[derive(Default)]
 struct PathCounters {
-    window: Mutex<HashMap<String, DestinationCounts>>,
+    window: Mutex<PathWindow>,
+}
+
+#[derive(Default)]
+struct PathWindow {
+    destinations: HashMap<NodeId, DestinationCounts>,
     /// Events for destinations beyond [`MAX_TRACKED_DESTINATIONS`].
-    untracked: AtomicU64,
+    untracked_events: u64,
+}
+
+impl PathWindow {
+    fn assess(&self) -> (bool, &'static str) {
+        if self.destinations.values().any(|counts| {
+            counts.forward_failed + counts.empty_searches > 0 && counts.forward_resolved == 0
+        }) {
+            (true, "no_path_to_destination")
+        } else if self
+            .destinations
+            .values()
+            .any(|counts| counts.surbs_minted > 0 && counts.surbs_returned == 0)
+        {
+            (true, "surbs_not_returning")
+        } else if self.untracked_events > 0 {
+            (true, "destination_tracking_limit")
+        } else if self.destinations.is_empty() {
+            (false, "no_path_activity")
+        } else {
+            (false, "paths_ok")
+        }
+    }
 }
 
 impl PathCounters {
     /// Called on the packet path, so the lock is held only for one map update.
     fn record(&self, event: TransportEvent) {
-        let key = match &event {
+        let destination = match &event {
             TransportEvent::PathResolved { destination, .. }
-            | TransportEvent::PathSearched { destination, .. } => destination.to_string(),
-            TransportEvent::Surb { destination, .. } => destination.to_string(),
+            | TransportEvent::PathSearched { destination, .. } => *destination,
+            TransportEvent::Surb { destination, .. } => NodeId::Offchain(*destination),
         };
         let mut window = self.window.lock().unwrap_or_else(|e| e.into_inner());
-        if !window.contains_key(&key) && window.len() >= MAX_TRACKED_DESTINATIONS {
-            self.untracked.fetch_add(1, Ordering::Relaxed);
+        if window.destinations.len() >= MAX_TRACKED_DESTINATIONS
+            && !window.destinations.contains_key(&destination)
+        {
+            window.untracked_events += 1;
             return;
         }
-        let counts = window.entry(key).or_default();
+        let counts = window.destinations.entry(destination).or_default();
         match event {
             TransportEvent::PathResolved {
                 direction,
@@ -193,11 +227,16 @@ impl PathCounters {
 
     /// Takes this interval's counts and starts a new interval.
     fn take(&self) -> PathsState {
+        // Take the counts and overflow total under the same lock, so both refer
+        // to the same interval even while new events arrive.
         let window = std::mem::take(&mut *self.window.lock().unwrap_or_else(|e| e.into_inner()));
+        // Assess every tracked destination before shortening the log payload.
+        let assessment = window.assess();
         let mut destinations: Vec<DestinationReport> = window
+            .destinations
             .into_iter()
             .map(|(destination, counts)| DestinationReport {
-                destination,
+                destination: destination.to_string(),
                 counts,
             })
             .collect();
@@ -206,14 +245,16 @@ impl PathCounters {
                 .failures()
                 .cmp(&a.counts.failures())
                 .then(b.counts.total().cmp(&a.counts.total()))
+                .then(a.destination.cmp(&b.destination))
         });
         let destinations_omitted = destinations.len().saturating_sub(MAX_REPORTED_DESTINATIONS);
         destinations.truncate(MAX_REPORTED_DESTINATIONS);
         PathsState {
             destinations,
             destinations_omitted,
-            untracked_events: self.untracked.swap(0, Ordering::Relaxed),
+            untracked_events: window.untracked_events,
             sections: HashMap::new(),
+            assessment,
         }
     }
 }
@@ -233,24 +274,9 @@ struct PathsState {
     /// Extra sections registered with `HoprBuilder::with_state_dump_section`.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     sections: HashMap<&'static str, serde_json::Value>,
-}
-
-impl PathsState {
-    /// Whether this interval needs a closer look, and why, in the components' wording style.
-    fn assess(&self) -> (bool, &'static str) {
-        let counts = || self.destinations.iter().map(|d| &d.counts);
-        if counts().any(|c| {
-            c.forward_failed + c.empty_searches > 0 && c.forward_resolved == 0
-        }) {
-            (true, "no_path_to_destination")
-        } else if counts().any(|c| c.surbs_minted > 0 && c.surbs_returned == 0) {
-            (true, "surbs_not_returning")
-        } else if self.destinations.is_empty() {
-            (false, "no_path_activity")
-        } else {
-            (false, "paths_ok")
-        }
-    }
+    /// Health of the complete interval, including destinations omitted above.
+    #[serde(skip)]
+    assessment: (bool, &'static str),
 }
 
 async fn report_paths(
@@ -267,8 +293,11 @@ async fn report_paths(
     loop {
         ticks.tick().await;
         let mut state = paths.take();
-        state.sections = sections.iter().map(|(name, read)| (*name, read())).collect();
-        let (analysis_required, reason) = state.assess();
+        state.sections = sections
+            .iter()
+            .map(|(name, read)| (*name, read()))
+            .collect();
+        let (analysis_required, reason) = state.assessment;
         match serde_json::to_string(&state) {
             Ok(state) => tracing::info!(
                 event = "component_state",
@@ -297,7 +326,7 @@ async fn report_paths(
 
 #[cfg(test)]
 mod tests {
-    use hopr_lib::{api::types::internal::NodeId, exports::transport::observer::PhaseCounts};
+    use hopr_lib::{api::graph::ForwardAndReturnPath, exports::transport::observer::PhaseCounts};
 
     use super::*;
 
@@ -316,6 +345,32 @@ mod tests {
         }
     }
 
+    fn surbs(seed: u8, minted: u64, returned: u64) -> TransportEvent {
+        TransportEvent::Surb {
+            destination: offchain(seed),
+            paths: ForwardAndReturnPath {
+                forward: [0, 1, 0, 0, 0],
+                reply: [1, 0, 0, 0, 0],
+            },
+            minted,
+            returned,
+        }
+    }
+
+    #[test]
+    fn interval_validation_matches_component_reporters() {
+        assert_eq!(parse_interval("0").unwrap(), None);
+        for seconds in [5, 60, 86400] {
+            assert_eq!(
+                parse_interval(&seconds.to_string()).unwrap(),
+                Some(Duration::from_secs(seconds))
+            );
+        }
+        for invalid in ["", "-1", "1", "4", "86401", "1.5", " 60", "60 ", "invalid"] {
+            assert!(parse_interval(invalid).is_err(), "accepted {invalid:?}");
+        }
+    }
+
     #[test]
     fn counts_resolves_searches_and_surbs_per_destination() {
         let paths = PathCounters::default();
@@ -331,6 +386,7 @@ mod tests {
             phase2: Some(PhaseCounts::default()),
             retained: 0,
         });
+        paths.record(surbs(1, 3, 2));
 
         let state = paths.take();
         assert_eq!(state.destinations.len(), 1);
@@ -339,11 +395,16 @@ mod tests {
             (
                 counts.forward_resolved,
                 counts.return_failed,
-                counts.empty_searches
+                counts.empty_searches,
+                counts.surbs_minted,
+                counts.surbs_returned,
             ),
-            (1, 1, 1)
+            (1, 1, 1, 3, 2)
         );
-        assert!(paths.take().destinations.is_empty(), "take starts a new interval");
+        assert!(
+            paths.take().destinations.is_empty(),
+            "take starts a new interval"
+        );
     }
 
     #[test]
@@ -353,8 +414,11 @@ mod tests {
         paths.record(resolved(2, PathDirection::Forward, true));
 
         let state = paths.take();
-        assert_eq!(state.assess(), (true, "no_path_to_destination"));
-        assert_eq!(state.destinations[0].counts.forward_failed, 1, "failures come first");
+        assert_eq!(state.assessment, (true, "no_path_to_destination"));
+        assert_eq!(
+            state.destinations[0].counts.forward_failed, 1,
+            "failures come first"
+        );
     }
 
     #[test]
@@ -371,12 +435,119 @@ mod tests {
             state.destinations_omitted,
             MAX_TRACKED_DESTINATIONS - MAX_REPORTED_DESTINATIONS
         );
+        assert_eq!(state.assessment, (true, "destination_tracking_limit"));
+
+        // A new interval has capacity again, and does not inherit overflow.
+        paths.record(resolved(
+            MAX_TRACKED_DESTINATIONS as u8,
+            PathDirection::Forward,
+            true,
+        ));
+        let next = paths.take();
+        assert_eq!(next.destinations.len(), 1);
+        assert_eq!(next.untracked_events, 0);
+        assert_eq!(next.assessment, (false, "paths_ok"));
+    }
+
+    #[test]
+    fn omitted_destinations_still_contribute_to_the_health_assessment() {
+        for (event, reason) in [
+            (
+                resolved(63, PathDirection::Forward, false),
+                "no_path_to_destination",
+            ),
+            (surbs(63, 1, 0), "surbs_not_returning"),
+        ] {
+            let paths = PathCounters::default();
+            // These recovered destinations rank ahead of the unhealthy one.
+            for seed in 0..MAX_REPORTED_DESTINATIONS as u8 {
+                paths.record(resolved(seed, PathDirection::Forward, false));
+                paths.record(resolved(seed, PathDirection::Forward, false));
+                paths.record(resolved(seed, PathDirection::Forward, true));
+            }
+            paths.record(event);
+
+            let state = paths.take();
+            assert_eq!(state.destinations.len(), MAX_REPORTED_DESTINATIONS);
+            assert_eq!(state.destinations_omitted, 1);
+            assert!(
+                state
+                    .destinations
+                    .iter()
+                    .all(|d| d.destination != offchain(63).to_string())
+            );
+            assert_eq!(state.assessment, (true, reason));
+            assert!(
+                serde_json::to_value(state)
+                    .unwrap()
+                    .get("assessment")
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn equal_activity_is_reported_in_a_stable_order() {
+        let ascending = PathCounters::default();
+        let descending = PathCounters::default();
+        for seed in 0..=MAX_REPORTED_DESTINATIONS as u8 {
+            ascending.record(resolved(seed, PathDirection::Forward, true));
+        }
+        for seed in (0..=MAX_REPORTED_DESTINATIONS as u8).rev() {
+            descending.record(resolved(seed, PathDirection::Forward, true));
+        }
+        assert_eq!(
+            serde_json::to_value(ascending.take()).unwrap(),
+            serde_json::to_value(descending.take()).unwrap(),
+        );
+    }
+
+    #[test]
+    fn component_errors_are_logged_while_other_reporters_keep_running() {
+        #[derive(Clone)]
+        struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for CapturedLogs {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let logs = CapturedLogs(Arc::default());
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            futures::executor::block_on(async {
+                let mut reporters = std::pin::pin!(futures::future::join(
+                    report_component("chain", async { Err("invalid interval".to_owned()) }),
+                    std::future::pending::<()>(),
+                ));
+                assert!(futures::poll!(reporters.as_mut()).is_pending());
+            });
+        });
+        let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            output.contains("component state reporting stopped"),
+            "{output}"
+        );
+        assert!(
+            output.contains("chain") && output.contains("invalid interval"),
+            "{output}"
+        );
     }
 
     #[test]
     fn an_idle_interval_needs_no_analysis() {
         assert_eq!(
-            PathCounters::default().take().assess(),
+            PathCounters::default().take().assessment,
             (false, "no_path_activity")
         );
     }

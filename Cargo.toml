@@ -42,8 +42,6 @@ state-dump = [
   "hopr-chain-connector/state-dump",
   "hopr-network-graph/state-dump",
   "hopr-transport-p2p/state-dump",
-  "dep:serde",
-  "dep:serde_json",
 ]
 
 # PIX settlement: Entry deposits wxHOPR per Session. Pulls runtime-tokio, which the strategy needs to run.
