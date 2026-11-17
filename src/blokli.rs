@@ -22,6 +22,7 @@ use hopr_lib::{
 };
 
 use crate::endpoint::BlokliEndpoint;
+use crate::errors::Result;
 
 pub use hopr_lib::builder::ChainKeypair;
 
@@ -48,9 +49,7 @@ pub(crate) fn resolve_max_fee_per_gas(
 /// and does not surface them through `ChainValues`, so the raw Blokli query is
 /// the only way to reach them. A failed query is an error; a chain that simply
 /// reports no gas price falls back per [`resolve_max_fee_per_gas`].
-pub(crate) async fn query_max_fee_per_gas<C: BlokliQueryClient>(
-    client: &C,
-) -> anyhow::Result<u128> {
+pub(crate) async fn query_max_fee_per_gas<C: BlokliQueryClient>(client: &C) -> Result<u128> {
     let info = client.query_chain_info().await?;
     let resolved =
         resolve_max_fee_per_gas(info.max_fee_per_gas.as_deref(), info.gas_price.as_deref());
@@ -64,7 +63,7 @@ pub(crate) async fn query_max_fee_per_gas<C: BlokliQueryClient>(
 }
 
 /// Keyless `chainInfo.network` lookup so consumers can key per-network state on the chain's own name.
-pub async fn query_network(blokli_endpoint: &BlokliEndpoint) -> anyhow::Result<String> {
+pub async fn query_network(blokli_endpoint: &BlokliEndpoint) -> Result<String> {
     let info = blokli_endpoint.build_client().query_chain_info().await?;
     Ok(info.network)
 }
@@ -81,7 +80,7 @@ pub async fn make_incentive_operations(
     blokli_endpoint: BlokliEndpoint,
     chain_key: &ChainKeypair,
     connector_config: Option<BlockchainConnectorConfig>,
-) -> anyhow::Result<Box<dyn IncentiveOperations>> {
+) -> Result<Box<dyn IncentiveOperations>> {
     let interactor = SafelessInteractor::new(blokli_endpoint, chain_key, connector_config).await?;
     Ok(Box::new(interactor))
 }
@@ -108,36 +107,29 @@ pub struct TicketStats {
 #[async_trait::async_trait]
 pub trait IncentiveOperations: Send + Sync {
     /// Look up an existing Safe/module deployment for this key-pair.
-    async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>>;
+    async fn retrieve_safe(&self) -> Result<Option<SafeModuleDeploymentResult>>;
 
     /// Deploy a new Safe and module, funding it with `token_amount` WxHOPR.
-    async fn deploy_safe(
-        &self,
-        token_amount: HoprBalance,
-    ) -> anyhow::Result<SafeModuleDeploymentResult>;
+    async fn deploy_safe(&self, token_amount: HoprBalance) -> Result<SafeModuleDeploymentResult>;
 
     /// Fetch current on-chain ticket pricing parameters.
-    async fn ticket_stats(&self) -> anyhow::Result<TicketStats>;
+    async fn ticket_stats(&self) -> Result<TicketStats>;
 
     /// Fetch the chain's current EIP-1559 `max_fee_per_gas`, in wei per gas.
-    async fn max_fee_per_gas(&self) -> anyhow::Result<u128>;
+    async fn max_fee_per_gas(&self) -> Result<u128>;
 
     /// Returns what this key-pair still owes before being fully up and running,
     /// verified against on-chain state: the one-time key-binding fee burned from
     /// the Safe when a fresh node announces itself (zero once the key is bound),
     /// and the number of on-chain transactions left before channel funding can
     /// begin (Safe deployment, Safe registration, key-binding announcement).
-    async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts>;
+    async fn compute_costs_to_start(&self) -> Result<crate::strategy::StartupCosts>;
 
     /// Fetch the WxHOPR and xDAI balances for this key-pair.
-    async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)>;
+    async fn balances(&self) -> Result<(HoprBalance, XDaiBalance)>;
 
     /// Withdraw `amount` WxHOPR tokens from the node wallet to the given `safe_address`.
-    async fn withdraw_wxhopr(
-        &self,
-        safe_address: Address,
-        amount: HoprBalance,
-    ) -> anyhow::Result<()>;
+    async fn withdraw_wxhopr(&self, safe_address: Address, amount: HoprBalance) -> Result<()>;
 }
 
 /// Blockchain interactor that operates without a HOPR Safe module.
@@ -155,7 +147,7 @@ impl SafelessInteractor<BlokliClient> {
         blokli_endpoint: BlokliEndpoint,
         chain_key: &ChainKeypair,
         connector_config: Option<BlockchainConnectorConfig>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         Self::new_with_client(blokli_endpoint.build_client(), chain_key, connector_config).await
     }
 }
@@ -173,7 +165,7 @@ where
         client: C,
         chain_key: &ChainKeypair,
         connector_config: Option<BlockchainConnectorConfig>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let cfg = connector_config.unwrap_or_default();
         let mut connector =
             create_trustful_safeless_hopr_blokli_connector(chain_key, cfg, client).await?;
@@ -186,7 +178,7 @@ where
     }
 
     #[tracing::instrument(skip(self), ret)]
-    pub async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>> {
+    pub async fn retrieve_safe(&self) -> Result<Option<SafeModuleDeploymentResult>> {
         let me = self.chain_key.public().to_address();
         let res = self.connector.safe_info(SafeSelector::Owner(me)).await?;
         match res {
@@ -202,7 +194,7 @@ where
     pub async fn deploy_safe(
         &self,
         token_amount: HoprBalance,
-    ) -> anyhow::Result<SafeModuleDeploymentResult> {
+    ) -> Result<SafeModuleDeploymentResult> {
         if let Some(safe_info) = self.retrieve_safe().await? {
             tracing::debug!(?safe_info, "safe already deployed");
             return Ok(safe_info);
@@ -221,9 +213,7 @@ where
         let tx_hash = self.connector.deploy_safe(token_amount).await?.await?;
         tracing::debug!(%tx_hash, "safe deployment transaction submitted");
 
-        let safe = subscription_handle
-            .await
-            .map_err(|e| anyhow::anyhow!("safe deployment subscription task failed: {e}"))??;
+        let safe = subscription_handle.await??;
 
         Ok(SafeModuleDeploymentResult {
             safe_address: safe.address,
@@ -232,11 +222,7 @@ where
     }
 
     #[tracing::instrument(skip(self), ret)]
-    pub async fn withdraw_wxhopr(
-        &self,
-        safe_address: Address,
-        amount: HoprBalance,
-    ) -> anyhow::Result<()> {
+    pub async fn withdraw_wxhopr(&self, safe_address: Address, amount: HoprBalance) -> Result<()> {
         self.connector
             .withdraw(amount, &safe_address)
             .await?
@@ -244,36 +230,29 @@ where
         Ok(())
     }
 
-    pub async fn ticket_stats(&self) -> anyhow::Result<TicketStats> {
+    pub async fn ticket_stats(&self) -> Result<TicketStats> {
         Ok(TicketStats {
-            ticket_price: ChainValues::minimum_ticket_price(&self.connector)
-                .await
-                .map_err(anyhow::Error::from)?,
+            ticket_price: ChainValues::minimum_ticket_price(&self.connector).await?,
             winning_probability: ChainValues::minimum_incoming_ticket_win_prob(&self.connector)
-                .await
-                .map_err(anyhow::Error::from)?,
+                .await?,
         })
     }
 
-    pub async fn max_fee_per_gas(&self) -> anyhow::Result<u128> {
+    pub async fn max_fee_per_gas(&self) -> Result<u128> {
         query_max_fee_per_gas(self.connector.client()).await
     }
 
-    pub async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts> {
+    pub async fn compute_costs_to_start(&self) -> Result<crate::strategy::StartupCosts> {
         let me = self.chain_key.public().to_address();
         let safe_deployed = self.retrieve_safe().await?.is_some();
         crate::strategy::compute_costs_to_start(self.connector.as_ref(), Some(me), safe_deployed)
             .await
     }
 
-    pub async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
+    pub async fn balances(&self) -> Result<(HoprBalance, XDaiBalance)> {
         let me = self.chain_key.public().to_address();
-        let hopr: HoprBalance = ChainValues::balance(&self.connector, me)
-            .await
-            .map_err(anyhow::Error::from)?;
-        let xdai: XDaiBalance = ChainValues::balance(&self.connector, me)
-            .await
-            .map_err(anyhow::Error::from)?;
+        let hopr: HoprBalance = ChainValues::balance(&self.connector, me).await?;
+        let xdai: XDaiBalance = ChainValues::balance(&self.connector, me).await?;
         Ok((hopr, xdai))
     }
 }
@@ -288,38 +267,31 @@ where
         + Sync
         + 'static,
 {
-    async fn retrieve_safe(&self) -> anyhow::Result<Option<SafeModuleDeploymentResult>> {
+    async fn retrieve_safe(&self) -> Result<Option<SafeModuleDeploymentResult>> {
         SafelessInteractor::retrieve_safe(self).await
     }
 
-    async fn deploy_safe(
-        &self,
-        token_amount: HoprBalance,
-    ) -> anyhow::Result<SafeModuleDeploymentResult> {
+    async fn deploy_safe(&self, token_amount: HoprBalance) -> Result<SafeModuleDeploymentResult> {
         SafelessInteractor::deploy_safe(self, token_amount).await
     }
 
-    async fn ticket_stats(&self) -> anyhow::Result<TicketStats> {
+    async fn ticket_stats(&self) -> Result<TicketStats> {
         SafelessInteractor::ticket_stats(self).await
     }
 
-    async fn max_fee_per_gas(&self) -> anyhow::Result<u128> {
+    async fn max_fee_per_gas(&self) -> Result<u128> {
         SafelessInteractor::max_fee_per_gas(self).await
     }
 
-    async fn compute_costs_to_start(&self) -> anyhow::Result<crate::strategy::StartupCosts> {
+    async fn compute_costs_to_start(&self) -> Result<crate::strategy::StartupCosts> {
         SafelessInteractor::compute_costs_to_start(self).await
     }
 
-    async fn balances(&self) -> anyhow::Result<(HoprBalance, XDaiBalance)> {
+    async fn balances(&self) -> Result<(HoprBalance, XDaiBalance)> {
         SafelessInteractor::balances(self).await
     }
 
-    async fn withdraw_wxhopr(
-        &self,
-        safe_address: Address,
-        amount: HoprBalance,
-    ) -> anyhow::Result<()> {
+    async fn withdraw_wxhopr(&self, safe_address: Address, amount: HoprBalance) -> Result<()> {
         SafelessInteractor::withdraw_wxhopr(self, safe_address, amount).await
     }
 }
@@ -333,7 +305,7 @@ pub struct SafeModuleDeploymentResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hopr_chain_connector::{errors::ConnectorError, testing::BlokliTestStateBuilder};
+    use hopr_chain_connector::testing::BlokliTestStateBuilder;
 
     #[test]
     fn resolve_max_fee_per_gas_prefers_eip1559_value() {
@@ -442,9 +414,9 @@ mod tests {
             .withdraw_wxhopr(recipient, HoprBalance::new_base(10))
             .await
             .expect_err("expected withdrawal to fail with insufficient balance");
-        let connector_err = err
-            .downcast_ref::<ConnectorError>()
-            .unwrap_or_else(|| panic!("expected ConnectorError, got: {err:#}"));
+        let crate::errors::EdgliError::Connector(connector_err) = &err else {
+            panic!("expected ConnectorError, got: {err:#}");
+        };
         assert!(
             connector_err.as_transaction_rejection_error().is_some(),
             "expected tx-rejection error from chain emulator, got: {connector_err:?}"

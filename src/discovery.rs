@@ -19,6 +19,7 @@ use hopr_lib::api::types::primitive::prelude::Address;
 use serde::Deserialize;
 
 use crate::endpoint::BlokliEndpoint;
+use crate::errors::EdgliError;
 
 /// Schema per `design-service-registry-v3.md` §3.2; unknown keys are tolerated so an additive
 /// field cannot invalidate every entry for older clients.
@@ -98,11 +99,13 @@ fn decode(entry: ServiceEntry) -> Result<ExitNodeInfo, MetadataDecodeError> {
 /// Fetches all registered `gvpn:exit` nodes that still have a Safe binding.
 ///
 /// An entry whose binding was lost stays listed but is dead (§9.5), hence `with_live_only`.
-pub async fn list_exit_nodes(blokli_endpoint: BlokliEndpoint) -> anyhow::Result<Vec<ExitNodeInfo>> {
+pub async fn list_exit_nodes(
+    blokli_endpoint: BlokliEndpoint,
+) -> crate::errors::Result<Vec<ExitNodeInfo>> {
     list_exit_nodes_with_client(blokli_endpoint.build_client()).await
 }
 
-async fn list_exit_nodes_with_client<C>(client: C) -> anyhow::Result<Vec<ExitNodeInfo>>
+async fn list_exit_nodes_with_client<C>(client: C) -> crate::errors::Result<Vec<ExitNodeInfo>>
 where
     C: hopr_chain_connector::blokli_client::BlokliQueryClient + Send + Sync + 'static,
 {
@@ -110,9 +113,10 @@ where
     list_exit_nodes_with_reader(&reader).await
 }
 
-async fn list_exit_nodes_with_reader<R>(reader: &R) -> anyhow::Result<Vec<ExitNodeInfo>>
+async fn list_exit_nodes_with_reader<R>(reader: &R) -> crate::errors::Result<Vec<ExitNodeInfo>>
 where
     R: ChainReadServiceOperations + Send + Sync,
+    EdgliError: From<R::Error>,
 {
     let selector = ServiceSelector::default()
         .with_service_type(ServiceType::GVPN_EXIT)
@@ -254,8 +258,11 @@ impl ExitNodeRegistry {
     }
 
     /// Waits for the next change to [`Self::nodes`].
-    pub async fn changed(&mut self) -> anyhow::Result<()> {
-        self.nodes.changed().await.map_err(anyhow::Error::from)
+    pub async fn changed(&mut self) -> crate::errors::Result<()> {
+        self.nodes
+            .changed()
+            .await
+            .map_err(|_| EdgliError::DiscoveryStopped)
     }
 }
 
@@ -273,6 +280,7 @@ async fn reconcile_exit_nodes<C, S>(
     tx: tokio::sync::watch::Sender<HashMap<Address, ExitNodeInfo>>,
 ) where
     C: ChainReadServiceOperations + Clone + Send + Sync + 'static,
+    EdgliError: From<C::Error>,
     S: Stream<Item = ExitNodeUpdate> + Send + 'static,
 {
     let mut live_updates = Some(std::pin::pin!(updates));
@@ -324,6 +332,7 @@ pub fn watch_exit_nodes<C>(
 ) -> Result<ExitNodeRegistry, <C as ChainEvents>::Error>
 where
     C: ChainEvents + ChainReadServiceOperations + Clone + Send + Sync + 'static,
+    EdgliError: From<<C as ChainReadServiceOperations>::Error>,
 {
     let updates = subscribe_exit_nodes(&chain)?;
     let (tx, rx) = tokio::sync::watch::channel(to_map(initial));

@@ -19,7 +19,9 @@ use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::exports::network::types::addr::is_public_address;
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
 use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
-use hopr_ticket_manager::{HoprTicketFactory, RedbStore, ticket_factory_from_chain};
+use hopr_ticket_manager::{
+    HoprTicketFactory, RedbStore, TicketManagerError, ticket_factory_from_chain,
+};
 use hopr_transport_p2p::{HoprLibp2pNetworkBuilder, HoprNetwork, PeerDiscovery};
 use multiaddr::Multiaddr;
 use strum::{AsRefStr, Display, EnumString};
@@ -28,7 +30,7 @@ use tracing::info;
 #[cfg(feature = "blokli")]
 use crate::endpoint::BlokliEndpoint;
 
-use crate::errors::EdgliError;
+use crate::errors::{EdgliError, Result};
 
 /// The deposit address type this build's `HoprPixSpec` produces.
 #[cfg(feature = "pix")]
@@ -132,7 +134,7 @@ pub async fn run_hopr_edge_node_with<F, T>(
     ticket_store_path: Option<PathBuf>,
     f: F,
     visitor: impl Fn(EdgliInitState) + Send + 'static,
-) -> anyhow::Result<AbortHandle>
+) -> Result<AbortHandle>
 where
     F: Fn(Arc<HoprEdgeClient>) -> T + Send + 'static,
     T: std::future::Future<Output = ()> + Send + 'static,
@@ -194,7 +196,7 @@ impl OutgoingTicketIndices {
         }
     }
 
-    async fn save(&self) -> anyhow::Result<()> {
+    async fn save(&self) -> Result<()> {
         save_outgoing_ticket_indices(self.factory.clone()).await
     }
 }
@@ -208,9 +210,7 @@ impl Drop for OutgoingTicketIndices {
     }
 }
 
-async fn save_outgoing_ticket_indices(
-    factory: Arc<HoprTicketFactory<RedbStore>>,
-) -> anyhow::Result<()> {
+async fn save_outgoing_ticket_indices(factory: Arc<HoprTicketFactory<RedbStore>>) -> Result<()> {
     tokio::task::spawn_blocking(move || factory.save_outgoing_indices()).await??;
     Ok(())
 }
@@ -283,7 +283,7 @@ impl Edgli {
         probe_local_addresses: bool,
         ticket_store_path: Option<PathBuf>,
         visitor: impl Fn(EdgliInitState) + Send + 'static,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let mut cfg = cfg;
         cfg.protocol.mixer = edge_mixer_config(cfg.protocol.mixer);
 
@@ -334,27 +334,26 @@ impl Edgli {
             shuffle_ttl: std::time::Duration::from_secs(3),
             ..Default::default()
         };
-        probe_cfg.validate_against_probe_timeout(cfg.protocol.probe.timeout)?;
+        probe_cfg
+            .validate_against_probe_timeout(cfg.protocol.probe.timeout)
+            .map_err(|error| EdgliError::InvalidSetting {
+                setting: "probe configuration",
+                source: error.into(),
+            })?;
 
         let ticket_store = match &ticket_store_path {
             Some(path) => {
                 info!(path = %path.display(), "Opening the ticket store");
-                RedbStore::new(path).map_err(|e| {
-                    anyhow::anyhow!("failed to open the ticket store at {}: {e}", path.display())
-                })?
+                RedbStore::new(path).map_err(TicketManagerError::store)?
             }
             None => {
                 tracing::warn!(
                     "No ticket store file given: outgoing ticket indices will be issued again after a restart"
                 );
-                RedbStore::new_temp().map_err(|e| {
-                    anyhow::anyhow!("failed to create a temporary ticket store: {e}")
-                })?
+                RedbStore::new_temp().map_err(TicketManagerError::store)?
             }
         };
-        let ticket_factory = ticket_factory_from_chain(&chain_connector, ticket_store)
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to seed ticket factory: {e}"))?;
+        let ticket_factory = ticket_factory_from_chain(&chain_connector, ticket_store).await?;
         let outgoing_ticket_indices =
             Arc::new(OutgoingTicketIndices::start(ticket_factory.clone()));
 
@@ -370,7 +369,9 @@ impl Edgli {
                 min_loopbacks_for_rate: path_cfg.min_loopbacks_for_rate,
                 min_return_rate: path_cfg.min_loopback_return_rate,
             })
-            .map_err(|e| anyhow::anyhow!("invalid loopback starvation config: {e}"))?,
+            .map_err(|e| {
+                EdgliError::ConfigError(format!("invalid loopback starvation config: {e}"))
+            })?,
         );
         // Built before the node so the control handle outlives the move into the builder.
         let discovery = FullNetworkDiscovery::new(packet_public_key, probe_cfg, graph.clone());
@@ -445,16 +446,15 @@ impl Edgli {
     ///
     /// The indices are also saved periodically and when the last `Edgli` clone is dropped;
     /// call this before shutting down when the process may exit without dropping it.
-    pub async fn save_outgoing_ticket_indices(&self) -> anyhow::Result<()> {
+    pub async fn save_outgoing_ticket_indices(&self) -> Result<()> {
         self.outgoing_ticket_indices.save().await
     }
 
     /// Subscribes to live `gvpn:exit` changes through the already-connected chain connector.
     pub fn subscribe_exit_nodes(
         &self,
-    ) -> anyhow::Result<
-        impl futures::Stream<Item = crate::discovery::ExitNodeUpdate> + Send + 'static,
-    > {
+    ) -> Result<impl futures::Stream<Item = crate::discovery::ExitNodeUpdate> + Send + 'static>
+    {
         use hopr_lib::api::node::HasChainApi;
 
         Ok(crate::discovery::subscribe_exit_nodes(
@@ -466,7 +466,7 @@ impl Edgli {
     pub fn watch_exit_nodes(
         &self,
         initial: Vec<crate::discovery::ExitNodeInfo>,
-    ) -> anyhow::Result<crate::discovery::ExitNodeRegistry> {
+    ) -> Result<crate::discovery::ExitNodeRegistry> {
         use hopr_lib::api::node::HasChainApi;
 
         Ok(crate::discovery::watch_exit_nodes(
@@ -530,20 +530,17 @@ impl Edgli {
     pub async fn ideal_balance_recommendation(
         &self,
         cfg: &super::strategy::IncentiveConfiguration,
-    ) -> anyhow::Result<super::strategy::BalanceRecommendation> {
+    ) -> Result<super::strategy::BalanceRecommendation> {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
         let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
         let max_fee_per_gas = crate::blokli::query_max_fee_per_gas(chain.client()).await?;
 
         let source = HasChainApi::identity(&*self.hopr).node_address;
-        let all_channels = IncentiveChannelOperations::channels_from(&*self.hopr, source)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let all_channels = IncentiveChannelOperations::channels_from(&*self.hopr, source).await?;
 
         let connected: HashSet<_> = crate::traits::EdgeNodeApi::connected_peer_addresses(self)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .await?
             .into_iter()
             .collect();
 
@@ -581,34 +578,25 @@ impl Edgli {
     /// corresponding raw byte capacity (`expected_messages × SESSION_MTU`).
     pub async fn describe_current_capacity_allocations(
         &self,
-    ) -> anyhow::Result<super::strategy::CapacityAllocations> {
+    ) -> Result<super::strategy::CapacityAllocations> {
         let chain = self.chain_api();
         let ticket_price = chain.minimum_ticket_price().await?;
         let win_prob = chain.minimum_incoming_ticket_win_prob().await?.as_f64();
 
         let node_address = HasChainApi::identity(&*self.hopr).node_address;
-        let channels = IncentiveChannelOperations::channels_from(&*self.hopr, node_address)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let channels = IncentiveChannelOperations::channels_from(&*self.hopr, node_address).await?;
 
         let safe_balance = match ChainReadSafeOperations::safe_info(
             &chain,
             SafeSelector::NodeAddress(node_address),
         )
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .await?
         {
-            Some(safe) => chain
-                .balance(safe.address)
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?,
+            Some(safe) => chain.balance(safe.address).await?,
             None => HoprBalance::zero(),
         };
 
-        let node_wxhopr: HoprBalance = chain
-            .balance(node_address)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let node_wxhopr: HoprBalance = chain.balance(node_address).await?;
 
         let mut peer_allocations = std::collections::HashMap::new();
         for c in channels
@@ -634,7 +622,7 @@ impl Edgli {
     ///
     /// [`quota_per_ssa`]: crate::strategy::quota_per_ssa
     #[cfg(feature = "pix")]
-    pub fn pix_ssa_quota(&self) -> anyhow::Result<hopr_lib::PixParams> {
+    pub fn pix_ssa_quota(&self) -> Result<hopr_lib::PixParams> {
         crate::strategy::pix_ssa_quota(self.hopr.config())
     }
 
@@ -646,7 +634,7 @@ impl Edgli {
     pub fn with_pix(
         &self,
         base: hopr_lib::HoprSessionClientConfig,
-    ) -> anyhow::Result<hopr_lib::HoprSessionClientConfig> {
+    ) -> Result<hopr_lib::HoprSessionClientConfig> {
         let _ = self.pix_ssa_quota()?;
 
         Ok(hopr_lib::HoprSessionClientConfig {
@@ -666,7 +654,7 @@ impl Edgli {
     pub fn run_reactor_from_cfg(
         &self,
         cfg: super::strategy::MultiStrategyConfig,
-    ) -> anyhow::Result<ReactorHandle> {
+    ) -> Result<ReactorHandle> {
         use super::strategy::EdgeStrategyKind;
         #[cfg(feature = "pix")]
         use hopr_strategy::pix::strategy::PixStrategy;
@@ -691,7 +679,9 @@ impl Edgli {
                 EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
                     // Two would fight over the same channels, and one handle can't report both.
                     if strategy_state.is_some() {
-                        anyhow::bail!("reactor supports a single channel-lifecycle strategy");
+                        return Err(EdgliError::ConfigError(
+                            "reactor supports a single channel-lifecycle strategy".into(),
+                        ));
                     }
                     let built = ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::clone(&node))?;
                     strategy_state = Some(StrategyStateHandle(built.state_handle()));
@@ -748,7 +738,9 @@ impl Edgli {
         }
 
         let strategy_state = strategy_state.ok_or_else(|| {
-            anyhow::anyhow!("reactor requires a channel-lifecycle strategy to expose its state")
+            EdgliError::ConfigError(
+                "reactor requires a channel-lifecycle strategy to expose its state".into(),
+            )
         })?;
 
         let mut multi_strategy = MultiStrategy::new(strategies);
@@ -787,12 +779,12 @@ pub struct PixFloatHandle(Arc<CurvyDepositPool<HoprEdgeClient>>);
 #[cfg(feature = "pix-curvy")]
 impl PixFloatHandle {
     /// The pool's own ledger: counts a shield from submission, so keep a margin when topping up against it.
-    pub async fn available_balance(&self) -> anyhow::Result<HoprBalance> {
+    pub async fn available_balance(&self) -> Result<HoprBalance> {
         Ok(self.0.available_balance().await?)
     }
 
     /// Shields `amount` from the Safe into the float, on top of what it holds; the funding policy, if any, tops up on its own.
-    pub async fn fund(&self, amount: HoprBalance) -> anyhow::Result<()> {
+    pub async fn fund(&self, amount: HoprBalance) -> Result<()> {
         Ok(self.0.fund(amount).await?)
     }
 }
