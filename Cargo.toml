@@ -142,9 +142,6 @@ hopr-chain-connector = { version = "0.33.0", features = [
 tokio = { version = "1.53.2", features = ["full", "test-util"] }
 tempfile = "3.27.0"
 
-[build-dependencies]
-anyhow = "1.0.104"
-
 # tokio-console build target for the `prof` binary. hopr-lib forces
 # `tracing/release_max_level_debug`, which compiles out TRACE callsites (incl. tokio's task
 # instrumentation) in release. That cap only fires under `cfg(not(debug_assertions))`, so
