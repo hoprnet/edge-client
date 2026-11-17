@@ -62,6 +62,7 @@ pix-curvy = ["pix", "hopr-lib/pix-bjj", "hopr-strategy/strategy-pix-curvy"]
 prof = ["dep:console-subscriber"]
 
 [dependencies]
+anyhow = "1.0.104"
 bytesize = "2.7.0"
 smart-default = "0.7.1"
 async-signal = "0.2.14"
@@ -129,7 +130,6 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-anyhow = "1.0.104"
 # The failure classification tests build a `serde_json::Error`, also without the `blokli` feature.
 serde_json = "1"
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.

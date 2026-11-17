@@ -95,7 +95,7 @@ pub struct CliArgs {
     pub ticket_store_file_path: Option<PathBuf>,
 }
 
-fn init_logger() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn init_logger() -> anyhow::Result<()> {
     let env_filter = match tracing_subscriber::EnvFilter::try_from_default_env() {
         Ok(filter) => filter,
         Err(_) => {
@@ -186,7 +186,7 @@ fn init_logger() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 #[cfg_attr(feature = "runtime-tokio", tokio::main)]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> anyhow::Result<()> {
     init_logger()?;
 
     if cfg!(debug_assertions) {

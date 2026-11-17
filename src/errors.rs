@@ -73,7 +73,7 @@ pub enum FailureKind {
 impl EdgliError {
     /// Classifies the failure by walking its source chain down to the first cause it recognises.
     pub fn failure_kind(&self) -> FailureKind {
-        // `#[error(transparent)]` hides the wrapped error from `source()`, so start at it directly.
+        // `#[error(transparent)]` makes `source()` skip the wrapped error itself, so start at it directly.
         let mut next: Option<&(dyn Error + 'static)> = match self {
             EdgliError::Connector(error) => Some(error),
             EdgliError::BlokliClient(error) => Some(error),
