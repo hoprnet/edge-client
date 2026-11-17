@@ -18,6 +18,8 @@ pub use hopr_strategy::strategy::{AtomicStrategyState, StrategyState};
 #[cfg(feature = "pix")]
 pub use hopr_strategy::pix::strategy::PixRecoveryPassword;
 
+use crate::errors::{EdgliError, Result};
+
 /// Paid downstream relay hops a ticket's face value covers.
 ///
 /// Fixed at the protocol's maximum path length rather than the single hop an edge node
@@ -605,15 +607,18 @@ impl PixEntryPool {
 /// - the suite comes from `HoprPixSpec`, so what is announced and what produces the shares are the
 ///   same build-time choice.
 #[cfg(feature = "pix")]
-pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> anyhow::Result<hopr_lib::PixParams> {
+pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> Result<hopr_lib::PixParams> {
     use hopr_lib::exports::transport::HoprPixSpec;
 
     let pix = &cfg.protocol.pix;
-    validator::Validate::validate(pix)
-        .map_err(|error| anyhow::anyhow!("invalid PIX configuration: {error}"))?;
+    validator::Validate::validate(pix).map_err(|error| EdgliError::InvalidSetting {
+        setting: "PIX configuration",
+        source: Box::new(error),
+    })?;
 
-    fn narrow<T: TryFrom<usize>>(value: usize, field: &str) -> anyhow::Result<T> {
-        T::try_from(value).map_err(|_| anyhow::anyhow!("PIX {field} out of range: {value}"))
+    fn narrow<T: TryFrom<usize>>(value: usize, field: &str) -> Result<T> {
+        T::try_from(value)
+            .map_err(|_| EdgliError::ConfigError(format!("PIX {field} out of range: {value}")))
     }
 
     hopr_lib::PixParams::try_new_for::<HoprPixSpec>(
@@ -621,7 +626,10 @@ pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> anyhow::Result<ho
         narrow(pix.ssa_part_size, "ssa_part_size")?,
         narrow(pix.surplus_shares(), "additional_shares")?,
     )
-    .map_err(|error| anyhow::anyhow!("invalid PIX dimensions: {error}"))
+    .map_err(|error| EdgliError::InvalidSetting {
+        setting: "PIX dimensions",
+        source: Box::new(error),
+    })
 }
 
 /// Bytes of Exit → Entry traffic a single SSA deposit buys.
@@ -696,13 +704,13 @@ pub struct IncentiveConfiguration {
 }
 
 impl IncentiveConfiguration {
-    pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.target_open_channels >= self.min_open_channels,
-            "target_open_channels ({}) must be >= min_open_channels ({})",
-            self.target_open_channels,
-            self.min_open_channels
-        );
+    pub fn validate(&self) -> Result<()> {
+        if self.target_open_channels < self.min_open_channels {
+            return Err(EdgliError::ConfigError(format!(
+                "target_open_channels ({}) must be >= min_open_channels ({})",
+                self.target_open_channels, self.min_open_channels
+            )));
+        }
         Ok(())
     }
 }
@@ -740,7 +748,7 @@ fn resolve_funding(
 
 /// [`FundingConfig`] for the sizing fields on `cfg`: each passed through verbatim, `None`
 /// keeping the strategy's default.
-pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<FundingConfig> {
+pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> Result<FundingConfig> {
     let defaults = FundingConfig::default();
 
     Ok(FundingConfig {
@@ -759,7 +767,7 @@ fn channel_stakes(
     win_prob: f64,
     sizing: &IncentiveConfiguration,
     missing_channels: usize,
-) -> anyhow::Result<HoprBalance> {
+) -> Result<HoprBalance> {
     let funding = compute_funding_config(sizing)?;
     let resolved = resolve_funding(&funding, ticket_price, win_prob);
     // Half a round: the opens carry the expected spend, a full round mostly idles in the Safe.
@@ -772,7 +780,7 @@ fn topup_headroom(
     win_prob: f64,
     sizing: &IncentiveConfiguration,
     open_channel_balances: &[HoprBalance],
-) -> anyhow::Result<HoprBalance> {
+) -> Result<HoprBalance> {
     let funding = compute_funding_config(sizing)?;
     let resolved = resolve_funding(&funding, ticket_price, win_prob);
     let drained = open_channel_balances
@@ -918,7 +926,7 @@ pub(crate) fn compute_balance_recommendation(
     sizing: &IncentiveConfiguration,
     open_channel_balances: &[HoprBalance],
     max_fee_per_gas: u128,
-) -> anyhow::Result<BalanceRecommendation> {
+) -> Result<BalanceRecommendation> {
     let stake = if missing_channels == 0 {
         HoprBalance::zero()
     } else {
@@ -942,11 +950,13 @@ pub(crate) fn compute_capacity(
     stake: HoprBalance,
     ticket_price: HoprBalance,
     win_prob: f64,
-) -> anyhow::Result<Capacity> {
-    anyhow::ensure!(
-        win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
-        "win_prob must be in (0, 1]; got {win_prob}"
-    );
+) -> Result<Capacity> {
+    let is_probability = win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0;
+    if !is_probability {
+        return Err(EdgliError::ValidationError(format!(
+            "win_prob must be in (0, 1]; got {win_prob}"
+        )));
+    }
     // Both counts are per *message*, and a message pays `ASSUMED_HOPS` relays: it issues one
     // aggregated ticket of face value `ticket_price × ASSUMED_HOPS / win_prob`, whose expected
     // cost is `ticket_price × ASSUMED_HOPS`. Measuring either against the bare ticket price
@@ -992,9 +1002,10 @@ pub(crate) async fn compute_costs_to_start<T>(
     chain: &T,
     node_address: Option<Address>,
     safe_deployed: bool,
-) -> anyhow::Result<StartupCosts>
+) -> Result<StartupCosts>
 where
     T: ChainReadAccountOperations + ChainValues + Sync,
+    EdgliError: From<<T as ChainReadAccountOperations>::Error> + From<<T as ChainValues>::Error>,
 {
     let bound = match node_address {
         Some(addr) => {
@@ -1034,7 +1045,7 @@ pub async fn minimum_balance_recommendation(
     incentive_ops: &dyn crate::blokli::IncentiveOperations,
     cfg: &IncentiveConfiguration,
     pix_float: HoprBalance,
-) -> anyhow::Result<BalanceRecommendation> {
+) -> Result<BalanceRecommendation> {
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
     let costs = incentive_ops.compute_costs_to_start().await?;
@@ -1057,9 +1068,7 @@ pub async fn minimum_balance_recommendation(
 /// Takes no chain reading: the capacities are the requested volume and the strategy's own
 /// defaults, and the winning probability only enters when the strategy resolves them to
 /// balances each tick — so this tracks a changing win prob rather than pinning it.
-pub fn default_strategy_cfg(
-    sizing: &IncentiveConfiguration,
-) -> anyhow::Result<MultiStrategyConfig> {
+pub fn default_strategy_cfg(sizing: &IncentiveConfiguration) -> Result<MultiStrategyConfig> {
     sizing.validate()?;
     let funding = compute_funding_config(sizing)?;
     tracing::info!(

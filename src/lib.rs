@@ -20,6 +20,7 @@ pub mod traits;
 #[cfg(all(feature = "state-dump", feature = "blokli"))]
 mod state_dump;
 
+pub use errors::{EdgliError, FailureKind};
 pub use hopr_lib;
 
 #[cfg(feature = "blokli")]

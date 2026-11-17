@@ -89,11 +89,14 @@ pub trait EdgeNodeApi: Send + Sync {
     #[cfg(feature = "blokli")]
     fn subscribe_exit_nodes(
         &self,
-    ) -> anyhow::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>>;
+    ) -> crate::errors::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>>;
 
     /// Maintains a live registry from an initial list; needs Tokio, hence `runtime-tokio` only.
     #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
-    fn watch_exit_nodes(&self, initial: Vec<ExitNodeInfo>) -> anyhow::Result<ExitNodeRegistry>;
+    fn watch_exit_nodes(
+        &self,
+        initial: Vec<ExitNodeInfo>,
+    ) -> crate::errors::Result<ExitNodeRegistry>;
 }
 
 #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
@@ -186,14 +189,17 @@ mod impl_edgli {
         #[cfg(feature = "blokli")]
         fn subscribe_exit_nodes(
             &self,
-        ) -> anyhow::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>> {
+        ) -> crate::errors::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>> {
             use futures::StreamExt;
 
             Ok(Edgli::subscribe_exit_nodes(self)?.boxed())
         }
 
         #[cfg(feature = "blokli")]
-        fn watch_exit_nodes(&self, initial: Vec<ExitNodeInfo>) -> anyhow::Result<ExitNodeRegistry> {
+        fn watch_exit_nodes(
+            &self,
+            initial: Vec<ExitNodeInfo>,
+        ) -> crate::errors::Result<ExitNodeRegistry> {
             Edgli::watch_exit_nodes(self, initial)
         }
     }
@@ -276,7 +282,7 @@ mod tests {
         #[cfg(feature = "blokli")]
         fn subscribe_exit_nodes(
             &self,
-        ) -> anyhow::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>> {
+        ) -> crate::errors::Result<futures::stream::BoxStream<'static, ExitNodeUpdate>> {
             use futures::StreamExt;
 
             Ok(futures::stream::empty().boxed())
@@ -286,8 +292,8 @@ mod tests {
         fn watch_exit_nodes(
             &self,
             _initial: Vec<ExitNodeInfo>,
-        ) -> anyhow::Result<ExitNodeRegistry> {
-            Err(anyhow::anyhow!("stub does not run background discovery"))
+        ) -> crate::errors::Result<ExitNodeRegistry> {
+            Err(crate::errors::EdgliError::DiscoveryStopped)
         }
     }
 
