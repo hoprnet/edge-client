@@ -44,7 +44,10 @@ pub use hopr_lib::{InvalidPixParams, LOCAL_PIX_SUITE, PixParams, SessionCapabili
 #[cfg(feature = "pix")]
 pub use hopr_lib::exports::transport::config::PixGlobalConfig;
 #[cfg(feature = "pix")]
-pub use strategy::{PixEntryConfig, PixEntryPool, PixEntryStrategy, pix_ssa_quota, quota_per_ssa};
+pub use strategy::{
+    PixEntryConfig, PixEntryPool, PixEntryStrategy, bytes_at_pix_price, pix_ssa_quota,
+    quota_per_ssa,
+};
 // Re-exported so consumers constructing a `BlokliEndpoint` do not need their own
 // `url` dependency, which would have to match this crate's version to unify.
 #[cfg(feature = "blokli")]
