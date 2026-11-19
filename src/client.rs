@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
-use hopr_ct_full_network::{EgressConfig, EgressControl, FullNetworkDiscovery, ProbingLevel};
+use hopr_ct_full_network::{Dial, EgressConfig, EgressControl, FullNetworkDiscovery};
 use hopr_lib::api::{
     chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
     node::{HasChainApi, IncentiveChannelOperations},
@@ -331,7 +331,6 @@ impl Edgli {
 
         let probe_cfg = EgressConfig {
             interval: std::time::Duration::from_secs(3),
-            shuffle_ttl: std::time::Duration::from_secs(3),
             ..Default::default()
         };
         probe_cfg
@@ -490,17 +489,17 @@ impl Edgli {
         self.packet_public_key.to_peerid_str()
     }
 
-    /// Sets the probing pace: `Some(level)` scales it, `None` stops probing.
+    /// Sets the probing dial: `Some(dial)` scales the pace, `None` stops probing.
     ///
     /// Takes effect on the running prober. Cover traffic is not affected, see
     /// [`Edgli::set_cover_traffic`].
-    pub fn set_probing_level(&self, level: Option<ProbingLevel>) {
-        self.egress.set_level(level);
+    pub fn set_probing_dial(&self, dial: Option<Dial>) {
+        self.egress.set_dial(dial);
     }
 
-    /// The current probing level, `None` while probing is stopped.
-    pub fn probing_level(&self) -> Option<ProbingLevel> {
-        self.egress.level()
+    /// The current probing dial, `None` while probing is stopped.
+    pub fn probing_dial(&self) -> Option<Dial> {
+        self.egress.dial()
     }
 
     /// Switches cover traffic on or off. Off by default.
