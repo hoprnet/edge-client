@@ -185,8 +185,14 @@ mod tests {
 
     #[derive(Default)]
     struct CountingPool {
-        deposits: AtomicUsize,
-        fundings: AtomicUsize,
+        relayer_calls: AtomicUsize,
+    }
+
+    impl CountingPool {
+        fn count(&self) -> Result<(), Infallible> {
+            self.relayer_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
     }
 
     #[async_trait::async_trait]
@@ -197,18 +203,17 @@ mod tests {
 
         async fn generate_deposit_data(
             &self,
-            _id: &PixAddressId,
+            id: &PixAddressId,
         ) -> Result<PixDepositData, Infallible> {
-            unimplemented!()
+            Ok(deposit_data(*id))
         }
 
         async fn fund(&self, _amount: HoprBalance) -> Result<(), Infallible> {
-            self.fundings.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            self.count()
         }
 
         async fn available_balance(&self) -> Result<HoprBalance, Infallible> {
-            unimplemented!()
+            Ok(HoprBalance::zero())
         }
 
         async fn deposit_funds_to(
@@ -218,8 +223,7 @@ mod tests {
             _amount: HoprBalance,
             _data: PixDepositData,
         ) -> Result<(), Infallible> {
-            self.deposits.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            self.count()
         }
 
         fn notify_deposit(
@@ -238,7 +242,7 @@ mod tests {
             _dst: Address,
             _amount: Option<HoprBalance>,
         ) -> Result<(), Infallible> {
-            unimplemented!()
+            self.count()
         }
 
         async fn pool_transfer(
@@ -249,20 +253,68 @@ mod tests {
             _data: PixDepositData,
             _amount: Option<HoprBalance>,
         ) -> Result<(), Infallible> {
-            unimplemented!()
+            self.count()
         }
     }
 
-    async fn deposit(pool: Arc<HeldDepositPool<Arc<CountingPool>>>) {
-        let id = PixAddressId::new(&SimplePseudonym::random(), NonZeroU32::MIN);
-        let data = PixDepositData {
+    type Pool = Arc<HeldDepositPool<Arc<CountingPool>>>;
+
+    #[derive(Clone, Copy, Debug)]
+    enum RelayerCall {
+        Fund,
+        Deposit,
+        DepositMultiple,
+        Withdraw,
+        WithdrawMultiple,
+        Transfer,
+        TransferMultiple,
+    }
+
+    fn deposit_data(id: PixAddressId) -> PixDepositData {
+        PixDepositData {
             id,
             data: Box::new([]),
-        };
+        }
+    }
+
+    async fn call(pool: Pool, call: RelayerCall) {
+        let id = PixAddressId::new(&SimplePseudonym::random(), NonZeroU32::MIN);
+        let key = PoolKeypair::random();
         let dst = *PoolKeypair::random().public();
-        let _ = pool
-            .deposit_funds_to(&id, &dst, HoprBalance::zero(), data)
-            .await;
+        let zero = HoprBalance::zero();
+        let _ = match call {
+            RelayerCall::Fund => pool.fund(zero).await,
+            RelayerCall::Deposit => pool
+                .deposit_funds_to(&id, &dst, zero, deposit_data(id))
+                .await
+                .map(drop),
+            RelayerCall::DepositMultiple => pool
+                .deposit_funds_to_multiple(&[(id, dst, zero, deposit_data(id))])
+                .await
+                .map(drop),
+            RelayerCall::Withdraw => pool
+                .withdraw_deposit(&id, &key, Address::default(), None)
+                .await
+                .map(drop),
+            RelayerCall::WithdrawMultiple => pool
+                .withdraw_multiple_deposits(&[(id, key)], Address::default())
+                .await
+                .map(drop),
+            RelayerCall::Transfer => pool
+                .pool_transfer(
+                    PoolTransferSource::Funding,
+                    &id,
+                    dst,
+                    deposit_data(id),
+                    None,
+                )
+                .await
+                .map(drop),
+            RelayerCall::TransferMultiple => pool
+                .pool_transfer_multiple(&[(id, key)], &id, dst, deposit_data(id))
+                .await
+                .map(drop),
+        };
     }
 
     #[tokio::test]
@@ -270,42 +322,60 @@ mod tests {
         let inner = Arc::new(CountingPool::default());
         let (pool, _hold) = hold_deposits(Arc::clone(&inner));
 
-        deposit(Arc::new(pool)).await;
+        call(Arc::new(pool), RelayerCall::Deposit).await;
 
-        assert_eq!(inner.deposits.load(Ordering::SeqCst), 1);
+        assert_eq!(inner.relayer_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn held_deposit_waits_for_release() {
-        let inner = Arc::new(CountingPool::default());
-        let (pool, hold) = hold_deposits(Arc::clone(&inner));
-        hold.hold();
+    async fn held_relayer_calls_wait_for_release() {
+        let relayer_calls = [
+            RelayerCall::Fund,
+            RelayerCall::Deposit,
+            RelayerCall::DepositMultiple,
+            RelayerCall::Withdraw,
+            RelayerCall::WithdrawMultiple,
+            RelayerCall::Transfer,
+            RelayerCall::TransferMultiple,
+        ];
+        for relayer_call in relayer_calls {
+            let inner = Arc::new(CountingPool::default());
+            let (pool, hold) = hold_deposits(Arc::clone(&inner));
+            hold.hold();
 
-        let pending = tokio::spawn(deposit(Arc::new(pool)));
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(inner.deposits.load(Ordering::SeqCst), 0);
+            let pending = tokio::spawn(call(Arc::new(pool), relayer_call));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let calls_while_held = inner.relayer_calls.load(Ordering::SeqCst);
+            assert_eq!(calls_while_held, 0, "{relayer_call:?} ran while held");
 
-        hold.release();
-        pending.await.expect("deposit task");
-        assert_eq!(inner.deposits.load(Ordering::SeqCst), 1);
+            hold.release();
+            pending.await.expect("relayer call task");
+            let calls_after_release = inner.relayer_calls.load(Ordering::SeqCst);
+            assert_eq!(calls_after_release, 1, "{relayer_call:?} after release");
+        }
     }
 
     #[tokio::test]
-    async fn held_funding_waits_for_release() {
+    async fn held_pool_passes_local_calls_through() {
+        let (pool, hold) = hold_deposits(Arc::new(CountingPool::default()));
+        hold.hold();
+        let id = PixAddressId::new(&SimplePseudonym::random(), NonZeroU32::MIN);
+
+        assert!(pool.accepts_funding());
+        assert_eq!(pool.available_balance().await, Ok(HoprBalance::zero()));
+        let data = pool.generate_deposit_data(&id).await.expect("deposit data");
+        assert_eq!(data.id, id);
+    }
+
+    #[tokio::test]
+    async fn dropped_hold_stops_holding() {
         let inner = Arc::new(CountingPool::default());
         let (pool, hold) = hold_deposits(Arc::clone(&inner));
         hold.hold();
+        drop(hold);
 
-        let pool = Arc::new(pool);
-        let pending = tokio::spawn({
-            let pool = Arc::clone(&pool);
-            async move { pool.fund(HoprBalance::zero()).await }
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(inner.fundings.load(Ordering::SeqCst), 0);
+        call(Arc::new(pool), RelayerCall::Deposit).await;
 
-        hold.release();
-        let _ = pending.await.expect("funding task");
-        assert_eq!(inner.fundings.load(Ordering::SeqCst), 1);
+        assert_eq!(inner.relayer_calls.load(Ordering::SeqCst), 1);
     }
 }
