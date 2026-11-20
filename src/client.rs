@@ -802,7 +802,7 @@ pub struct ReactorHandle {
     /// `Some` when a PIX strategy runs on the Curvy pool.
     #[cfg(feature = "pix-curvy")]
     pub pix_float: Option<PixFloatHandle>,
-    /// `Some` when a PIX strategy runs on the Curvy pool; holds its deposit calls while the embedder's route is down.
+    /// `Some` when a PIX strategy runs on the Curvy pool; holds its relayer calls while the embedder's route is down.
     #[cfg(feature = "pix-curvy")]
     pub pix_deposits: Option<crate::PixDepositHold>,
 }

@@ -1,4 +1,4 @@
-//! Holds PIX deposit calls until the embedder's route to the deposit pool's relayer is up.
+//! Holds the PIX pool's relayer calls until the embedder's route to the relayer is up.
 
 use std::sync::Arc;
 
@@ -12,12 +12,12 @@ use tokio::sync::watch;
 
 type DepositAddress = <PoolKeypair as Keypair>::Public;
 
-/// Holds and releases the deposit calls of the PIX pool; starts released.
+/// Holds and releases the relayer calls of the PIX pool; starts released.
 #[derive(Clone)]
 pub struct PixDepositHold(Arc<watch::Sender<bool>>);
 
 impl PixDepositHold {
-    /// Deposit calls made from now on wait until [`Self::release`].
+    /// Relayer calls made from now on wait until [`Self::release`].
     pub fn hold(&self) {
         let was_released = self.0.send_replace(false);
         if was_released {
@@ -34,7 +34,7 @@ impl PixDepositHold {
     }
 }
 
-/// A deposit pool whose deposit calls wait while its [`PixDepositHold`] holds them.
+/// A deposit pool whose relayer calls wait while its [`PixDepositHold`] holds them; local and Blokli calls pass through.
 pub struct HeldDepositPool<P> {
     inner: P,
     released: watch::Receiver<bool>,
@@ -77,7 +77,9 @@ where
         self.inner.accepts_funding()
     }
 
+    // Funding asks the relayer when it recovers an unfinished aggregation.
     async fn fund(&self, amount: HoprBalance) -> Result<(), Self::Error> {
+        self.wait_for_release().await;
         self.inner.fund(amount).await
     }
 
@@ -127,6 +129,7 @@ where
         dst: Address,
         amount: Option<HoprBalance>,
     ) -> Result<Self::Receipt, Self::Error> {
+        self.wait_for_release().await;
         self.inner.withdraw_deposit(id, key, dst, amount).await
     }
 
@@ -135,6 +138,7 @@ where
         keys: &[(PixAddressId, PoolKeypair)],
         dst: Address,
     ) -> Result<BatchOutcomes<Self::Receipt, Self::Error>, Self::Error> {
+        self.wait_for_release().await;
         self.inner.withdraw_multiple_deposits(keys, dst).await
     }
 
@@ -146,6 +150,7 @@ where
         additional_dst_data: Self::PoolDepositData,
         amount: Option<HoprBalance>,
     ) -> Result<Self::Receipt, Self::Error> {
+        self.wait_for_release().await;
         self.inner
             .pool_transfer(src, dst_id, dst, additional_dst_data, amount)
             .await
@@ -158,6 +163,7 @@ where
         dst: DepositAddress,
         additional_dst_data: Self::PoolDepositData,
     ) -> Result<BatchOutcomes<Self::Receipt, Self::Error>, Self::Error> {
+        self.wait_for_release().await;
         self.inner
             .pool_transfer_multiple(keys, dst_id, dst, additional_dst_data)
             .await
@@ -180,6 +186,7 @@ mod tests {
     #[derive(Default)]
     struct CountingPool {
         deposits: AtomicUsize,
+        fundings: AtomicUsize,
     }
 
     #[async_trait::async_trait]
@@ -196,7 +203,8 @@ mod tests {
         }
 
         async fn fund(&self, _amount: HoprBalance) -> Result<(), Infallible> {
-            unimplemented!()
+            self.fundings.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
 
         async fn available_balance(&self) -> Result<HoprBalance, Infallible> {
@@ -280,5 +288,24 @@ mod tests {
         hold.release();
         pending.await.expect("deposit task");
         assert_eq!(inner.deposits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn held_funding_waits_for_release() {
+        let inner = Arc::new(CountingPool::default());
+        let (pool, hold) = hold_deposits(Arc::clone(&inner));
+        hold.hold();
+
+        let pool = Arc::new(pool);
+        let pending = tokio::spawn({
+            let pool = Arc::clone(&pool);
+            async move { pool.fund(HoprBalance::zero()).await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(inner.fundings.load(Ordering::SeqCst), 0);
+
+        hold.release();
+        let _ = pending.await.expect("funding task");
+        assert_eq!(inner.fundings.load(Ordering::SeqCst), 1);
     }
 }
