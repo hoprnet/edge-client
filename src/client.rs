@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
-use hopr_ct_full_network::{Dial, EgressConfig, EgressControl, FullNetworkDiscovery};
+use hopr_ct_full_network::{EgressConfig, EgressControl, FullNetworkDiscovery};
 use hopr_lib::api::{
     chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
     node::{HasChainApi, IncentiveChannelOperations},
@@ -17,6 +17,7 @@ use hopr_lib::api::{
 };
 use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::exports::network::types::addr::is_public_address;
+use hopr_lib::exports::transport::Dial;
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
 use hopr_network_graph::{ChannelGraph, ChannelGraphConfig, SharedChannelGraph, StarvationParams};
 use hopr_ticket_manager::{
@@ -492,12 +493,12 @@ impl Edgli {
 
     /// `None` stops probing; takes effect live and leaves [`Edgli::set_cover_traffic`] alone.
     pub fn set_probing_dial(&self, dial: Option<Dial>) {
-        self.egress.set_dial(dial);
+        self.hopr.probe_control().set_dial(dial);
     }
 
     /// The current probing dial, `None` while probing is stopped.
     pub fn probing_dial(&self) -> Option<Dial> {
-        self.egress.dial()
+        self.hopr.probe_control().dial()
     }
 
     /// Switches cover traffic on or off. Off by default.
