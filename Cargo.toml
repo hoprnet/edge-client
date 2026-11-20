@@ -102,7 +102,7 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 url = { version = "2.5.8", optional = true }
 validator = { version = "0.21.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "kauki/chore/probing/bridge-dial-paces-consumer", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "kauki/chore/probing/bridge-8705-merged-with-impls-118", features = [
   "session-client",
   "serde",
 ] }
@@ -142,10 +142,10 @@ hopr-chain-connector = { version = "0.33.0", features = [
 tokio = { version = "1.53.2", features = ["full", "test-util"] }
 tempfile = "3.27.0"
 
-# Experimental: hopr-impls#118 and #125 (lazy probing, dial left to the consumer) until they are released.
+# Experimental: hopr-impls#118 (lazy probing, with #125 merged) until it is released.
 [patch.crates-io]
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hopr-impls", branch = "kauki/fix/ct/probe-rate-is-the-consumers" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "kauki/fix/ct/probe-rate-is-the-consumers" }
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hopr-impls", branch = "bot/lazy-dial-driven-probing" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "bot/lazy-dial-driven-probing" }
 
 # tokio-console build target for the `prof` binary. hopr-lib forces
 # `tracing/release_max_level_debug`, which compiles out TRACE callsites (incl. tokio's task
