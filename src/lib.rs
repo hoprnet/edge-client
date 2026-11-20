@@ -13,6 +13,9 @@ pub mod discovery;
 #[cfg(feature = "blokli")]
 pub mod endpoint;
 
+#[cfg(feature = "pix-curvy")]
+pub mod pix_hold;
+
 pub mod strategy;
 pub mod traits;
 
@@ -85,6 +88,8 @@ pub fn latency_path_planner_config(min_ack_rate: f64) -> PathPlannerConfig {
 
 #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
 pub use client::*;
+#[cfg(feature = "pix-curvy")]
+pub use pix_hold::PixDepositHold;
 pub use traits::{EdgeNodeApi, NodeBalances};
 
 // Re-export types that appear in EdgeNodeApi method signatures so consumers

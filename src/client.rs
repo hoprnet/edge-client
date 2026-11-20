@@ -674,6 +674,8 @@ impl Edgli {
         let mut strategy_state: Option<StrategyStateHandle> = None;
         #[cfg(feature = "pix-curvy")]
         let mut pix_float: Option<PixFloatHandle> = None;
+        #[cfg(feature = "pix-curvy")]
+        let mut pix_deposits: Option<crate::PixDepositHold> = None;
         for kind in cfg.strategies {
             let built: Box<dyn Strategy + Send> = match kind {
                 EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
@@ -725,9 +727,11 @@ impl Edgli {
                             &password,
                         )?);
                         pix_float = Some(PixFloatHandle(Arc::clone(&pool)));
+                        let (held_pool, hold) = crate::pix_hold::hold_deposits(pool);
+                        pix_deposits = Some(hold);
                         PixStrategy::new(upstream)
                             .build_curvy_with_pool::<_, _, SpecDepositAddress>(
-                                pool,
+                                Arc::new(held_pool),
                                 Arc::clone(&node),
                             )?
                     };
@@ -757,6 +761,8 @@ impl Edgli {
             strategy_state,
             #[cfg(feature = "pix-curvy")]
             pix_float,
+            #[cfg(feature = "pix-curvy")]
+            pix_deposits,
         })
     }
 }
@@ -796,6 +802,9 @@ pub struct ReactorHandle {
     /// `Some` when a PIX strategy runs on the Curvy pool.
     #[cfg(feature = "pix-curvy")]
     pub pix_float: Option<PixFloatHandle>,
+    /// `Some` when a PIX strategy runs on the Curvy pool; holds its deposit calls while the embedder's route is down.
+    #[cfg(feature = "pix-curvy")]
+    pub pix_deposits: Option<crate::PixDepositHold>,
 }
 
 /// The mixer config an edge node runs with: the Poisson engine with a 1 ms hard delay bound.
