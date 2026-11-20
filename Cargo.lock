@@ -4844,7 +4844,8 @@ dependencies = [
 [[package]]
 name = "hopr-ct-full-network"
 version = "0.12.0"
-source = "git+https://github.com/hoprnet/hopr-impls?branch=bot%2Flazy-dial-driven-probing#5346d30cc92b98884d2329555440ab6e5ebca40f"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07a2c52b431d77db92e3382a94f2a9b2d6933b0ddd8a1e06efb9f615ee8a4f9f"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -4904,7 +4905,8 @@ dependencies = [
 [[package]]
 name = "hopr-network-graph"
 version = "0.13.0"
-source = "git+https://github.com/hoprnet/hopr-impls?branch=bot%2Flazy-dial-driven-probing#5346d30cc92b98884d2329555440ab6e5ebca40f"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d4f9e796207f6ea3812f22b7c4f16a33d0d5fbadc086e5f5d8765f00b5e017a"
 dependencies = [
  "anyhow",
  "bimap",
@@ -7830,7 +7832,7 @@ dependencies = [
  "quinn-udp 0.5.16",
  "rustc-hash",
  "rustls",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -7870,7 +7872,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -7883,7 +7885,7 @@ checksum = "47091c86514c2e11452cb228dee77037334b99d92a23e4c69aa5982261f39247"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "windows-sys 0.61.2",
 ]
 

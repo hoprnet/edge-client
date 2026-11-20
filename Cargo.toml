@@ -142,11 +142,6 @@ hopr-chain-connector = { version = "0.33.0", features = [
 tokio = { version = "1.53.2", features = ["full", "test-util"] }
 tempfile = "3.27.0"
 
-# Experimental: hopr-impls#118 (lazy probing, with #125 merged) until it is released.
-[patch.crates-io]
-hopr-ct-full-network = { git = "https://github.com/hoprnet/hopr-impls", branch = "bot/lazy-dial-driven-probing" }
-hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "bot/lazy-dial-driven-probing" }
-
 # tokio-console build target for the `prof` binary. hopr-lib forces
 # `tracing/release_max_level_debug`, which compiles out TRACE callsites (incl. tokio's task
 # instrumentation) in release. That cap only fires under `cfg(not(debug_assertions))`, so
