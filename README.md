@@ -93,7 +93,7 @@ feature and must be called inside a Tokio runtime with timers enabled.
 Probing and cover traffic can be steered while the node runs:
 
 ```rust
-edgli.set_probing_dial(Some(Dial::LOW));          // LOW, MEDIUM, HIGH (default), ULTRA or Dial::new(x); None stops probing
+edgli.set_probing_dial(Some(Dial::LOW));          // HIGH by default; None stops probing
 edgli.set_probing_focus(exits);                   // bias loopback probing towards these exits
 edgli.clear_probing_focus();
 edgli.set_cover_traffic(true);                    // off by default, independent of the dial

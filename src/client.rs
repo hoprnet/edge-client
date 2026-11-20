@@ -18,7 +18,7 @@ use hopr_lib::api::{
 use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::exports::network::types::addr::is_public_address;
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
-use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
+use hopr_network_graph::{ChannelGraph, ChannelGraphConfig, SharedChannelGraph, StarvationParams};
 use hopr_ticket_manager::{
     HoprTicketFactory, RedbStore, TicketManagerError, ticket_factory_from_chain,
 };
@@ -358,19 +358,20 @@ impl Edgli {
 
         let path_cfg = cfg.protocol.path_planner;
         let graph: SharedChannelGraph = Arc::new(
-            ChannelGraph::with_edge_params(
+            ChannelGraph::with_config(
                 *packet_key.public(),
-                path_cfg.edge_penalty,
-                path_cfg.min_ack_rate,
-                path_cfg.max_plausible_loopback_rtt,
+                ChannelGraphConfig {
+                    edge_penalty: path_cfg.edge_penalty,
+                    min_ack_rate: path_cfg.min_ack_rate,
+                    max_plausible_loopback_rtt: path_cfg.max_plausible_loopback_rtt,
+                    starvation: StarvationParams {
+                        min_loopbacks_for_rate: path_cfg.min_loopbacks_for_rate,
+                        min_return_rate: path_cfg.min_loopback_return_rate,
+                    },
+                    ..Default::default()
+                },
             )
-            .with_starvation(hopr_network_graph::StarvationParams {
-                min_loopbacks_for_rate: path_cfg.min_loopbacks_for_rate,
-                min_return_rate: path_cfg.min_loopback_return_rate,
-            })
-            .map_err(|e| {
-                EdgliError::ConfigError(format!("invalid loopback starvation config: {e}"))
-            })?,
+            .map_err(|e| EdgliError::ConfigError(format!("invalid channel graph config: {e}")))?,
         );
         // Built before the node so the control handle outlives the move into the builder.
         let discovery = FullNetworkDiscovery::new(packet_public_key, probe_cfg, graph.clone());
@@ -489,10 +490,7 @@ impl Edgli {
         self.packet_public_key.to_peerid_str()
     }
 
-    /// Sets the probing dial: `Some(dial)` scales the pace, `None` stops probing.
-    ///
-    /// Takes effect on the running prober. Cover traffic is not affected, see
-    /// [`Edgli::set_cover_traffic`].
+    /// `None` stops probing; takes effect live and leaves [`Edgli::set_cover_traffic`] alone.
     pub fn set_probing_dial(&self, dial: Option<Dial>) {
         self.egress.set_dial(dial);
     }
