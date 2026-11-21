@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use futures::future::{AbortHandle, abortable};
 use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
-use hopr_ct_full_network::{EgressConfig, EgressControl, FullNetworkDiscovery, ProbingLevel};
+use hopr_ct_full_network::{EgressConfig, EgressControl, FullNetworkDiscovery};
 use hopr_lib::api::{
     chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
     node::{HasChainApi, IncentiveChannelOperations},
@@ -17,8 +17,9 @@ use hopr_lib::api::{
 };
 use hopr_lib::builder::{ChainKeypair, HoprBuilder, Keypair, OffchainKeypair};
 use hopr_lib::exports::network::types::addr::is_public_address;
+use hopr_lib::exports::transport::Dial;
 use hopr_lib::{HoprKeys, config::HoprLibConfig};
-use hopr_network_graph::{ChannelGraph, SharedChannelGraph};
+use hopr_network_graph::{ChannelGraph, ChannelGraphConfig, SharedChannelGraph, StarvationParams};
 use hopr_ticket_manager::{
     HoprTicketFactory, RedbStore, TicketManagerError, ticket_factory_from_chain,
 };
@@ -331,7 +332,6 @@ impl Edgli {
 
         let probe_cfg = EgressConfig {
             interval: std::time::Duration::from_secs(3),
-            shuffle_ttl: std::time::Duration::from_secs(3),
             ..Default::default()
         };
         probe_cfg
@@ -359,19 +359,20 @@ impl Edgli {
 
         let path_cfg = cfg.protocol.path_planner;
         let graph: SharedChannelGraph = Arc::new(
-            ChannelGraph::with_edge_params(
+            ChannelGraph::with_config(
                 *packet_key.public(),
-                path_cfg.edge_penalty,
-                path_cfg.min_ack_rate,
-                path_cfg.max_plausible_loopback_rtt,
+                ChannelGraphConfig {
+                    edge_penalty: path_cfg.edge_penalty,
+                    min_ack_rate: path_cfg.min_ack_rate,
+                    max_plausible_loopback_rtt: path_cfg.max_plausible_loopback_rtt,
+                    starvation: StarvationParams {
+                        min_loopbacks_for_rate: path_cfg.min_loopbacks_for_rate,
+                        min_return_rate: path_cfg.min_loopback_return_rate,
+                    },
+                    ..Default::default()
+                },
             )
-            .with_starvation(hopr_network_graph::StarvationParams {
-                min_loopbacks_for_rate: path_cfg.min_loopbacks_for_rate,
-                min_return_rate: path_cfg.min_loopback_return_rate,
-            })
-            .map_err(|e| {
-                EdgliError::ConfigError(format!("invalid loopback starvation config: {e}"))
-            })?,
+            .map_err(|e| EdgliError::ConfigError(format!("invalid channel graph config: {e}")))?,
         );
         // Built before the node so the control handle outlives the move into the builder.
         let discovery = FullNetworkDiscovery::new(packet_public_key, probe_cfg, graph.clone());
@@ -490,17 +491,14 @@ impl Edgli {
         self.packet_public_key.to_peerid_str()
     }
 
-    /// Sets the probing pace: `Some(level)` scales it, `None` stops probing.
-    ///
-    /// Takes effect on the running prober. Cover traffic is not affected, see
-    /// [`Edgli::set_cover_traffic`].
-    pub fn set_probing_level(&self, level: Option<ProbingLevel>) {
-        self.egress.set_level(level);
+    /// `None` stops probing; takes effect live and leaves [`Edgli::set_cover_traffic`] alone.
+    pub fn set_probing_dial(&self, dial: Option<Dial>) {
+        self.hopr.probe_control().set_dial(dial);
     }
 
-    /// The current probing level, `None` while probing is stopped.
-    pub fn probing_level(&self) -> Option<ProbingLevel> {
-        self.egress.level()
+    /// The current probing dial, `None` while probing is stopped.
+    pub fn probing_dial(&self) -> Option<Dial> {
+        self.hopr.probe_control().dial()
     }
 
     /// Switches cover traffic on or off. Off by default.
