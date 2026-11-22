@@ -670,6 +670,8 @@ impl Edgli {
             Vec::with_capacity(cfg.strategies.len());
         // Captured before the strategy moves into the reactor task: the shared cell is the only outside view.
         let mut strategy_state: Option<StrategyStateHandle> = None;
+        #[cfg(feature = "pix")]
+        let mut pix_enabled = false;
         #[cfg(feature = "pix-curvy")]
         let mut pix_float: Option<PixFloatHandle> = None;
         #[cfg(feature = "pix-curvy")]
@@ -689,6 +691,13 @@ impl Edgli {
                 }
                 #[cfg(feature = "pix")]
                 EdgeStrategyKind::Pix(sub_cfg) => {
+                    // Two would share the Safe and state dir, and the handle can hold only one pool.
+                    if pix_enabled {
+                        return Err(EdgliError::ConfigError(
+                            "reactor supports a single PIX strategy".into(),
+                        ));
+                    }
+                    pix_enabled = true;
                     // Only trace of which pool this build picked, and anonymity differs between them -- worth logging.
                     tracing::info!(
                         pool = PIX_POOL,
@@ -734,12 +743,13 @@ impl Edgli {
                             &password,
                             relayer_http,
                         )?);
-                        pix_float = Some(PixFloatHandle(Arc::clone(&pool)));
                         let (held_pool, hold) = crate::pix_hold::hold_deposits(pool);
+                        let held_pool = Arc::new(held_pool);
+                        pix_float = Some(PixFloatHandle(Arc::clone(&held_pool)));
                         pix_deposits = Some(hold);
                         PixStrategy::new(upstream)
                             .build_curvy_with_pool::<_, _, SpecDepositAddress>(
-                                Arc::new(held_pool),
+                                held_pool,
                                 Arc::clone(&node),
                             )?
                     };
@@ -788,7 +798,9 @@ impl StrategyStateHandle {
 /// The Curvy pool's shielded float: what deposits are paid from, topped up from the Safe.
 #[cfg(feature = "pix-curvy")]
 #[derive(Clone)]
-pub struct PixFloatHandle(Arc<CurvyDepositPool<HoprEdgeClient>>);
+pub struct PixFloatHandle(
+    Arc<crate::pix_hold::HeldDepositPool<Arc<CurvyDepositPool<HoprEdgeClient>>>>,
+);
 
 #[cfg(feature = "pix-curvy")]
 impl PixFloatHandle {
