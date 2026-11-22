@@ -228,11 +228,11 @@ mod tests {
 
         fn notify_deposit(
             &self,
-            _id: PixAddressId,
-            _dst: DepositAddress,
-            _min_amount: HoprBalance,
+            id: PixAddressId,
+            dst: DepositAddress,
+            min_amount: HoprBalance,
         ) -> Result<DepositNotification<'static, DepositAddress, Infallible>, Infallible> {
-            unimplemented!()
+            Ok(Box::pin(async move { Ok((id, dst, min_amount)) }))
         }
 
         async fn withdraw_deposit(
@@ -365,6 +365,11 @@ mod tests {
         assert_eq!(pool.available_balance().await, Ok(HoprBalance::zero()));
         let data = pool.generate_deposit_data(&id).await.expect("deposit data");
         assert_eq!(data.id, id);
+        let dst = *PoolKeypair::random().public();
+        let notification = pool
+            .notify_deposit(id, dst, HoprBalance::zero())
+            .expect("deposit notification");
+        assert_eq!(notification.await, Ok((id, dst, HoprBalance::zero())));
     }
 
     #[tokio::test]
