@@ -672,6 +672,8 @@ impl Edgli {
         let mut strategy_state: Option<StrategyStateHandle> = None;
         #[cfg(feature = "pix-curvy")]
         let mut pix_float: Option<PixFloatHandle> = None;
+        #[cfg(feature = "pix-curvy")]
+        let mut relayer_route: Option<crate::RelayerRoute> = None;
         for kind in cfg.strategies {
             let built: Box<dyn Strategy + Send> = match kind {
                 EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
@@ -715,13 +717,33 @@ impl Edgli {
                         let password = upstream.pix_recovery_password(
                             "the Curvy pool's state file is sealed under it",
                         )?;
-                        let pool = Arc::new(CurvyDepositPool::new(
-                            Arc::clone(&node),
-                            sub_cfg
-                                .pool
-                                .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref()),
-                            &password,
-                        )?);
+                        let pool_cfg = sub_cfg
+                            .pool
+                            .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref());
+                        // With a relayer, hand the pool an HTTP client whose route to it the embedder can change
+                        // at run time (see `relayer_route`). Until the embedder sets a route nothing changes.
+                        let pool = match pool_cfg
+                            .relayer_url
+                            .as_ref()
+                            .and_then(crate::RelayerRoute::for_url)
+                        {
+                            Some(route) => {
+                                let http = route.http_client().map_err(|error| {
+                                    EdgliError::ConfigError(format!(
+                                        "building the Curvy HTTP client: {error}"
+                                    ))
+                                })?;
+                                relayer_route = Some(route);
+                                CurvyDepositPool::with_http_client(
+                                    Arc::clone(&node),
+                                    pool_cfg,
+                                    &password,
+                                    http,
+                                )?
+                            }
+                            None => CurvyDepositPool::new(Arc::clone(&node), pool_cfg, &password)?,
+                        };
+                        let pool = Arc::new(pool);
                         pix_float = Some(PixFloatHandle(Arc::clone(&pool)));
                         PixStrategy::new(upstream)
                             .build_curvy_with_pool::<_, _, SpecDepositAddress>(
@@ -755,6 +777,8 @@ impl Edgli {
             strategy_state,
             #[cfg(feature = "pix-curvy")]
             pix_float,
+            #[cfg(feature = "pix-curvy")]
+            relayer_route,
         })
     }
 }
@@ -794,6 +818,9 @@ pub struct ReactorHandle {
     /// `Some` when a PIX strategy runs on the Curvy pool.
     #[cfg(feature = "pix-curvy")]
     pub pix_float: Option<PixFloatHandle>,
+    /// `Some` when the Curvy pool submits through a relayer: the switch for where that traffic goes.
+    #[cfg(feature = "pix-curvy")]
+    pub relayer_route: Option<crate::RelayerRoute>,
 }
 
 /// The mixer config an edge node runs with: the Poisson engine with a 1 ms hard delay bound.
