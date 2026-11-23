@@ -139,7 +139,7 @@ compile error.
 ```rust,ignore
 use edgli::{PixEntryConfig, PixEntryStrategy, quota_per_ssa};
 use edgli::strategy::{EdgeStrategyKind, IncentiveConfiguration, default_strategy_cfg};
-use edgli::hopr_lib::HoprSessionClientConfig;
+use edgli::hopr_lib::HoprSessionEntryConfig;
 
 // Pay: add the PIX strategy to the reactor. `strategy` is pricing and is the same whichever pool
 // the build selected; `pool` is that pool's own knobs. Under `pix-curvy` its defaults are not
@@ -162,7 +162,7 @@ let _reactor = edgli.run_reactor_from_cfg(strategies)?;
 
 // Ask: opt a Session in. The quota is read from this node's own `protocol.pix`
 // dimensions, so there is nothing to state and nothing to get out of step.
-let session_cfg = edgli.with_pix(HoprSessionClientConfig::default())?;
+let session_cfg = edgli.with_pix(HoprSessionEntryConfig::default())?;
 
 // What one SSA cycle buys, for sizing the float below.
 let bytes_per_deposit = quota_per_ssa(&edgli.pix_ssa_quota()?);

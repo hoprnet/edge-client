@@ -9,7 +9,7 @@
 //! pinning here, since the opposite would leave PIX documented and unusable.
 #![cfg(feature = "pix")]
 
-use edgli::hopr_lib::{HoprSessionClientConfig, SessionCapability};
+use edgli::hopr_lib::{HoprSessionEntryConfig, SessionCapability};
 use edgli::strategy::{EdgeStrategyKind, IncentiveConfiguration, default_strategy_cfg};
 use edgli::{PixEntryConfig, PixEntryStrategy, pix_ssa_quota, quota_per_ssa};
 
@@ -40,7 +40,7 @@ fn readme_pix_snippet_compiles_and_runs() -> anyhow::Result<()> {
     );
 
     // The base a caller hands to `with_pix`; every other field of it is passed through.
-    let base = HoprSessionClientConfig::default();
+    let base = HoprSessionEntryConfig::default();
     assert!(
         !base.capabilities.contains(SessionCapability::UsePIX),
         "PIX must stay opt-in: a default Session does not request it"

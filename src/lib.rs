@@ -38,7 +38,7 @@ pub use hopr_lib::exports::transport::path::PathPlannerConfig;
 // Re-exported so consumers can pass a dial to `Edgli::set_probing_dial`.
 pub use hopr_lib::exports::transport::Dial;
 // Re-exported so consumers can set per-session flow control (the `flow_control`
-// field of `HoprSessionClientConfig`) without reaching into `hopr_lib` internals.
+// field of `HoprSessionEntryConfig`) without reaching into `hopr_lib` internals.
 pub use hopr_lib::exports::transport::FlowControlConfig;
 // PIX session surface for consumers, plus SessionCapability (also needed for Segmentation/retransmission) which was previously only reachable via hopr_lib::.
 #[cfg(feature = "pix")]

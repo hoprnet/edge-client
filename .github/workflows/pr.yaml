@@ -199,7 +199,7 @@ jobs:
     with:
       source_branch: ${{ github.event.pull_request.head.ref || github.ref }}
       enable_unit_tests: ${{ github.event_name != 'merge_group' && needs.changes.outputs.rust == 'true' }}
-      unit_test_command: "nix develop -c cargo nextest run --no-tests=pass"
+      unit_test_command: "nix develop -c bash -c 'scripts/check-entry-fencing.sh && cargo nextest run --no-tests=pass'"
       enable_unit_coverage: ${{ github.event_name != 'merge_group' && needs.changes.outputs.rust == 'true' }}
       unit_coverage_command: "nix run .#coverage-unit"
       runner_unit: depot-ubuntu-24.04-8
