@@ -670,8 +670,12 @@ impl Edgli {
             Vec::with_capacity(cfg.strategies.len());
         // Captured before the strategy moves into the reactor task: the shared cell is the only outside view.
         let mut strategy_state: Option<StrategyStateHandle> = None;
+        #[cfg(feature = "pix")]
+        let mut pix_enabled = false;
         #[cfg(feature = "pix-curvy")]
         let mut pix_float: Option<PixFloatHandle> = None;
+        #[cfg(feature = "pix-curvy")]
+        let mut pix_deposits: Option<crate::PixDepositHold> = None;
         for kind in cfg.strategies {
             let built: Box<dyn Strategy + Send> = match kind {
                 EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
@@ -687,6 +691,13 @@ impl Edgli {
                 }
                 #[cfg(feature = "pix")]
                 EdgeStrategyKind::Pix(sub_cfg) => {
+                    // Two would share the Safe and state dir, and the handle can hold only one pool.
+                    if pix_enabled {
+                        return Err(EdgliError::ConfigError(
+                            "reactor supports a single PIX strategy".into(),
+                        ));
+                    }
+                    pix_enabled = true;
                     // Only trace of which pool this build picked, and anonymity differs between them -- worth logging.
                     tracing::info!(
                         pool = PIX_POOL,
@@ -715,17 +726,30 @@ impl Edgli {
                         let password = upstream.pix_recovery_password(
                             "the Curvy pool's state file is sealed under it",
                         )?;
-                        let pool = Arc::new(CurvyDepositPool::new(
+                        // An idle connection outlives the route it was opened on and hangs the next relayer call until keepalive gives up.
+                        let relayer_http = reqwest::Client::builder()
+                            .pool_max_idle_per_host(0)
+                            .build()
+                            .map_err(|error| {
+                                EdgliError::ConfigError(format!(
+                                    "building the Curvy HTTP client: {error}"
+                                ))
+                            })?;
+                        let pool = Arc::new(CurvyDepositPool::with_http_client(
                             Arc::clone(&node),
                             sub_cfg
                                 .pool
                                 .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref()),
                             &password,
+                            relayer_http,
                         )?);
-                        pix_float = Some(PixFloatHandle(Arc::clone(&pool)));
+                        let (held_pool, hold) = crate::pix_hold::hold_deposits(pool);
+                        let held_pool = Arc::new(held_pool);
+                        pix_float = Some(PixFloatHandle(Arc::clone(&held_pool)));
+                        pix_deposits = Some(hold);
                         PixStrategy::new(upstream)
                             .build_curvy_with_pool::<_, _, SpecDepositAddress>(
-                                pool,
+                                held_pool,
                                 Arc::clone(&node),
                             )?
                     };
@@ -755,6 +779,8 @@ impl Edgli {
             strategy_state,
             #[cfg(feature = "pix-curvy")]
             pix_float,
+            #[cfg(feature = "pix-curvy")]
+            pix_deposits,
         })
     }
 }
@@ -772,7 +798,9 @@ impl StrategyStateHandle {
 /// The Curvy pool's shielded float: what deposits are paid from, topped up from the Safe.
 #[cfg(feature = "pix-curvy")]
 #[derive(Clone)]
-pub struct PixFloatHandle(Arc<CurvyDepositPool<HoprEdgeClient>>);
+pub struct PixFloatHandle(
+    Arc<crate::pix_hold::HeldDepositPool<Arc<CurvyDepositPool<HoprEdgeClient>>>>,
+);
 
 #[cfg(feature = "pix-curvy")]
 impl PixFloatHandle {
@@ -794,6 +822,9 @@ pub struct ReactorHandle {
     /// `Some` when a PIX strategy runs on the Curvy pool.
     #[cfg(feature = "pix-curvy")]
     pub pix_float: Option<PixFloatHandle>,
+    /// `Some` when a PIX strategy runs on the Curvy pool; starts released, `hold` holds its relayer calls until `release`.
+    #[cfg(feature = "pix-curvy")]
+    pub pix_deposits: Option<crate::PixDepositHold>,
 }
 
 /// The mixer config an edge node runs with: the Poisson engine with a 1 ms hard delay bound.
