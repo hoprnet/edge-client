@@ -18,7 +18,7 @@ path = "src/main.rs"
 required-features = ["runtime-tokio", "blokli"]
 
 [features]
-default = ["runtime-tokio", "blokli", "pix-curvy"]
+default = ["runtime-tokio", "blokli", "pix-curvy", "state-dump"]
 runtime-tokio = [
   "dep:tokio",
   "hopr-lib/runtime-tokio",
@@ -35,6 +35,14 @@ telemetry = [
 ]
 testing = ["hopr-lib/testing"]
 blokli = ["dep:tokio", "dep:url", "dep:serde", "dep:serde_json"]
+# Periodic component diagnostics, managed with the node's other background tasks.
+state-dump = [
+  "runtime-tokio",
+  "hopr-lib/state-dump",
+  "hopr-chain-connector/state-dump",
+  "hopr-network-graph/state-dump",
+  "hopr-transport-p2p/state-dump",
+]
 
 # PIX settlement: Entry deposits wxHOPR per Session. Pulls runtime-tokio, which the strategy needs to run.
 pix = ["runtime-tokio", "dep:validator"]
@@ -94,19 +102,26 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 url = { version = "2.5.8", optional = true }
 validator = { version = "0.21.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", features = [
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "kauki/chore/probing/bridge-8705-merged-with-impls-118", features = [
   "session-client",
   "serde",
 ] }
 # Version requirements are kept compatible with the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
 hopr-chain-connector = { version = "0.33.0", features = ["runtime-tokio"] }
-hopr-ct-full-network = { version = "0.11.0" }
-hopr-strategy = { version = "9.0.0", features = ["strategy-channel-lifecycle"] }
-hopr-ticket-manager = { version = "0.11.0" }
-hopr-network-graph = { version = "0.12.0" }
+hopr-ct-full-network = { version = "0.12.0" }
+hopr-strategy = { version = "9.2.0", features = ["strategy-channel-lifecycle"] }
+hopr-ticket-manager = { version = "0.11.1" }
+hopr-network-graph = { version = "0.13.0" }
 hopr-transport-p2p = { version = "0.15.0" }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+# Named directly only to classify failures (`EdgliError::failure_kind`); the connector keeps these types private.
+blokli-client = { version = "0.37.0", default-features = false }
+cynic = { version = "3.14.0", default-features = false, features = [
+  "http-reqwest",
+] }
+reqwest = { version = "0.13.5", default-features = false }
+rustls = { version = "0.23.46", default-features = false, features = ["std"] }
 
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -115,17 +130,17 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+# The failure classification tests build a `serde_json::Error`, also without the `blokli` feature.
+serde_json = "1"
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.
 hopr-chain-connector = { version = "0.33.0", features = [
   "runtime-tokio",
   "testing",
 ] }
 # `full` for the async unit tests in src/ (#[tokio::test], spawn, time, sync).
-tokio = { version = "1.53.2", features = ["full"] }
+# `test-util` for deterministic state-dump interval tests using a paused clock.
+tokio = { version = "1.53.2", features = ["full", "test-util"] }
 tempfile = "3.27.0"
-
-[build-dependencies]
-anyhow = "1.0.104"
 
 # tokio-console build target for the `prof` binary. hopr-lib forces
 # `tracing/release_max_level_debug`, which compiles out TRACE callsites (incl. tokio's task

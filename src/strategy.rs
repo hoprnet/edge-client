@@ -18,6 +18,8 @@ pub use hopr_strategy::strategy::{AtomicStrategyState, StrategyState};
 #[cfg(feature = "pix")]
 pub use hopr_strategy::pix::strategy::PixRecoveryPassword;
 
+use crate::errors::{EdgliError, Result};
+
 /// Paid downstream relay hops a ticket's face value covers.
 ///
 /// Fixed at the protocol's maximum path length rather than the single hop an edge node
@@ -605,15 +607,18 @@ impl PixEntryPool {
 /// - the suite comes from `HoprPixSpec`, so what is announced and what produces the shares are the
 ///   same build-time choice.
 #[cfg(feature = "pix")]
-pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> anyhow::Result<hopr_lib::PixParams> {
+pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> Result<hopr_lib::PixParams> {
     use hopr_lib::exports::transport::HoprPixSpec;
 
     let pix = &cfg.protocol.pix;
-    validator::Validate::validate(pix)
-        .map_err(|error| anyhow::anyhow!("invalid PIX configuration: {error}"))?;
+    validator::Validate::validate(pix).map_err(|error| EdgliError::InvalidSetting {
+        setting: "PIX configuration",
+        source: Box::new(error),
+    })?;
 
-    fn narrow<T: TryFrom<usize>>(value: usize, field: &str) -> anyhow::Result<T> {
-        T::try_from(value).map_err(|_| anyhow::anyhow!("PIX {field} out of range: {value}"))
+    fn narrow<T: TryFrom<usize>>(value: usize, field: &str) -> Result<T> {
+        T::try_from(value)
+            .map_err(|_| EdgliError::ConfigError(format!("PIX {field} out of range: {value}")))
     }
 
     hopr_lib::PixParams::try_new_for::<HoprPixSpec>(
@@ -621,7 +626,10 @@ pub fn pix_ssa_quota(cfg: &hopr_lib::config::HoprLibConfig) -> anyhow::Result<ho
         narrow(pix.ssa_part_size, "ssa_part_size")?,
         narrow(pix.surplus_shares(), "additional_shares")?,
     )
-    .map_err(|error| anyhow::anyhow!("invalid PIX dimensions: {error}"))
+    .map_err(|error| EdgliError::InvalidSetting {
+        setting: "PIX dimensions",
+        source: Box::new(error),
+    })
 }
 
 /// Bytes of Exit → Entry traffic a single SSA deposit buys.
@@ -642,6 +650,17 @@ pub fn quota_per_ssa(params: &hopr_lib::PixParams) -> u64 {
     u64::from(params.polys_per_ssa())
         * u64::from(params.emitted_shares_per_poly())
         * hopr_lib::exports::transport::session::PIX_QUOTA_BYTES_PER_SHARE
+}
+
+/// Bytes of Exit → Entry traffic `funds` buy at a PIX `price_per_byte`
+/// ([`PixEntryStrategy::price_per_byte`]): none at a zero price, saturating at `u64::MAX`.
+#[cfg(feature = "pix")]
+pub fn bytes_at_pix_price(funds: HoprBalance, price_per_byte: HoprBalance) -> u64 {
+    if price_per_byte == HoprBalance::zero() {
+        return 0;
+    }
+    let quotient = funds.amount() / price_per_byte.amount();
+    quotient.min(u64::MAX.into()).low_u64()
 }
 
 /// Strategy configuration for an edge node reactor.
@@ -696,13 +715,13 @@ pub struct IncentiveConfiguration {
 }
 
 impl IncentiveConfiguration {
-    pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.target_open_channels >= self.min_open_channels,
-            "target_open_channels ({}) must be >= min_open_channels ({})",
-            self.target_open_channels,
-            self.min_open_channels
-        );
+    pub fn validate(&self) -> Result<()> {
+        if self.target_open_channels < self.min_open_channels {
+            return Err(EdgliError::ConfigError(format!(
+                "target_open_channels ({}) must be >= min_open_channels ({})",
+                self.target_open_channels, self.min_open_channels
+            )));
+        }
         Ok(())
     }
 }
@@ -740,7 +759,7 @@ fn resolve_funding(
 
 /// [`FundingConfig`] for the sizing fields on `cfg`: each passed through verbatim, `None`
 /// keeping the strategy's default.
-pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> anyhow::Result<FundingConfig> {
+pub fn compute_funding_config(cfg: &IncentiveConfiguration) -> Result<FundingConfig> {
     let defaults = FundingConfig::default();
 
     Ok(FundingConfig {
@@ -759,7 +778,7 @@ fn channel_stakes(
     win_prob: f64,
     sizing: &IncentiveConfiguration,
     missing_channels: usize,
-) -> anyhow::Result<HoprBalance> {
+) -> Result<HoprBalance> {
     let funding = compute_funding_config(sizing)?;
     let resolved = resolve_funding(&funding, ticket_price, win_prob);
     // Half a round: the opens carry the expected spend, a full round mostly idles in the Safe.
@@ -772,7 +791,7 @@ fn topup_headroom(
     win_prob: f64,
     sizing: &IncentiveConfiguration,
     open_channel_balances: &[HoprBalance],
-) -> anyhow::Result<HoprBalance> {
+) -> Result<HoprBalance> {
     let funding = compute_funding_config(sizing)?;
     let resolved = resolve_funding(&funding, ticket_price, win_prob);
     let drained = open_channel_balances
@@ -780,6 +799,16 @@ fn topup_headroom(
         .filter(|balance| **balance <= resolved.lower_balance_threshold)
         .count();
     Ok(resolved.topup_balance * drained as u64)
+}
+
+/// One channel top-up's stake, as the strategy resolves it at the current ticket economics.
+fn channel_top_up(
+    ticket_price: HoprBalance,
+    win_prob: f64,
+    sizing: &IncentiveConfiguration,
+) -> Result<HoprBalance> {
+    let funding = compute_funding_config(sizing)?;
+    Ok(resolve_funding(&funding, ticket_price, win_prob).topup_balance)
 }
 
 /// One-time costs still owed before this node can be fully up and running,
@@ -831,6 +860,9 @@ pub struct BalanceRecommendation {
     pub pix_float: HoprBalance,
     /// Refill for drained open channels; kept out of [`total_wxhopr`](Self::total_wxhopr), which stays from-scratch.
     pub topup_headroom: HoprBalance,
+    /// One channel top-up's stake, to count how many top-ups a balance still covers; kept out of
+    /// [`total_wxhopr`](Self::total_wxhopr).
+    pub channel_top_up: HoprBalance,
     /// One-time fee still owed before the node can start (today the
     /// key-binding fee); zero once the key is bound on-chain.
     pub fee_to_start: HoprBalance,
@@ -918,7 +950,7 @@ pub(crate) fn compute_balance_recommendation(
     sizing: &IncentiveConfiguration,
     open_channel_balances: &[HoprBalance],
     max_fee_per_gas: u128,
-) -> anyhow::Result<BalanceRecommendation> {
+) -> Result<BalanceRecommendation> {
     let stake = if missing_channels == 0 {
         HoprBalance::zero()
     } else {
@@ -928,6 +960,7 @@ pub(crate) fn compute_balance_recommendation(
         channel_stakes: stake,
         pix_float: HoprBalance::zero(),
         topup_headroom: topup_headroom(ticket_price, win_prob, sizing, open_channel_balances)?,
+        channel_top_up: channel_top_up(ticket_price, win_prob, sizing)?,
         fee_to_start: costs.fee_to_start,
         txs_to_start: costs.txs_to_start,
         xdai_fee_per_tx: xdai_fee_per_tx(max_fee_per_gas),
@@ -942,11 +975,13 @@ pub(crate) fn compute_capacity(
     stake: HoprBalance,
     ticket_price: HoprBalance,
     win_prob: f64,
-) -> anyhow::Result<Capacity> {
-    anyhow::ensure!(
-        win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0,
-        "win_prob must be in (0, 1]; got {win_prob}"
-    );
+) -> Result<Capacity> {
+    let is_probability = win_prob.is_finite() && win_prob > 0.0 && win_prob <= 1.0;
+    if !is_probability {
+        return Err(EdgliError::ValidationError(format!(
+            "win_prob must be in (0, 1]; got {win_prob}"
+        )));
+    }
     // Both counts are per *message*, and a message pays `ASSUMED_HOPS` relays: it issues one
     // aggregated ticket of face value `ticket_price × ASSUMED_HOPS / win_prob`, whose expected
     // cost is `ticket_price × ASSUMED_HOPS`. Measuring either against the bare ticket price
@@ -992,9 +1027,10 @@ pub(crate) async fn compute_costs_to_start<T>(
     chain: &T,
     node_address: Option<Address>,
     safe_deployed: bool,
-) -> anyhow::Result<StartupCosts>
+) -> Result<StartupCosts>
 where
     T: ChainReadAccountOperations + ChainValues + Sync,
+    EdgliError: From<<T as ChainReadAccountOperations>::Error> + From<<T as ChainValues>::Error>,
 {
     let bound = match node_address {
         Some(addr) => {
@@ -1034,7 +1070,7 @@ pub async fn minimum_balance_recommendation(
     incentive_ops: &dyn crate::blokli::IncentiveOperations,
     cfg: &IncentiveConfiguration,
     pix_float: HoprBalance,
-) -> anyhow::Result<BalanceRecommendation> {
+) -> Result<BalanceRecommendation> {
     let stats = incentive_ops.ticket_stats().await?;
     let win_prob = stats.winning_probability.as_f64();
     let costs = incentive_ops.compute_costs_to_start().await?;
@@ -1057,9 +1093,7 @@ pub async fn minimum_balance_recommendation(
 /// Takes no chain reading: the capacities are the requested volume and the strategy's own
 /// defaults, and the winning probability only enters when the strategy resolves them to
 /// balances each tick — so this tracks a changing win prob rather than pinning it.
-pub fn default_strategy_cfg(
-    sizing: &IncentiveConfiguration,
-) -> anyhow::Result<MultiStrategyConfig> {
+pub fn default_strategy_cfg(sizing: &IncentiveConfiguration) -> Result<MultiStrategyConfig> {
     sizing.validate()?;
     let funding = compute_funding_config(sizing)?;
     tracing::info!(
@@ -1471,6 +1505,72 @@ mod tests {
     fn xdai_fee_per_tx_saturates_on_absurd_gas_price() {
         // An absurd reported gas price must clamp, not overflow.
         let _ = xdai_fee_per_tx(u128::MAX);
+    }
+
+    #[test]
+    fn channel_top_up_is_the_resolved_top_up_outside_the_total() {
+        let price = HoprBalance::new_base(10);
+        let sizing = IncentiveConfiguration::default();
+        let resolved = resolve_funding(&compute_funding_config(&sizing).unwrap(), price, 1.0);
+        let rec = compute_balance_recommendation(
+            price,
+            1.0,
+            0,
+            no_startup_costs(),
+            &sizing,
+            &[],
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
+        assert_eq!(rec.channel_top_up, resolved.topup_balance);
+        assert_eq!(rec.total_wxhopr(), HoprBalance::zero());
+    }
+
+    #[test]
+    fn channel_top_up_at_piz_palu_prices() {
+        // 2.16e-6 wxHOPR tickets at a win probability of 8.64e-7: two winning tickets, as piz-palu-prod channels hold.
+        let rec = compute_balance_recommendation(
+            HoprBalance::from(2_160_000_000_000_u64),
+            8.64e-7,
+            0,
+            no_startup_costs(),
+            &IncentiveConfiguration::default(),
+            &[],
+            TEST_MAX_FEE_PER_GAS,
+        )
+        .unwrap();
+        assert_eq!(
+            rec.channel_top_up,
+            HoprBalance::from(15_000_000_000_185_455_596_u64)
+        );
+    }
+
+    #[cfg(feature = "pix")]
+    #[test]
+    fn bytes_at_pix_price_floors_partial_bytes() {
+        let price = HoprBalance::from(9_000_000_000_u64);
+        assert_eq!(
+            bytes_at_pix_price(HoprBalance::from(90_000_000_000_u64), price),
+            10
+        );
+        assert_eq!(
+            bytes_at_pix_price(HoprBalance::from(89_999_999_999_u64), price),
+            9
+        );
+    }
+
+    #[cfg(feature = "pix")]
+    #[test]
+    fn bytes_at_pix_price_is_zero_without_a_price_and_saturates() {
+        assert_eq!(
+            bytes_at_pix_price(HoprBalance::new_base(1), HoprBalance::zero()),
+            0
+        );
+        let one_wei = HoprBalance::from(1_u64);
+        assert_eq!(
+            bytes_at_pix_price(HoprBalance::new_base(1_000_000_000), one_wei),
+            u64::MAX
+        );
     }
 
     #[test]

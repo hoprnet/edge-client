@@ -16,6 +16,11 @@ pub mod endpoint;
 pub mod strategy;
 pub mod traits;
 
+// Reports through the concrete client's components, so it needs what `client` needs.
+#[cfg(all(feature = "state-dump", feature = "blokli"))]
+mod state_dump;
+
+pub use errors::{EdgliError, FailureKind};
 pub use hopr_lib;
 
 #[cfg(feature = "blokli")]
@@ -27,8 +32,8 @@ pub use endpoint::*;
 #[cfg(feature = "blokli")]
 pub use hopr_chain_connector::{BlockchainConnectorConfig, DEFAULT_REQUEST_TIMEOUT};
 pub use hopr_lib::exports::transport::path::PathPlannerConfig;
-// Re-exported so consumers can pass a level to `Edgli::set_probing_level`.
-pub use hopr_ct_full_network::ProbingLevel;
+// Re-exported so consumers can pass a dial to `Edgli::set_probing_dial`.
+pub use hopr_lib::exports::transport::Dial;
 // Re-exported so consumers can set per-session flow control (the `flow_control`
 // field of `HoprSessionClientConfig`) without reaching into `hopr_lib` internals.
 pub use hopr_lib::exports::transport::FlowControlConfig;
@@ -39,7 +44,10 @@ pub use hopr_lib::{InvalidPixParams, LOCAL_PIX_SUITE, PixParams, SessionCapabili
 #[cfg(feature = "pix")]
 pub use hopr_lib::exports::transport::config::PixGlobalConfig;
 #[cfg(feature = "pix")]
-pub use strategy::{PixEntryConfig, PixEntryPool, PixEntryStrategy, pix_ssa_quota, quota_per_ssa};
+pub use strategy::{
+    PixEntryConfig, PixEntryPool, PixEntryStrategy, bytes_at_pix_price, pix_ssa_quota,
+    quota_per_ssa,
+};
 // Re-exported so consumers constructing a `BlokliEndpoint` do not need their own
 // `url` dependency, which would have to match this crate's version to unify.
 #[cfg(feature = "blokli")]
