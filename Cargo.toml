@@ -66,17 +66,17 @@ anyhow = "1.0.104"
 bytesize = "2.7.0"
 smart-default = "0.7.1"
 async-signal = "0.2.14"
-async-trait = "0.1.91"
-cfg-if = "1.0.4"
-clap = { version = "4.6.5", features = ["derive", "env", "string"] }
+async-trait = "0.1.92"
+cfg-if = "1.0.5"
+clap = { version = "4.6.9", features = ["derive", "env", "string"] }
 console-subscriber = { version = "0.5.0", optional = true }
-futures = "0.3.33"
-multiaddr = "0.18.2"
-signal-hook = "0.4.4"
+futures = "0.3.34"
+multiaddr = "0.19.1"
+signal-hook = "0.4.6"
 serde_yaml = { version = "0.9.34" }
 strum = { version = "0.28.0", features = ["derive"] }
-thiserror = "2.0.19"
-tokio = { version = "1.53.1", features = [
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = [
   "rt-multi-thread",
   "macros",
   "sync",
@@ -89,17 +89,17 @@ tracing-subscriber = { version = "0.3.23", features = [
   "json",
   "env-filter",
 ] }
-opentelemetry = { version = "0.32.0", optional = true }
-opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
+opentelemetry = { version = "0.33.1", optional = true }
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = [
   "trace",
   "reqwest-client",
   "tls-roots",
   "http-proto",
   "grpc-tonic",
 ], optional = true }
-opentelemetry_sdk = { version = "0.32.1", optional = true }
+opentelemetry_sdk = { version = "0.33.1", optional = true }
 # tracing-opentelemetry = { version = "0.32.0", optional = true }
-url = { version = "2.5.8", optional = true }
+url = { version = "2.5.9", optional = true }
 validator = { version = "0.21.0", optional = true }
 
 hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "kauki/chore/probing/bridge-8705-merged-with-impls-118", features = [
@@ -107,16 +107,16 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "kauki/chore/p
   "serde",
 ] }
 # Version requirements are kept compatible with the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
-hopr-chain-connector = { version = "0.33.0", features = ["runtime-tokio"] }
+hopr-chain-connector = { version = "0.35.0", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.12.0" }
 hopr-strategy = { version = "9.2.0", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.11.1" }
 hopr-network-graph = { version = "0.13.0" }
 hopr-transport-p2p = { version = "0.15.0" }
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.154", optional = true }
 # Named directly only to classify failures (`EdgliError::failure_kind`); the connector keeps these types private.
-blokli-client = { version = "0.37.0", default-features = false }
+blokli-client = { version = "0.38.0", default-features = false }
 cynic = { version = "3.14.0", default-features = false, features = [
   "http-reqwest",
 ] }
@@ -131,15 +131,15 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 
 [dev-dependencies]
 # The failure classification tests build a `serde_json::Error`, also without the `blokli` feature.
-serde_json = "1"
+serde_json = "1.0.154"
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.
-hopr-chain-connector = { version = "0.33.0", features = [
+hopr-chain-connector = { version = "0.35.0", features = [
   "runtime-tokio",
   "testing",
 ] }
 # `full` for the async unit tests in src/ (#[tokio::test], spawn, time, sync).
 # `test-util` for deterministic state-dump interval tests using a paused clock.
-tokio = { version = "1.53.2", features = ["full", "test-util"] }
+tokio = { version = "1.54.1", features = ["full", "test-util"] }
 tempfile = "3.27.0"
 
 # tokio-console build target for the `prof` binary. hopr-lib forces
