@@ -173,7 +173,8 @@ pub struct PixEntryStrategy {
     /// run through the Safe module), and `PixEntryPool::min_safe_hopr_reserve` keeps it off the
     /// channel budget. The Curvy pool pays from a shielded float its funding policy tops up from
     /// the Safe, and the channel-lifecycle strategy leaves the next top-up's share of the Safe
-    /// alone (`SafeReserve`). (Code spans: those exist under one pool each.)
+    /// alone (`SafeReserve`). (Code spans rather than links: `min_safe_hopr_reserve` exists only
+    /// under `pix-test`, while this type is compiled for both pools.)
     ///
     /// A pool that runs dry stops depositing and the Exit closes the Session on its deposit
     /// deadline.
