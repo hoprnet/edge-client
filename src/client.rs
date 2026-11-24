@@ -676,6 +676,9 @@ impl Edgli {
         let mut pix_float: Option<PixFloatHandle> = None;
         #[cfg(feature = "pix-curvy")]
         let mut pix_deposits: Option<crate::PixDepositHold> = None;
+        // Zero unless a funded PIX pool claims part of the Safe from the channels.
+        #[cfg(feature = "pix-curvy")]
+        let safe_reserve = super::strategy::SafeReserve::default();
         for kind in cfg.strategies {
             let built: Box<dyn Strategy + Send> = match kind {
                 EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
@@ -685,7 +688,10 @@ impl Edgli {
                             "reactor supports a single channel-lifecycle strategy".into(),
                         ));
                     }
-                    let built = ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::clone(&node))?;
+                    let lifecycle = ChannelLifecycleStrategy::new(*sub_cfg);
+                    #[cfg(feature = "pix-curvy")]
+                    let lifecycle = lifecycle.with_safe_reserve(safe_reserve.clone());
+                    let built = lifecycle.build(Arc::clone(&node))?;
                     strategy_state = Some(StrategyStateHandle(built.state_handle()));
                     built
                 }
@@ -748,6 +754,7 @@ impl Edgli {
                         pix_float = Some(PixFloatHandle(Arc::clone(&held_pool)));
                         pix_deposits = Some(hold);
                         PixStrategy::new(upstream)
+                            .with_safe_reserve(safe_reserve.clone())
                             .build_curvy_with_pool::<_, _, SpecDepositAddress>(
                                 held_pool,
                                 Arc::clone(&node),
@@ -781,6 +788,8 @@ impl Edgli {
             pix_float,
             #[cfg(feature = "pix-curvy")]
             pix_deposits,
+            #[cfg(feature = "pix-curvy")]
+            safe_reserve,
         })
     }
 }
@@ -825,6 +834,9 @@ pub struct ReactorHandle {
     /// `Some` when a PIX strategy runs on the Curvy pool; starts released, `hold` holds its relayer calls until `release`.
     #[cfg(feature = "pix-curvy")]
     pub pix_deposits: Option<crate::PixDepositHold>,
+    /// What the PIX pool's next refill keeps of the Safe; channels spend only the rest.
+    #[cfg(feature = "pix-curvy")]
+    pub safe_reserve: super::strategy::SafeReserve,
 }
 
 /// The mixer config an edge node runs with: the Poisson engine with a 1 ms hard delay bound.
