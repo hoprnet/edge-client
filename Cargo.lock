@@ -3743,7 +3743,7 @@ dependencies = [
  "hopr-chain-connector 0.33.0",
  "hopr-ct-full-network 0.12.0",
  "hopr-lib",
- "hopr-network-graph 0.13.0",
+ "hopr-network-graph 0.13.1",
  "hopr-strategy",
  "hopr-ticket-manager",
  "hopr-transport-p2p",
@@ -4938,7 +4938,7 @@ dependencies = [
  "futures",
  "futures-time",
  "hopr-api",
- "hopr-network-graph 0.13.0",
+ "hopr-network-graph 0.13.1",
  "hopr-utilities 0.20.0",
  "smart-default",
  "tokio",
@@ -5017,16 +5017,15 @@ dependencies = [
 
 [[package]]
 name = "hopr-network-graph"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d4f9e796207f6ea3812f22b7c4f16a33d0d5fbadc086e5f5d8765f00b5e017a"
+version = "0.13.1"
+source = "git+https://github.com/hoprnet/hopr-impls?branch=feature%2Fcore-1432-incorrect-logging-and-missing-dump-data#4e1850dc3822eef722146808c67512cc632b8019"
 dependencies = [
  "anyhow",
  "bimap",
  "futures",
  "futures-time",
  "hopr-api",
- "hopr-utilities 0.20.0",
+ "hopr-utilities 0.21.0",
  "humantime-serde",
  "indexmap 2.14.2",
  "lazy_static",
