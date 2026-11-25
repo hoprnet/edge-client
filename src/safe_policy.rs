@@ -95,7 +95,7 @@ fn pool_is_low(pool: HoprBalance, policy: &crate::strategy::PixFundingPolicy) ->
 }
 
 /// Reserves a whole top-up at once; the returned future then keeps `reserve` at [`reserve_for`]
-/// the pool's balance and, while the pool is below half a top-up, sets `mode` to
+/// the pool's balance and, while the pool is below half a top-up or its refill floor, sets `mode` to
 /// [`next_mode`](crate::reclaim::next_mode) for what `safe_view` reports. After a reclaim the whole
 /// top-up stays reserved until the pool is refilled. Never completes.
 #[cfg(feature = "pix-curvy")]
