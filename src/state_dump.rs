@@ -17,7 +17,9 @@ use std::{
 };
 
 use hopr_lib::{
-    api::types::{internal::NodeId, primitive::prelude::Address},
+    api::types::{
+        crypto::prelude::OffchainPublicKey, internal::NodeId, primitive::prelude::Address,
+    },
     errors::HoprLibError,
     exports::transport::observer::{PathDirection, TransportEvent},
     state_dump::{StateDump, StateDumpFactory, StateDumpSections},
@@ -65,13 +67,17 @@ fn parse_interval(value: &str) -> Result<Option<Duration>, HoprLibError> {
 pub struct EdgeStateDump {
     /// Names this node in every line, so lines from several logs can be told apart.
     instance: String,
+    /// This node's packet key, used to exclude self-destination path events.
+    me: OffchainPublicKey,
     interval: Option<Duration>,
 }
 
 impl EdgeStateDump {
-    pub fn new(instance: impl Into<String>) -> Self {
+    /// Creates a reporter for `instance` using this node's own packet public key as `me`.
+    pub fn new(instance: impl Into<String>, me: OffchainPublicKey) -> Self {
         Self {
             instance: instance.into(),
+            me,
             interval: None,
         }
     }
@@ -92,7 +98,7 @@ impl StateDumpFactory<Arc<EdgeChainConnector>, SharedChannelGraph, HoprNetwork> 
         sections: StateDumpSections,
     ) -> Option<StateDump> {
         let interval = self.interval?;
-        let paths = Arc::new(PathCounters::default());
+        let paths = Arc::new(PathCounters::new(self.me));
         let observer = {
             let paths = paths.clone();
             Arc::new(move |event| paths.record(event))
@@ -132,7 +138,9 @@ struct DestinationCounts {
     return_failed: u64,
     /// Graph searches whose last phase found no usable path.
     empty_searches: u64,
+    /// SURBs minted in this interval, including probes; the difference is not a loss count.
     surbs_minted: u64,
+    /// Replies received in this interval, including those for SURBs minted in earlier intervals.
     surbs_returned: u64,
 }
 
@@ -150,8 +158,9 @@ impl DestinationCounts {
     }
 }
 
-#[derive(Default)]
 struct PathCounters {
+    /// This node's packet key, used to exclude self-destination resolves and searches.
+    me: OffchainPublicKey,
     window: Mutex<PathWindow>,
 }
 
@@ -168,12 +177,6 @@ impl PathWindow {
             counts.forward_failed + counts.empty_searches > 0 && counts.forward_resolved == 0
         }) {
             (true, "no_path_to_destination")
-        } else if self
-            .destinations
-            .values()
-            .any(|counts| counts.surbs_minted > 0 && counts.surbs_returned == 0)
-        {
-            (true, "surbs_not_returning")
         } else if self.untracked_events > 0 {
             (true, "destination_tracking_limit")
         } else if self.destinations.is_empty() {
@@ -185,8 +188,23 @@ impl PathWindow {
 }
 
 impl PathCounters {
+    fn new(me: OffchainPublicKey) -> Self {
+        Self {
+            me,
+            window: Mutex::new(PathWindow::default()),
+        }
+    }
+
     /// Called on the packet path, so the lock is held only for one map update.
     fn record(&self, event: TransportEvent) {
+        if matches!(
+            &event,
+            TransportEvent::PathResolved { destination, .. }
+                | TransportEvent::PathSearched { destination, .. }
+                if *destination == NodeId::Offchain(self.me)
+        ) {
+            return;
+        }
         let destination = match &event {
             TransportEvent::PathResolved { destination, .. }
             | TransportEvent::PathSearched { destination, .. } => *destination,
@@ -411,7 +429,7 @@ mod tests {
     fn factory_prepares_interval_from_the_startup_environment() {
         const CHILD_CASE: &str = "EDGLI_TEST_STATE_DUMP_ENV_CASE";
         if let Ok(case) = std::env::var(CHILD_CASE) {
-            let mut factory = EdgeStateDump::new("test-node");
+            let mut factory = EdgeStateDump::new("test-node", offchain(200));
             let result = factory.prepare();
             assert_eq!(factory.instance, "test-node");
             match case.as_str() {
@@ -475,7 +493,7 @@ mod tests {
 
         let logs = CapturedLogs::default();
         let _subscriber = tracing::subscriber::set_default(logs.json_subscriber());
-        let paths = PathCounters::default();
+        let paths = PathCounters::new(offchain(200));
         let interval = Duration::from_secs(5);
         let revision = Arc::new(AtomicU64::new(1));
         let section_revision = revision.clone();
@@ -559,7 +577,7 @@ mod tests {
     async fn missed_intervals_do_not_burst_empty_reports() {
         let logs = CapturedLogs::default();
         let _subscriber = tracing::subscriber::set_default(logs.json_subscriber());
-        let paths = PathCounters::default();
+        let paths = PathCounters::new(offchain(200));
         let sections = Vec::new();
         let interval = Duration::from_secs(5);
         let mut reporter = Box::pin(report_paths(&paths, "test-node", interval, &sections));
@@ -581,7 +599,7 @@ mod tests {
 
     #[test]
     fn counts_resolves_searches_and_surbs_per_destination() {
-        let paths = PathCounters::default();
+        let paths = PathCounters::new(offchain(200));
         paths.record(resolved(1, PathDirection::Forward, true));
         paths.record(resolved(1, PathDirection::Return, false));
         paths.record(TransportEvent::PathSearched {
@@ -617,7 +635,7 @@ mod tests {
 
     #[test]
     fn a_destination_without_any_working_forward_path_needs_analysis() {
-        let paths = PathCounters::default();
+        let paths = PathCounters::new(offchain(200));
         paths.record(resolved(1, PathDirection::Forward, false));
         paths.record(resolved(2, PathDirection::Forward, true));
 
@@ -630,8 +648,71 @@ mod tests {
     }
 
     #[test]
+    fn paths_should_ignore_own_key_when_loopback_events_arrive() {
+        let paths = PathCounters::new(offchain(200));
+        paths.record(resolved(200, PathDirection::Forward, true));
+        paths.record(resolved(200, PathDirection::Forward, false));
+        paths.record(TransportEvent::PathSearched {
+            direction: PathDirection::Forward,
+            destination: NodeId::Offchain(offchain(200)),
+            phase1: PhaseCounts::default(),
+            phase2: None,
+            retained: 0,
+        });
+
+        let state = paths.take();
+        assert!(state.destinations.is_empty());
+        assert_eq!(state.untracked_events, 0);
+        assert_eq!(state.assessment, (false, "no_path_activity"));
+    }
+
+    #[test]
+    fn paths_should_not_consume_tracking_capacity_when_loopback_events_arrive() {
+        let paths = PathCounters::new(offchain(200));
+        for seed in 0..MAX_TRACKED_DESTINATIONS as u8 {
+            paths.record(resolved(seed, PathDirection::Forward, true));
+        }
+        paths.record(resolved(200, PathDirection::Forward, false));
+        paths.record(TransportEvent::PathSearched {
+            direction: PathDirection::Forward,
+            destination: NodeId::Offchain(offchain(200)),
+            phase1: PhaseCounts::default(),
+            phase2: None,
+            retained: 0,
+        });
+
+        let state = paths.take();
+        assert_eq!(state.untracked_events, 0);
+        assert_eq!(
+            state.destinations.len() + state.destinations_omitted,
+            MAX_TRACKED_DESTINATIONS
+        );
+        assert_eq!(state.assessment, (false, "paths_ok"));
+    }
+
+    #[test]
+    fn paths_should_keep_surb_counts_without_a_silence_verdict() {
+        let paths = PathCounters::new(offchain(200));
+        paths.record(TransportEvent::Surb {
+            destination: offchain(1),
+            paths: ForwardAndReturnPath {
+                forward: [1, 2, 0, 0, 0],
+                reply: [2, 1, 0, 0, 0],
+            },
+            minted: 1,
+            returned: 0,
+        });
+
+        let state = paths.take();
+        assert_eq!(state.assessment, (false, "paths_ok"));
+        let state = serde_json::to_value(state).expect("paths state serializes");
+        assert_eq!(state["destinations"][0]["surbs_minted"], 1);
+        assert_eq!(state["destinations"][0]["surbs_returned"], 0);
+    }
+
+    #[test]
     fn destinations_beyond_the_limit_are_counted_but_not_tracked() {
-        let paths = PathCounters::default();
+        let paths = PathCounters::new(offchain(200));
         for seed in 0..=MAX_TRACKED_DESTINATIONS as u8 {
             paths.record(resolved(seed, PathDirection::Forward, true));
         }
@@ -659,45 +740,37 @@ mod tests {
 
     #[test]
     fn omitted_destinations_still_contribute_to_the_health_assessment() {
-        for (event, reason) in [
-            (
-                resolved(63, PathDirection::Forward, false),
-                "no_path_to_destination",
-            ),
-            (surbs(63, 1, 0), "surbs_not_returning"),
-        ] {
-            let paths = PathCounters::default();
-            // These recovered destinations rank ahead of the unhealthy one.
-            for seed in 0..MAX_REPORTED_DESTINATIONS as u8 {
-                paths.record(resolved(seed, PathDirection::Forward, false));
-                paths.record(resolved(seed, PathDirection::Forward, false));
-                paths.record(resolved(seed, PathDirection::Forward, true));
-            }
-            paths.record(event);
-
-            let state = paths.take();
-            assert_eq!(state.destinations.len(), MAX_REPORTED_DESTINATIONS);
-            assert_eq!(state.destinations_omitted, 1);
-            assert!(
-                state
-                    .destinations
-                    .iter()
-                    .all(|d| d.destination != offchain(63).to_string())
-            );
-            assert_eq!(state.assessment, (true, reason));
-            assert!(
-                serde_json::to_value(state)
-                    .unwrap()
-                    .get("assessment")
-                    .is_none()
-            );
+        let paths = PathCounters::new(offchain(200));
+        // These recovered destinations rank ahead of the unhealthy one.
+        for seed in 0..MAX_REPORTED_DESTINATIONS as u8 {
+            paths.record(resolved(seed, PathDirection::Forward, false));
+            paths.record(resolved(seed, PathDirection::Forward, false));
+            paths.record(resolved(seed, PathDirection::Forward, true));
         }
+        paths.record(resolved(63, PathDirection::Forward, false));
+
+        let state = paths.take();
+        assert_eq!(state.destinations.len(), MAX_REPORTED_DESTINATIONS);
+        assert_eq!(state.destinations_omitted, 1);
+        assert!(
+            state
+                .destinations
+                .iter()
+                .all(|d| d.destination != offchain(63).to_string())
+        );
+        assert_eq!(state.assessment, (true, "no_path_to_destination"));
+        assert!(
+            serde_json::to_value(state)
+                .unwrap()
+                .get("assessment")
+                .is_none()
+        );
     }
 
     #[test]
     fn equal_activity_is_reported_in_a_stable_order() {
-        let ascending = PathCounters::default();
-        let descending = PathCounters::default();
+        let ascending = PathCounters::new(offchain(200));
+        let descending = PathCounters::new(offchain(200));
         for seed in 0..=MAX_REPORTED_DESTINATIONS as u8 {
             ascending.record(resolved(seed, PathDirection::Forward, true));
         }
@@ -742,7 +815,7 @@ mod tests {
     #[test]
     fn an_idle_interval_needs_no_analysis() {
         assert_eq!(
-            PathCounters::default().take().assessment,
+            PathCounters::new(offchain(200)).take().assessment,
             (false, "no_path_activity")
         );
     }
