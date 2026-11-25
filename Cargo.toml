@@ -102,15 +102,17 @@ opentelemetry_sdk = { version = "0.32.1", optional = true }
 url = { version = "2.5.8", optional = true }
 validator = { version = "0.21.0", optional = true }
 
-hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", features = [
-  "session-client",
+# Entry only: the `entry` feature carries no relaying core, no Session server and no ticket manager.
+hopr-lib = { git = "https://github.com/hoprnet/hoprnet", rev = "8a9133c8aa7f204e3b1bbc3b87f2607df30e1d76", default-features = false, features = [
+  "entry",
   "serde",
 ] }
 # Version requirements are kept compatible with the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
 hopr-chain-connector = { version = "0.36.1", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.12.0" }
 hopr-strategy = { version = "9.2.3", features = ["strategy-channel-lifecycle"] }
-hopr-ticket-manager = { version = "0.11.1" }
+# Entry issues tickets only: the factory and the outgoing index store, without the incoming ticket manager.
+hopr-ticket-manager = { version = "0.12.0", default-features = false, features = ["redb"] }
 hopr-network-graph = { version = "0.13.0" }
 hopr-transport-p2p = { version = "0.15.0" }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -152,3 +154,8 @@ tempfile = "3.27.0"
 [profile.tracer]
 inherits = "release"
 debug-assertions = true
+
+# Unpublished until hopr-api 6.2.0 and hopr-ticket-manager 0.12.0 are released; remove then.
+[patch.crates-io]
+hopr-api = { git = "https://github.com/hoprnet/hopr-api", rev = "9d1902d306bfe68dc73bded165a1def8e87476ea" }
+hopr-ticket-manager = { git = "https://github.com/hoprnet/hopr-impls", rev = "9031aae2582fa6c0feef170eaf36bb61e4914dae" }

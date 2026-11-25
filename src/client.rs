@@ -423,7 +423,7 @@ impl Edgli {
             .with_cover_traffic(move |_ctx| discovery);
         #[cfg(feature = "state-dump")]
         let builder = builder.with_state_dump(state_dump);
-        let node = Arc::new(builder.build_edge(ticket_factory).await?);
+        let node = Arc::new(builder.build_entry(ticket_factory).await?);
 
         visitor(EdgliInitState::Ready);
         Ok(Self {
@@ -631,11 +631,11 @@ impl Edgli {
     #[cfg(feature = "pix")]
     pub fn with_pix(
         &self,
-        base: hopr_lib::HoprSessionClientConfig,
-    ) -> Result<hopr_lib::HoprSessionClientConfig> {
+        base: hopr_lib::HoprSessionEntryConfig,
+    ) -> Result<hopr_lib::HoprSessionEntryConfig> {
         let _ = self.pix_ssa_quota()?;
 
-        Ok(hopr_lib::HoprSessionClientConfig {
+        Ok(hopr_lib::HoprSessionEntryConfig {
             capabilities: base.capabilities | hopr_lib::SessionCapability::UsePIX,
             ..base
         })
