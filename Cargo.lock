@@ -2315,39 +2315,6 @@ dependencies = [
 
 [[package]]
 name = "blokli-client"
-version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0316ef1a89d3d089b8534c12fa77403702dbbbef24a64361f74f4b5ec7e2edd"
-dependencies = [
- "anyhow",
- "async-broadcast",
- "async-trait",
- "bytes",
- "chrono",
- "cynic",
- "cynic-codegen",
- "eventsource-client",
- "futures",
- "futures-time",
- "hex",
- "hopr-types 5.0.0",
- "http",
- "indexmap 2.14.2",
- "launchdarkly-sdk-transport",
- "parking_lot 0.12.5",
- "rand 0.10.3",
- "reqwest",
- "serde",
- "serde_json",
- "smart-default",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "blokli-client"
 version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8cfcc781081aec5a39862d898704b5876ba28114fb01e8c61650fca413f8fda"
@@ -3468,7 +3435,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -3733,14 +3700,14 @@ dependencies = [
  "anyhow",
  "async-signal",
  "async-trait",
- "blokli-client 0.37.0",
+ "blokli-client",
  "bytesize",
  "cfg-if",
  "clap",
  "console-subscriber",
  "cynic",
  "futures",
- "hopr-chain-connector 0.33.0",
+ "hopr-chain-connector",
  "hopr-ct-full-network",
  "hopr-lib",
  "hopr-network-graph",
@@ -4824,39 +4791,6 @@ dependencies = [
 
 [[package]]
 name = "hopr-chain-connector"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78529ed81814e91606f74426b20fe46c7d63ebadea6ec7a4dd3fdd851748cf17"
-dependencies = [
- "ahash",
- "anyhow",
- "async-broadcast",
- "async-trait",
- "atomic_enum",
- "blokli-client 0.37.0",
- "const-hex",
- "dashmap",
- "futures",
- "futures-concurrency",
- "futures-time",
- "hopr-api",
- "hopr-utilities 0.20.0",
- "moka",
- "parking_lot 0.12.5",
- "petgraph",
- "postcard",
- "redb",
- "serde",
- "serde_json",
- "smart-default",
- "tempfile",
- "thiserror 2.0.21",
- "tracing",
- "validator",
-]
-
-[[package]]
-name = "hopr-chain-connector"
 version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fcc23cbbd381916ccf6f0cb5eaab22ff1c2673ff002a5dddb12e81e24c256bec"
@@ -4866,7 +4800,7 @@ dependencies = [
  "async-broadcast",
  "async-trait",
  "atomic_enum",
- "blokli-client 0.38.1",
+ "blokli-client",
  "const-hex",
  "dashmap",
  "futures",
@@ -4944,7 +4878,7 @@ dependencies = [
  "futures-time",
  "hex-literal",
  "hopr-api",
- "hopr-chain-connector 0.36.1",
+ "hopr-chain-connector",
  "hopr-ct-full-network",
  "hopr-network-graph",
  "hopr-ticket-manager",
@@ -5111,15 +5045,15 @@ dependencies = [
 
 [[package]]
 name = "hopr-strategy"
-version = "9.2.2"
+version = "9.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a1ca0714cfb14fcbeeca523860356f254abfb59768e7f9a4c59616c984712b1"
+checksum = "7b5d83d06a11334e4a864544c159b770d7692ae9b44e89a861b373932280bba4"
 dependencies = [
  "anyhow",
  "async-trait",
  "babyjubjub-ec",
  "backon",
- "blokli-client 0.37.0",
+ "blokli-client",
  "bytesize",
  "chacha20poly1305 0.11.0",
  "const-hex",
@@ -5134,8 +5068,8 @@ dependencies = [
  "futures-concurrency",
  "futures-time",
  "hopr-api",
- "hopr-chain-connector 0.33.0",
- "hopr-utilities 0.20.0",
+ "hopr-chain-connector",
+ "hopr-utilities 0.21.0",
  "humantime-serde",
  "lazy_static",
  "moka",
@@ -5466,20 +5400,14 @@ version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "825b377e33396ca5254dfe961dc7d45270de33f800753d413be18c303392a5fd"
 dependencies = [
- "anyhow",
  "arrayvec",
- "async-broadcast",
- "async-trait",
  "auto_impl",
- "blokli-client 0.37.0",
  "const-hex",
  "crossfire",
- "dashmap",
  "flume",
  "futures",
  "futures-time",
  "hickory-resolver 0.26.3",
- "hopr-api",
  "hopr-types 6.0.1",
  "indexmap 2.14.2",
  "lazy_static",
@@ -5506,7 +5434,7 @@ dependencies = [
  "async-broadcast",
  "async-trait",
  "auto_impl",
- "blokli-client 0.38.1",
+ "blokli-client",
  "const-hex",
  "crossfire",
  "dashmap",
