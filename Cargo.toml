@@ -107,16 +107,16 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", feat
   "serde",
 ] }
 # Version requirements are kept compatible with the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
-hopr-chain-connector = { version = "0.33.0", features = ["runtime-tokio"] }
+hopr-chain-connector = { version = "0.36.1", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.12.0" }
-hopr-strategy = { version = "9.2.1", features = ["strategy-channel-lifecycle"] }
+hopr-strategy = { version = "9.2.3", features = ["strategy-channel-lifecycle"] }
 hopr-ticket-manager = { version = "0.11.1" }
 hopr-network-graph = { version = "0.13.0" }
 hopr-transport-p2p = { version = "0.15.0" }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 # Named directly only to classify failures (`EdgliError::failure_kind`); the connector keeps these types private.
-blokli-client = { version = "0.37.0", default-features = false }
+blokli-client = { version = "0.38.1", default-features = false }
 cynic = { version = "3.14.0", default-features = false, features = [
   "http-reqwest",
 ] }
@@ -133,7 +133,7 @@ mimalloc = { version = "0.1.52", default-features = false, features = [
 # The failure classification tests build a `serde_json::Error`, also without the `blokli` feature.
 serde_json = "1"
 # `testing` provides the blokli test emulator used by the src/blokli.rs unit tests. Same version as the normal dependency above, or the tests link a second copy of the connector.
-hopr-chain-connector = { version = "0.33.0", features = [
+hopr-chain-connector = { version = "0.36.1", features = [
   "runtime-tokio",
   "testing",
 ] }
