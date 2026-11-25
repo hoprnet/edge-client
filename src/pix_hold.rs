@@ -24,8 +24,10 @@ pub(crate) fn relayer_http_client(
         PixCurvySubmission::Operator => None,
     };
     let builder = match (relayer_host, pool.relayer_via) {
-        // A closed listener ends its connections, so reuse is safe and keeps one session to the relayer.
-        (Some(host), Some(via)) => reqwest::Client::builder().resolve(host, via),
+        // One HTTP/2 connection is one session through the exit; a closed listener ends it, so reuse is safe.
+        (Some(host), Some(via)) => reqwest::Client::builder()
+            .resolve(host, via)
+            .http2_prior_knowledge(),
         (None, Some(_)) => {
             return Err(EdgliError::ConfigError(
                 "relayer_via is set, but the pool submits without a relayer".into(),
@@ -203,33 +205,24 @@ mod relayer_route_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     use super::*;
     use crate::strategy::{PixCurvySubmission, PixEntryPool};
 
-    /// Answers every request with an empty 200; `keep_open` decides whether a connection serves more than one.
-    async fn listener(keep_open: bool) -> anyhow::Result<(std::net::SocketAddr, Arc<AtomicUsize>)> {
+    /// Counts accepted connections and never answers; `hold` keeps them open, otherwise each is closed at once.
+    async fn listener(hold: bool) -> anyhow::Result<(std::net::SocketAddr, Arc<AtomicUsize>)> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let accepted = Arc::new(AtomicUsize::new(0));
         let counter = accepted.clone();
         tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
                 counter.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(async move {
-                    let mut buf = [0u8; 4096];
-                    while let Ok(n) = stream.read(&mut buf).await {
-                        if n == 0 {
-                            return;
-                        }
-                        let reply = b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n";
-                        if stream.write_all(reply).await.is_err() || !keep_open {
-                            return;
-                        }
-                    }
-                });
+                if hold {
+                    held.push(stream);
+                }
             }
         });
         Ok((addr, accepted))
@@ -244,15 +237,15 @@ mod relayer_route_tests {
     }
 
     #[tokio::test]
-    async fn relayer_calls_reach_the_listener_over_one_connection() -> anyhow::Result<()> {
+    async fn concurrent_relayer_calls_share_one_connection() -> anyhow::Result<()> {
         let (addr, accepted) = listener(true).await?;
         let http = relayer_http_client(&pool_via(addr)?)?;
-        for _ in 0..3 {
-            http.get("http://relayer.test/networks")
+        let calls = (0..4).map(|_| {
+            http.get("http://relayer.test/quote")
+                .timeout(Duration::from_millis(500))
                 .send()
-                .await?
-                .error_for_status()?;
-        }
+        });
+        let _ = futures::future::join_all(calls).await;
         assert_eq!(accepted.load(Ordering::SeqCst), 1);
         Ok(())
     }
@@ -261,12 +254,12 @@ mod relayer_route_tests {
     async fn a_closed_connection_is_replaced_without_waiting() -> anyhow::Result<()> {
         let (addr, accepted) = listener(false).await?;
         let http = relayer_http_client(&pool_via(addr)?)?;
-        http.get("http://relayer.test/networks").send().await?;
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            http.get("http://relayer.test/networks").send(),
-        )
-        .await??;
+        for _ in 0..2 {
+            let call = http.get("http://relayer.test/networks").send();
+            tokio::time::timeout(Duration::from_secs(2), call)
+                .await?
+                .ok();
+        }
         assert_eq!(accepted.load(Ordering::SeqCst), 2);
         Ok(())
     }
