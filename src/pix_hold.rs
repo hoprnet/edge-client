@@ -12,9 +12,7 @@ use tokio::sync::watch;
 
 type DepositAddress = <PoolKeypair as Keypair>::Public;
 
-/// The HTTP client the Curvy pool reaches the relayer with.
-///
-/// With `relayer_via`, the relayer's host resolves to that local address, e.g. a HOPR session listener.
+/// The Curvy pool's HTTP client; with `relayer_via` the relayer host resolves to that local address.
 pub(crate) fn relayer_http_client(
     pool: &crate::strategy::PixEntryPool,
 ) -> crate::errors::Result<reqwest::Client> {
@@ -27,7 +25,6 @@ pub(crate) fn relayer_http_client(
     };
     let builder = match (relayer_host, pool.relayer_via) {
         // A closed listener ends its connections, so reuse is safe and keeps one session to the relayer.
-        // A URL without a port keeps the override's port.
         (Some(host), Some(via)) => reqwest::Client::builder().resolve(host, via),
         (None, Some(_)) => {
             return Err(EdgliError::ConfigError(

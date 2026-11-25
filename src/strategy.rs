@@ -414,9 +414,7 @@ pub struct PixEntryPool {
     /// router. Kept so existing configurations still parse.
     pub safe_multisend_address: Address,
 
-    /// Local address the relayer's host resolves to, e.g. a HOPR session listener that forwards to
-    /// the relayer through an Exit. TLS still runs end to end with the relayer's name. Requires
-    /// [`PixCurvySubmission::Relayer`]. `None` reaches the relayer through normal DNS.
+    /// Local address the relayer host resolves to (e.g. a HOPR session listener); requires [`PixCurvySubmission::Relayer`].
     pub relayer_via: Option<std::net::SocketAddr>,
 }
 
