@@ -17,7 +17,7 @@ pub mod endpoint;
 pub mod pix_hold;
 
 #[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
-pub mod safe_policy;
+mod safe_policy;
 
 pub mod strategy;
 pub mod traits;

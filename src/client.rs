@@ -779,24 +779,29 @@ impl Edgli {
 
         #[cfg(feature = "pix-curvy")]
         let keep_reserve = pix_float.clone().zip(pix_funding).map(|(float, policy)| {
-            crate::safe_policy::keep_reserve_current(float, policy, safe_reserve.clone())
+            crate::safe_policy::keep_reserve_current(
+                move || {
+                    let float = float.clone();
+                    async move { float.available_balance().await }
+                },
+                policy,
+                safe_reserve.clone(),
+            )
         });
-        #[cfg(not(feature = "pix-curvy"))]
-        let keep_reserve: Option<std::future::Pending<()>> = None;
 
         let (abortable, abort_handle) = futures::future::abortable(async move {
-            let strategies = Box::pin(async move {
+            let strategies = async move {
                 if let Err(e) = multi_strategy.run().await {
                     tracing::error!(%e, "edge strategy reactor failed");
                 }
-            });
-            match keep_reserve {
-                // Keeping the reserve current ends with the strategies it shapes.
-                Some(keep) => {
-                    futures::future::select(strategies, Box::pin(keep)).await;
-                }
-                None => strategies.await,
+            };
+            // Keeping the reserve current ends with the strategies it shapes.
+            #[cfg(feature = "pix-curvy")]
+            if let Some(keep_reserve) = keep_reserve {
+                futures::future::select(Box::pin(strategies), Box::pin(keep_reserve)).await;
+                return;
             }
+            strategies.await
         });
 
         tokio::spawn(abortable);

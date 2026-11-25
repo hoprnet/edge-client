@@ -1,9 +1,8 @@
 //! Shares the Safe between strategies by shaping what each one sees of the chain.
 //!
-//! Strategies are unaware of each other and assume the whole Safe is theirs. The reactor builds the
-//! channel-lifecycle strategy on a [`PolicyNode`], whose chain reports the Safe's wxHOPR less a
-//! [`SafeReserve`] and refuses opens and top-ups that would spend into it. The PIX strategy runs on
-//! the plain node, so its pool refill always has first claim on the reserved part.
+//! Each strategy assumes the whole Safe is its own. The channel-lifecycle strategy runs on a
+//! [`PolicyNode`], which hides a [`SafeReserve`] from it; the PIX strategy runs on the plain node,
+//! so its pool refill has first claim on that part.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -58,7 +57,7 @@ impl SafeReserve {
 /// An open or top-up refused because it would spend the Safe's reserve.
 #[derive(Debug, thiserror::Error)]
 #[error("{SAFE_RESERVED}")]
-pub struct SafeReserved;
+pub(crate) struct SafeReserved;
 
 const SAFE_RESERVED: &str = "the Safe's wxHOPR is reserved for the PIX pool refill";
 
@@ -68,12 +67,13 @@ impl From<SafeReserved> for hopr_chain_connector::errors::ConnectorError {
     }
 }
 
-/// How much of the Safe the next refill of a pool holding `pool` claims.
-///
-/// Zero while the pool holds a whole top-up, rising to the whole top-up as the pool drains to its
-/// refill floor, so the fixed-size refill finds its funds when it fires.
+/// What the next refill of a pool holding `pool` claims of the Safe: nothing at a whole top-up,
+/// the whole top-up once the pool is down to its refill floor.
 #[cfg(feature = "pix-curvy")]
-pub fn reserve_for(pool: HoprBalance, policy: &crate::strategy::PixFundingPolicy) -> HoprBalance {
+pub(crate) fn reserve_for(
+    pool: HoprBalance,
+    policy: &crate::strategy::PixFundingPolicy,
+) -> HoprBalance {
     let top_up = policy.top_up.amount();
     let pool = pool.amount();
     if pool >= top_up {
@@ -89,27 +89,36 @@ pub fn reserve_for(pool: HoprBalance, policy: &crate::strategy::PixFundingPolicy
 #[cfg(feature = "pix-curvy")]
 const RESERVE_REFRESH: Duration = Duration::from_secs(15);
 
-/// Keeps `reserve` at [`reserve_for`] the pool's balance; never returns.
+/// Reserves a whole top-up at once; the returned future then keeps `reserve` at [`reserve_for`]
+/// the pool's balance and never completes.
 #[cfg(feature = "pix-curvy")]
-pub(crate) async fn keep_reserve_current(
-    float: crate::client::PixFloatHandle,
+pub(crate) fn keep_reserve_current<F, Fut, E>(
+    pool_balance: F,
     policy: crate::strategy::PixFundingPolicy,
     reserve: SafeReserve,
-) {
-    let mut ticks = tokio::time::interval(RESERVE_REFRESH);
-    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    loop {
-        ticks.tick().await;
-        match float.available_balance().await {
-            Ok(pool) => {
-                let reserved = reserve_for(pool, &policy);
-                if reserve.set(reserved) != reserved {
-                    tracing::debug!(%pool, %reserved, "Safe reserve for the PIX pool updated");
+) -> impl Future<Output = ()>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<HoprBalance, E>>,
+    E: std::fmt::Display,
+{
+    // The channel strategy reads the Safe as soon as it starts, before the pool has been read.
+    reserve.set(policy.top_up);
+    async move {
+        let mut ticks = tokio::time::interval(RESERVE_REFRESH);
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticks.tick().await;
+            match pool_balance().await {
+                Ok(pool) => {
+                    let reserved = reserve_for(pool, &policy);
+                    if reserve.set(reserved) != reserved {
+                        tracing::debug!(%pool, %reserved, "Safe reserve for the PIX pool updated");
+                    }
                 }
-            }
-            // The last value stands: a guess in either direction would starve channels or PIX.
-            Err(error) => {
-                tracing::debug!(%error, "PIX pool balance unreadable; Safe reserve unchanged")
+                Err(error) => {
+                    tracing::debug!(%error, "PIX pool balance unreadable; Safe reserve unchanged")
+                }
             }
         }
     }
@@ -117,14 +126,14 @@ pub(crate) async fn keep_reserve_current(
 
 /// A chain API that hides `reserve` of the Safe's wxHOPR and refuses to spend it.
 #[derive(Clone)]
-pub struct PolicyChain<C> {
+pub(crate) struct PolicyChain<C> {
     inner: C,
     safe: Address,
     reserve: SafeReserve,
 }
 
 impl<C> PolicyChain<C> {
-    pub fn new(inner: C, safe: Address, reserve: SafeReserve) -> Self {
+    pub(crate) fn new(inner: C, safe: Address, reserve: SafeReserve) -> Self {
         Self {
             inner,
             safe,
@@ -563,13 +572,13 @@ where
 }
 
 /// A node whose chain is a [`PolicyChain`] over the node's own; everything else is the node's.
-pub struct PolicyNode<N: HasChainApi> {
+pub(crate) struct PolicyNode<N: HasChainApi> {
     node: Arc<N>,
     chain: PolicyChain<N::ChainApi>,
 }
 
 impl<N: HasChainApi> PolicyNode<N> {
-    pub fn new(node: Arc<N>, reserve: SafeReserve) -> Self {
+    pub(crate) fn new(node: Arc<N>, reserve: SafeReserve) -> Self {
         let chain = PolicyChain::new(
             node.chain_api().clone(),
             node.identity().safe_address,
@@ -656,9 +665,11 @@ impl<N: HasChainApi + PacketTransport> PacketTransport for PolicyNode<N> {
 mod tests {
     use super::*;
     use hopr_chain_connector::testing::{
-        BlokliTestStateBuilder, TestConnectorError, create_test_blokli_connector,
+        BlokliTestClient, BlokliTestStateBuilder, FullStateEmulator, TestChainConnector,
+        TestConnectorError, create_test_blokli_connector,
     };
     use hopr_lib::api::types::crypto::prelude::Keypair;
+    use hopr_lib::api::types::internal::prelude::{AccountType, generate_channel_id};
     use hopr_lib::api::types::primitive::prelude::{XDai, XDaiBalance};
 
     impl From<SafeReserved> for TestConnectorError {
@@ -668,24 +679,48 @@ mod tests {
     }
 
     const SAFE: [u8; 20] = [0x5a; 20];
-    const OTHER: [u8; 20] = [0x22; 20];
+    const PEER: [u8; 20] = [0x22; 20];
+    const PEER_SAFE: [u8; 20] = [0x2a; 20];
     const MODULE: [u8; 20] = [0x11; 20];
 
+    type TestChain = PolicyChain<Arc<TestChainConnector<BlokliTestClient<FullStateEmulator>>>>;
+
+    fn account(chain_addr: Address, safe: [u8; 20], key_id: u32) -> AccountEntry {
+        AccountEntry {
+            public_key: *OffchainKeypair::random().public(),
+            chain_addr,
+            entry_type: AccountType::NotAnnounced,
+            safe_address: Some(safe.into()),
+            key_id: key_id.into(),
+        }
+    }
+
+    /// The node's Safe and a peer's each hold `safe_wxhopr`.
     async fn chain_with_safe(
         safe_wxhopr: u64,
         reserved: u64,
-    ) -> anyhow::Result<PolicyChain<Arc<impl HoprChainApi<ChainError = TestConnectorError>>>> {
+    ) -> anyhow::Result<(TestChain, ChannelId)> {
         let key = ChainKeypair::random();
+        let me = key.public().to_address();
+        let wxhopr = HoprBalance::new_base(safe_wxhopr);
+        let xdai = XDaiBalance::new_base(10);
         let client = BlokliTestStateBuilder::default()
-            .with_balances([(Address::from(SAFE), HoprBalance::new_base(safe_wxhopr))])
+            .with_accounts([
+                (account(me, SAFE, 1), wxhopr, xdai),
+                (account(PEER.into(), PEER_SAFE, 2), wxhopr, xdai),
+            ])
             .with_balances([(Address::from(SAFE), XDaiBalance::new_base(1))])
-            .with_balances([(Address::from(OTHER), HoprBalance::new_base(safe_wxhopr))])
             .with_hopr_network_chain_info("anvil-localhost")
             .build_dynamic_client(MODULE.into());
         let connector = create_test_blokli_connector(&key, client, MODULE.into()).await?;
         let reserve = SafeReserve::default();
         reserve.set(HoprBalance::new_base(reserved));
-        Ok(PolicyChain::new(Arc::new(connector), SAFE.into(), reserve))
+        let chain = PolicyChain::new(Arc::new(connector), SAFE.into(), reserve);
+        Ok((chain, generate_channel_id(&me, &PEER.into())))
+    }
+
+    async fn safe_wxhopr(chain: &TestChain) -> anyhow::Result<HoprBalance> {
+        Ok(chain.balance(Address::from(SAFE)).await?)
     }
 
     fn refused<T>(result: Result<T, TestConnectorError>) -> bool {
@@ -760,67 +795,131 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "pix-curvy")]
+    #[tokio::test(start_paused = true)]
+    async fn a_whole_top_up_is_reserved_until_the_pool_is_read() {
+        let policy = policy(2, 35);
+        let reserve = SafeReserve::default();
+        let keep = keep_reserve_current(
+            || std::future::ready(Ok::<_, std::convert::Infallible>(HoprBalance::new_base(35))),
+            policy.clone(),
+            reserve.clone(),
+        );
+        assert_eq!(reserve.get(), policy.top_up);
+
+        let keep = tokio::spawn(keep);
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        assert_eq!(reserve.get(), HoprBalance::zero());
+        keep.abort();
+    }
+
+    #[cfg(feature = "pix-curvy")]
+    #[tokio::test(start_paused = true)]
+    async fn the_reserve_follows_the_pool_and_survives_a_failed_read() {
+        let policy = policy(2, 35);
+        let reserve = SafeReserve::default();
+        let reads = Arc::new(Mutex::new(
+            vec![
+                Ok(HoprBalance::new_base(2)),
+                Err("down"),
+                Ok(HoprBalance::new_base(35)),
+            ]
+            .into_iter(),
+        ));
+        let keep = tokio::spawn(keep_reserve_current(
+            move || std::future::ready(reads.lock().expect("reads").next().expect("a read")),
+            policy.clone(),
+            reserve.clone(),
+        ));
+
+        let half_refresh = RESERVE_REFRESH / 2;
+        tokio::time::sleep(half_refresh).await;
+        assert_eq!(reserve.get(), policy.top_up);
+        tokio::time::sleep(RESERVE_REFRESH).await;
+        assert_eq!(
+            reserve.get(),
+            policy.top_up,
+            "a failed read keeps the last value"
+        );
+        tokio::time::sleep(RESERVE_REFRESH).await;
+        assert_eq!(reserve.get(), HoprBalance::zero());
+        keep.abort();
+    }
+
     #[tokio::test]
     async fn the_safe_reads_without_the_reserve() -> anyhow::Result<()> {
-        let chain = chain_with_safe(100, 30).await?;
-        let safe: HoprBalance = chain.balance(Address::from(SAFE)).await?;
-        assert_eq!(safe, HoprBalance::new_base(70));
+        let (chain, _) = chain_with_safe(100, 30).await?;
+        assert_eq!(safe_wxhopr(&chain).await?, HoprBalance::new_base(70));
         Ok(())
     }
 
     #[tokio::test]
     async fn a_reserve_above_the_safe_reads_as_an_empty_safe() -> anyhow::Result<()> {
-        let chain = chain_with_safe(100, 150).await?;
-        let safe: HoprBalance = chain.balance(Address::from(SAFE)).await?;
-        assert_eq!(safe, HoprBalance::zero());
+        let (chain, _) = chain_with_safe(100, 150).await?;
+        assert_eq!(safe_wxhopr(&chain).await?, HoprBalance::zero());
         Ok(())
     }
 
     #[tokio::test]
     async fn other_balances_read_unchanged() -> anyhow::Result<()> {
-        let chain = chain_with_safe(100, 30).await?;
-        let other: HoprBalance = chain.balance(Address::from(OTHER)).await?;
+        let (chain, _) = chain_with_safe(100, 30).await?;
+        let peer_safe: HoprBalance = chain.balance(Address::from(PEER_SAFE)).await?;
         let safe_xdai: Balance<XDai> = chain.balance(Address::from(SAFE)).await?;
-        assert_eq!(other, HoprBalance::new_base(100));
+        assert_eq!(peer_safe, HoprBalance::new_base(100));
         assert_eq!(safe_xdai, XDaiBalance::new_base(1));
         Ok(())
     }
 
     #[tokio::test]
-    async fn opens_and_top_ups_into_the_reserve_are_refused() -> anyhow::Result<()> {
-        let chain = chain_with_safe(100, 30).await?;
-        let amount = HoprBalance::new_base(71);
-        assert!(refused(chain.open_channel(&OTHER.into(), amount).await));
+    async fn an_open_into_the_reserve_is_refused() -> anyhow::Result<()> {
+        let (chain, _) = chain_with_safe(100, 30).await?;
+        let peer = Address::from(PEER);
         assert!(refused(
-            chain.fund_channel(&ChannelId::default(), amount).await
+            chain.open_channel(&peer, HoprBalance::new_base(71)).await
         ));
+        assert_eq!(safe_wxhopr(&chain).await?, HoprBalance::new_base(70));
         Ok(())
     }
 
     #[tokio::test]
-    async fn spending_beside_the_reserve_reaches_the_chain() -> anyhow::Result<()> {
-        let chain = chain_with_safe(100, 30).await?;
-        let amount = HoprBalance::new_base(70);
-        assert!(!refused(chain.open_channel(&OTHER.into(), amount).await));
-        assert!(!refused(
-            chain.fund_channel(&ChannelId::default(), amount).await
+    async fn opens_and_top_ups_spend_the_safe_down_to_the_reserve() -> anyhow::Result<()> {
+        let (chain, channel) = chain_with_safe(100, 30).await?;
+        chain
+            .open_channel(&PEER.into(), HoprBalance::new_base(40))
+            .await?
+            .await?;
+        chain
+            .fund_channel(&channel, HoprBalance::new_base(30))
+            .await?
+            .await?;
+        assert_eq!(safe_wxhopr(&chain).await?, HoprBalance::zero());
+
+        assert!(refused(
+            chain.fund_channel(&channel, HoprBalance::new_base(1)).await
         ));
         Ok(())
     }
 
     #[tokio::test]
     async fn closing_is_never_refused() -> anyhow::Result<()> {
-        let chain = chain_with_safe(0, 30).await?;
-        assert!(!refused(chain.close_channel(&ChannelId::default()).await));
+        let (chain, channel) = chain_with_safe(100, 30).await?;
+        chain
+            .open_channel(&PEER.into(), HoprBalance::new_base(70))
+            .await?
+            .await?;
+        chain.reserve.set(HoprBalance::new_base(500));
+        chain.close_channel(&channel).await?.await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn no_reserve_spends_the_whole_safe() -> anyhow::Result<()> {
-        let chain = chain_with_safe(100, 0).await?;
-        let safe: HoprBalance = chain.balance(Address::from(SAFE)).await?;
-        assert_eq!(safe, HoprBalance::new_base(100));
-        assert!(!refused(chain.open_channel(&OTHER.into(), safe).await));
+        let (chain, _) = chain_with_safe(100, 0).await?;
+        chain
+            .open_channel(&PEER.into(), HoprBalance::new_base(100))
+            .await?
+            .await?;
+        assert_eq!(safe_wxhopr(&chain).await?, HoprBalance::zero());
         Ok(())
     }
 }
