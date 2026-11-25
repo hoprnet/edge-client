@@ -67,11 +67,13 @@ fn parse_interval(value: &str) -> Result<Option<Duration>, HoprLibError> {
 pub struct EdgeStateDump {
     /// Names this node in every line, so lines from several logs can be told apart.
     instance: String,
+    /// This node's packet key, used to exclude self-destination path events.
     me: OffchainPublicKey,
     interval: Option<Duration>,
 }
 
 impl EdgeStateDump {
+    /// Creates a reporter for `instance` using this node's own packet public key as `me`.
     pub fn new(instance: impl Into<String>, me: OffchainPublicKey) -> Self {
         Self {
             instance: instance.into(),
@@ -157,6 +159,7 @@ impl DestinationCounts {
 }
 
 struct PathCounters {
+    /// This node's packet key, used to exclude self-destination resolves and searches.
     me: OffchainPublicKey,
     window: Mutex<PathWindow>,
 }
