@@ -89,19 +89,32 @@ pub(crate) fn reserve_for(
 #[cfg(feature = "pix-curvy")]
 const RESERVE_REFRESH: Duration = Duration::from_secs(15);
 
-/// Reserves a whole top-up at once; the returned future then keeps `reserve` at [`reserve_for`]
-/// the pool's balance and never completes.
 #[cfg(feature = "pix-curvy")]
-pub(crate) fn keep_reserve_current<F, Fut, E>(
-    pool_balance: F,
+fn pool_is_low(pool: HoprBalance, policy: &crate::strategy::PixFundingPolicy) -> bool {
+    pool.amount() < (policy.top_up.amount() / 2).max(policy.min_available.amount())
+}
+
+/// Reserves a whole top-up at once; the returned future then keeps `reserve` at [`reserve_for`]
+/// the pool's balance and, while the pool is below half a top-up, sets `mode` to
+/// [`next_mode`](crate::reclaim::next_mode) for what `safe_view` reports. Never completes.
+#[cfg(feature = "pix-curvy")]
+pub(crate) fn run_safe_policy<P, PFut, PErr, V, VFut, VErr>(
+    pool_balance: P,
+    safe_view: V,
     policy: crate::strategy::PixFundingPolicy,
     reserve: SafeReserve,
+    mode: tokio::sync::watch::Sender<crate::reclaim::LifecycleMode>,
 ) -> impl Future<Output = ()>
 where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<HoprBalance, E>>,
-    E: std::fmt::Display,
+    P: Fn() -> PFut,
+    PFut: Future<Output = Result<HoprBalance, PErr>>,
+    PErr: std::fmt::Display,
+    V: Fn() -> VFut,
+    VFut: Future<Output = Result<crate::reclaim::SafeView, VErr>>,
+    VErr: std::fmt::Display,
 {
+    use crate::reclaim::{LifecycleMode, next_mode};
+
     // The channel strategy reads the Safe as soon as it starts, before the pool has been read.
     reserve.set(policy.top_up);
     async move {
@@ -109,19 +122,83 @@ where
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
-            match pool_balance().await {
-                Ok(pool) => {
-                    let reserved = reserve_for(pool, &policy);
-                    if reserve.set(reserved) != reserved {
-                        tracing::debug!(%pool, %reserved, "Safe reserve for the PIX pool updated");
+            let pool = match pool_balance().await {
+                Ok(pool) => pool,
+                Err(error) => {
+                    tracing::debug!(%error, "PIX pool balance unreadable; Safe policy unchanged");
+                    continue;
+                }
+            };
+            let reserved = reserve_for(pool, &policy);
+            if reserve.set(reserved) != reserved {
+                tracing::debug!(%pool, %reserved, "Safe reserve for the PIX pool updated");
+            }
+
+            let current = *mode.borrow();
+            let next = if !pool_is_low(pool, &policy) {
+                if current != LifecycleMode::Normal {
+                    tracing::info!(%pool, ?current, "PIX pool refilled; channels back to normal");
+                }
+                LifecycleMode::Normal
+            } else {
+                match safe_view().await {
+                    Ok(view) => {
+                        let next = next_mode(current, reserved, policy.top_up, &view);
+                        if next != current {
+                            tracing::info!(
+                                %pool, %reserved, safe = %view.safe, closing = %view.closing,
+                                open = view.open.len(), ?current, ?next,
+                                "channel mode changed for the PIX pool refill"
+                            );
+                        }
+                        next
+                    }
+                    Err(error) => {
+                        tracing::debug!(%error, "Safe or channels unreadable; channel mode unchanged");
+                        current
                     }
                 }
-                Err(error) => {
-                    tracing::debug!(%error, "PIX pool balance unreadable; Safe reserve unchanged")
-                }
+            };
+            if next != current {
+                mode.send_replace(next);
             }
         }
     }
+}
+
+/// What `safe` and the outgoing channels of `chain`'s node hold.
+#[cfg(feature = "pix-curvy")]
+pub(crate) async fn read_safe_view<C>(
+    chain: &C,
+    safe: Address,
+) -> Result<crate::reclaim::SafeView, C::ChainError>
+where
+    C: HoprChainApi + Sync,
+{
+    use futures::StreamExt;
+    use hopr_lib::api::chain::ChannelStatusDiscriminants;
+    use hopr_lib::api::types::internal::channels::ChannelStatus;
+
+    let balance: HoprBalance = chain.balance(safe).await?;
+    let selector = ChannelSelector::default()
+        .with_source(*chain.me())
+        .with_allowed_states(&[
+            ChannelStatusDiscriminants::Open,
+            ChannelStatusDiscriminants::PendingToClose,
+        ]);
+    let channels: Vec<ChannelEntry> = chain.stream_channels(selector)?.collect().await;
+
+    let mut view = crate::reclaim::SafeView {
+        safe: balance,
+        ..Default::default()
+    };
+    for channel in channels {
+        match channel.status {
+            ChannelStatus::Open => view.open.push(channel.balance),
+            _ => view.closing += channel.balance,
+        }
+    }
+    Ok(view)
 }
 
 /// A chain API that hides `reserve` of the Safe's wxHOPR and refuses to spend it.
@@ -681,6 +758,10 @@ mod tests {
     const SAFE: [u8; 20] = [0x5a; 20];
     const PEER: [u8; 20] = [0x22; 20];
     const PEER_SAFE: [u8; 20] = [0x2a; 20];
+    #[cfg(feature = "pix-curvy")]
+    const OTHER_PEER: [u8; 20] = [0x33; 20];
+    #[cfg(feature = "pix-curvy")]
+    const OTHER_PEER_SAFE: [u8; 20] = [0x3a; 20];
     const MODULE: [u8; 20] = [0x11; 20];
 
     type TestChain = PolicyChain<Arc<TestChainConnector<BlokliTestClient<FullStateEmulator>>>>;
@@ -796,54 +877,173 @@ mod tests {
     }
 
     #[cfg(feature = "pix-curvy")]
+    type Reads<T> = Arc<Mutex<std::vec::IntoIter<Result<T, &'static str>>>>;
+
+    #[cfg(feature = "pix-curvy")]
+    fn reads<T>(results: Vec<Result<T, &'static str>>) -> Reads<T> {
+        Arc::new(Mutex::new(results.into_iter()))
+    }
+
+    #[cfg(feature = "pix-curvy")]
+    fn next<T>(reads: &Reads<T>) -> std::future::Ready<Result<T, &'static str>> {
+        std::future::ready(reads.lock().expect("reads").next().expect("a read"))
+    }
+
+    #[cfg(feature = "pix-curvy")]
+    fn safe_view(safe: u64, open: &[u64], closing: u64) -> crate::reclaim::SafeView {
+        crate::reclaim::SafeView {
+            safe: HoprBalance::new_base(safe),
+            open: open.iter().copied().map(HoprBalance::new_base).collect(),
+            closing: HoprBalance::new_base(closing),
+        }
+    }
+
+    /// Runs the policy over `pools`, with `view` for every Safe read; returns the reserve and mode.
+    #[cfg(feature = "pix-curvy")]
+    fn run_policy(
+        pools: Vec<Result<HoprBalance, &'static str>>,
+        view: crate::reclaim::SafeView,
+    ) -> (
+        SafeReserve,
+        tokio::sync::watch::Receiver<crate::reclaim::LifecycleMode>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let reserve = SafeReserve::default();
+        let (mode, modes) = tokio::sync::watch::channel(crate::reclaim::LifecycleMode::Normal);
+        let pools = reads(pools);
+        let policy = run_safe_policy(
+            move || next(&pools),
+            move || std::future::ready(Ok::<_, &'static str>(view.clone())),
+            policy(2, 35),
+            reserve.clone(),
+            mode,
+        );
+        assert_eq!(
+            reserve.get(),
+            HoprBalance::new_base(35),
+            "a whole top-up before the first read"
+        );
+        (reserve, modes, tokio::spawn(policy))
+    }
+
+    #[cfg(feature = "pix-curvy")]
     #[tokio::test(start_paused = true)]
     async fn a_whole_top_up_is_reserved_until_the_pool_is_read() {
-        let policy = policy(2, 35);
-        let reserve = SafeReserve::default();
-        let keep = keep_reserve_current(
-            || std::future::ready(Ok::<_, std::convert::Infallible>(HoprBalance::new_base(35))),
-            policy.clone(),
-            reserve.clone(),
-        );
-        assert_eq!(reserve.get(), policy.top_up);
-
-        let keep = tokio::spawn(keep);
+        let (reserve, _, policy) =
+            run_policy(vec![Ok(HoprBalance::new_base(35))], safe_view(0, &[], 0));
         tokio::time::sleep(Duration::from_millis(1)).await;
         assert_eq!(reserve.get(), HoprBalance::zero());
-        keep.abort();
+        policy.abort();
     }
 
     #[cfg(feature = "pix-curvy")]
     #[tokio::test(start_paused = true)]
     async fn the_reserve_follows_the_pool_and_survives_a_failed_read() {
-        let policy = policy(2, 35);
-        let reserve = SafeReserve::default();
-        let reads = Arc::new(Mutex::new(
+        let (reserve, _, policy) = run_policy(
             vec![
                 Ok(HoprBalance::new_base(2)),
                 Err("down"),
                 Ok(HoprBalance::new_base(35)),
-            ]
-            .into_iter(),
-        ));
-        let keep = tokio::spawn(keep_reserve_current(
-            move || std::future::ready(reads.lock().expect("reads").next().expect("a read")),
-            policy.clone(),
-            reserve.clone(),
-        ));
-
-        let half_refresh = RESERVE_REFRESH / 2;
-        tokio::time::sleep(half_refresh).await;
-        assert_eq!(reserve.get(), policy.top_up);
+            ],
+            safe_view(100, &[], 0),
+        );
+        tokio::time::sleep(RESERVE_REFRESH / 2).await;
+        assert_eq!(reserve.get(), HoprBalance::new_base(35));
         tokio::time::sleep(RESERVE_REFRESH).await;
         assert_eq!(
             reserve.get(),
-            policy.top_up,
+            HoprBalance::new_base(35),
             "a failed read keeps the last value"
         );
         tokio::time::sleep(RESERVE_REFRESH).await;
         assert_eq!(reserve.get(), HoprBalance::zero());
-        keep.abort();
+        policy.abort();
+    }
+
+    #[cfg(feature = "pix-curvy")]
+    #[tokio::test(start_paused = true)]
+    async fn a_low_pool_and_a_short_safe_reclaim_channels_until_the_refill() {
+        use crate::reclaim::LifecycleMode;
+
+        let (_, modes, policy) = run_policy(
+            vec![
+                Ok(HoprBalance::new_base(10)),
+                Ok(HoprBalance::new_base(10)),
+                Ok(HoprBalance::new_base(35)),
+            ],
+            safe_view(5, &[10, 20, 30], 0),
+        );
+        tokio::time::sleep(RESERVE_REFRESH / 2).await;
+        assert_eq!(*modes.borrow(), LifecycleMode::Reclaim { keep: 1 });
+        tokio::time::sleep(RESERVE_REFRESH).await;
+        assert_eq!(*modes.borrow(), LifecycleMode::Reclaim { keep: 1 });
+        tokio::time::sleep(RESERVE_REFRESH).await;
+        assert_eq!(*modes.borrow(), LifecycleMode::Normal);
+        policy.abort();
+    }
+
+    #[cfg(feature = "pix-curvy")]
+    #[tokio::test(start_paused = true)]
+    async fn a_safe_covering_the_reserve_closes_no_channel() {
+        let (_, modes, policy) = run_policy(
+            vec![Ok(HoprBalance::new_base(10))],
+            safe_view(30, &[10, 20, 30], 0),
+        );
+        tokio::time::sleep(RESERVE_REFRESH / 2).await;
+        assert_eq!(*modes.borrow(), crate::reclaim::LifecycleMode::Normal);
+        policy.abort();
+    }
+
+    #[cfg(feature = "pix-curvy")]
+    #[tokio::test]
+    async fn the_safe_view_counts_open_and_closing_outgoing_channels() -> anyhow::Result<()> {
+        use hopr_lib::api::types::internal::channels::ChannelStatus;
+
+        let key = ChainKeypair::random();
+        let me = key.public().to_address();
+        let channel = |src: Address, dst: Address, balance: u32, status| {
+            ChannelEntry::builder()
+                .between(src, dst)
+                .amount(balance)
+                .ticket_index(0)
+                .status(status)
+                .epoch(0)
+                .build()
+        };
+        let closing =
+            ChannelStatus::PendingToClose(std::time::SystemTime::now() + Duration::from_secs(600));
+        let client = BlokliTestStateBuilder::default()
+            .with_accounts([
+                (
+                    account(me, SAFE, 1),
+                    HoprBalance::new_base(40),
+                    XDaiBalance::new_base(1),
+                ),
+                (
+                    account(PEER.into(), PEER_SAFE, 2),
+                    HoprBalance::zero(),
+                    XDaiBalance::new_base(1),
+                ),
+                (
+                    account(OTHER_PEER.into(), OTHER_PEER_SAFE, 3),
+                    HoprBalance::zero(),
+                    XDaiBalance::new_base(1),
+                ),
+            ])
+            .with_channels([
+                channel(me, PEER.into(), 7, ChannelStatus::Open)?,
+                channel(me, OTHER_PEER.into(), 3, closing)?,
+                channel(PEER.into(), me, 11, ChannelStatus::Open)?,
+            ])
+            .with_hopr_network_chain_info("anvil-localhost")
+            .build_dynamic_client(MODULE.into());
+        let connector = create_test_blokli_connector(&key, client, MODULE.into()).await?;
+
+        let view = read_safe_view(&connector, SAFE.into()).await?;
+        assert_eq!(view.safe, HoprBalance::new_base(40));
+        assert_eq!(view.open, vec![HoprBalance::from(7u32)]);
+        assert_eq!(view.closing, HoprBalance::from(3u32));
+        Ok(())
     }
 
     #[tokio::test]

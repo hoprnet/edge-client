@@ -648,6 +648,8 @@ impl Edgli {
     /// which owns open / fund / close / finalize for outgoing payment channels.
     ///
     /// Requires exactly one channel-lifecycle strategy: its state is the reactor's reported health.
+    /// It sees the Safe without the PIX refill's share, and while that share is short the reactor
+    /// rebuilds it to close its worst channels.
     #[cfg(feature = "blokli")]
     pub fn run_reactor_from_cfg(
         &self,
@@ -668,8 +670,11 @@ impl Edgli {
         // channel lifecycle, which looks like a healthy node that never opens a channel.
         let mut strategies: Vec<Box<dyn Strategy + Send>> =
             Vec::with_capacity(cfg.strategies.len());
-        // Captured before the strategy moves into the reactor task: the shared cell is the only outside view.
-        let mut strategy_state: Option<StrategyStateHandle> = None;
+        // Built here, run apart from the others, so it can be rebuilt without restarting them.
+        let mut lifecycle: Option<(
+            Box<dyn Strategy + Send>,
+            hopr_strategy::channel_lifecycle::ChannelLifecycleConfig,
+        )> = None;
         #[cfg(feature = "pix")]
         let mut pix_enabled = false;
         #[cfg(feature = "pix-curvy")]
@@ -680,23 +685,23 @@ impl Edgli {
         let mut pix_funding: Option<super::strategy::PixFundingPolicy> = None;
         // Zero unless a funded PIX pool claims part of the Safe from the channels.
         let safe_reserve = crate::safe_policy::SafeReserve::default();
+        let policy_node = Arc::new(crate::safe_policy::PolicyNode::new(
+            Arc::clone(&node),
+            safe_reserve.clone(),
+        ));
         for kind in cfg.strategies {
-            let built: Box<dyn Strategy + Send> = match kind {
+            let built: Option<Box<dyn Strategy + Send>> = match kind {
                 EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
                     // Two would fight over the same channels, and one handle can't report both.
-                    if strategy_state.is_some() {
+                    if lifecycle.is_some() {
                         return Err(EdgliError::ConfigError(
                             "reactor supports a single channel-lifecycle strategy".into(),
                         ));
                     }
-                    let policy_node = crate::safe_policy::PolicyNode::new(
-                        Arc::clone(&node),
-                        safe_reserve.clone(),
-                    );
-                    let built =
-                        ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::new(policy_node))?;
-                    strategy_state = Some(StrategyStateHandle(built.state_handle()));
-                    built
+                    let built = ChannelLifecycleStrategy::new((*sub_cfg).clone())
+                        .build(Arc::clone(&policy_node))?;
+                    lifecycle = Some((built, *sub_cfg));
+                    None
                 }
                 #[cfg(feature = "pix")]
                 EdgeStrategyKind::Pix(sub_cfg) => {
@@ -763,45 +768,74 @@ impl Edgli {
                                 Arc::clone(&node),
                             )?
                     };
-                    built
+                    Some(built)
                 }
             };
-            strategies.push(built);
+            strategies.extend(built);
         }
 
-        let strategy_state = strategy_state.ok_or_else(|| {
+        let (lifecycle, lifecycle_cfg) = lifecycle.ok_or_else(|| {
             EdgliError::ConfigError(
                 "reactor requires a channel-lifecycle strategy to expose its state".into(),
             )
         })?;
+        let strategy_state = StrategyStateHandle::new(lifecycle.state_handle());
+        let (lifecycle_mode, lifecycle_modes) =
+            tokio::sync::watch::channel(crate::reclaim::LifecycleMode::Normal);
+        let lifecycle = crate::reclaim::supervise_lifecycle(
+            lifecycle,
+            move |mode| {
+                ChannelLifecycleStrategy::new(crate::reclaim::lifecycle_config(
+                    &lifecycle_cfg,
+                    mode,
+                ))
+                .build(Arc::clone(&policy_node))
+            },
+            lifecycle_modes,
+            strategy_state.clone(),
+        );
 
         let mut multi_strategy = MultiStrategy::new(strategies);
 
         #[cfg(feature = "pix-curvy")]
-        let keep_reserve = pix_float.clone().zip(pix_funding).map(|(float, policy)| {
-            crate::safe_policy::keep_reserve_current(
+        let safe_policy = pix_float.clone().zip(pix_funding).map(|(float, policy)| {
+            let node = Arc::clone(&node);
+            crate::safe_policy::run_safe_policy(
                 move || {
                     let float = float.clone();
                     async move { float.available_balance().await }
                 },
+                move || {
+                    let node = Arc::clone(&node);
+                    async move {
+                        crate::safe_policy::read_safe_view(
+                            hopr_lib::api::node::HasChainApi::chain_api(&*node),
+                            hopr_lib::api::node::HasChainApi::identity(&*node).safe_address,
+                        )
+                        .await
+                    }
+                },
                 policy,
                 safe_reserve.clone(),
+                lifecycle_mode,
             )
         });
+        // Without a funded pool the channel strategy never needs another config.
+        #[cfg(not(feature = "pix-curvy"))]
+        drop(lifecycle_mode);
 
         let (abortable, abort_handle) = futures::future::abortable(async move {
-            let strategies = async move {
+            let others = async move {
                 if let Err(e) = multi_strategy.run().await {
                     tracing::error!(%e, "edge strategy reactor failed");
                 }
             };
-            // Keeping the reserve current ends with the strategies it shapes.
             #[cfg(feature = "pix-curvy")]
-            if let Some(keep_reserve) = keep_reserve {
-                futures::future::select(Box::pin(strategies), Box::pin(keep_reserve)).await;
+            if let Some(safe_policy) = safe_policy {
+                futures::future::join3(lifecycle, others, safe_policy).await;
                 return;
             }
-            strategies.await
+            futures::future::join(lifecycle, others).await;
         });
 
         tokio::spawn(abortable);
@@ -817,13 +851,28 @@ impl Edgli {
     }
 }
 
-/// Live read of the channel-lifecycle strategy's own `Running` / `Degraded` / `Failed` verdict.
+/// Live read of the channel-lifecycle strategy's own `Running` / `Degraded` / `Failed` verdict,
+/// following the strategy across rebuilds.
 #[derive(Clone)]
-pub struct StrategyStateHandle(Arc<super::strategy::AtomicStrategyState>);
+pub struct StrategyStateHandle(Arc<std::sync::Mutex<Arc<super::strategy::AtomicStrategyState>>>);
 
 impl StrategyStateHandle {
+    pub(crate) fn new(cell: Arc<super::strategy::AtomicStrategyState>) -> Self {
+        Self(Arc::new(std::sync::Mutex::new(cell)))
+    }
+
+    pub(crate) fn follow(&self, cell: Arc<super::strategy::AtomicStrategyState>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = cell;
+    }
+
     pub fn state(&self) -> super::strategy::StrategyState {
-        self.0.load(std::sync::atomic::Ordering::Relaxed)
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -1006,15 +1055,23 @@ mod tests {
         #[test]
         fn reads_degraded_when_the_strategy_reports_degraded() {
             let cell = Arc::new(AtomicStrategyState::new(StrategyState::Running));
-            let handle = StrategyStateHandle(cell.clone());
+            let handle = StrategyStateHandle::new(cell.clone());
             cell.store(StrategyState::Degraded, Ordering::Relaxed);
             assert_eq!(handle.state(), StrategyState::Degraded);
         }
 
         #[test]
+        fn follows_a_rebuilt_strategy() {
+            let handle =
+                StrategyStateHandle::new(Arc::new(AtomicStrategyState::new(StrategyState::Failed)));
+            handle.follow(Arc::new(AtomicStrategyState::new(StrategyState::Running)));
+            assert_eq!(handle.state(), StrategyState::Running);
+        }
+
+        #[test]
         fn reads_failed_never_silently_running() {
             let cell = Arc::new(AtomicStrategyState::new(StrategyState::Running));
-            let handle = StrategyStateHandle(cell.clone());
+            let handle = StrategyStateHandle::new(cell.clone());
             cell.store(StrategyState::Failed, Ordering::Relaxed);
             assert_eq!(handle.state(), StrategyState::Failed);
         }
