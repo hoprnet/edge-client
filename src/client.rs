@@ -676,9 +676,10 @@ impl Edgli {
         let mut pix_float: Option<PixFloatHandle> = None;
         #[cfg(feature = "pix-curvy")]
         let mut pix_deposits: Option<crate::PixDepositHold> = None;
-        // Zero unless a funded PIX pool claims part of the Safe from the channels.
         #[cfg(feature = "pix-curvy")]
-        let safe_reserve = super::strategy::SafeReserve::default();
+        let mut pix_funding: Option<super::strategy::PixFundingPolicy> = None;
+        // Zero unless a funded PIX pool claims part of the Safe from the channels.
+        let safe_reserve = crate::safe_policy::SafeReserve::default();
         for kind in cfg.strategies {
             let built: Box<dyn Strategy + Send> = match kind {
                 EdgeStrategyKind::ChannelLifecycle(sub_cfg) => {
@@ -688,10 +689,12 @@ impl Edgli {
                             "reactor supports a single channel-lifecycle strategy".into(),
                         ));
                     }
-                    let lifecycle = ChannelLifecycleStrategy::new(*sub_cfg);
-                    #[cfg(feature = "pix-curvy")]
-                    let lifecycle = lifecycle.with_safe_reserve(safe_reserve.clone());
-                    let built = lifecycle.build(Arc::clone(&node))?;
+                    let policy_node = crate::safe_policy::PolicyNode::new(
+                        Arc::clone(&node),
+                        safe_reserve.clone(),
+                    );
+                    let built =
+                        ChannelLifecycleStrategy::new(*sub_cfg).build(Arc::new(policy_node))?;
                     strategy_state = Some(StrategyStateHandle(built.state_handle()));
                     built
                 }
@@ -753,8 +756,8 @@ impl Edgli {
                         let held_pool = Arc::new(held_pool);
                         pix_float = Some(PixFloatHandle(Arc::clone(&held_pool)));
                         pix_deposits = Some(hold);
+                        pix_funding = sub_cfg.pool.funding.clone();
                         PixStrategy::new(upstream)
-                            .with_safe_reserve(safe_reserve.clone())
                             .build_curvy_with_pool::<_, _, SpecDepositAddress>(
                                 held_pool,
                                 Arc::clone(&node),
@@ -774,9 +777,25 @@ impl Edgli {
 
         let mut multi_strategy = MultiStrategy::new(strategies);
 
+        #[cfg(feature = "pix-curvy")]
+        let keep_reserve = pix_float.clone().zip(pix_funding).map(|(float, policy)| {
+            crate::safe_policy::keep_reserve_current(float, policy, safe_reserve.clone())
+        });
+        #[cfg(not(feature = "pix-curvy"))]
+        let keep_reserve: Option<std::future::Pending<()>> = None;
+
         let (abortable, abort_handle) = futures::future::abortable(async move {
-            if let Err(e) = multi_strategy.run().await {
-                tracing::error!(%e, "edge strategy reactor failed");
+            let strategies = Box::pin(async move {
+                if let Err(e) = multi_strategy.run().await {
+                    tracing::error!(%e, "edge strategy reactor failed");
+                }
+            });
+            match keep_reserve {
+                // Keeping the reserve current ends with the strategies it shapes.
+                Some(keep) => {
+                    futures::future::select(strategies, Box::pin(keep)).await;
+                }
+                None => strategies.await,
             }
         });
 
@@ -788,7 +807,6 @@ impl Edgli {
             pix_float,
             #[cfg(feature = "pix-curvy")]
             pix_deposits,
-            #[cfg(feature = "pix-curvy")]
             safe_reserve,
         })
     }
@@ -834,9 +852,8 @@ pub struct ReactorHandle {
     /// `Some` when a PIX strategy runs on the Curvy pool; starts released, `hold` holds its relayer calls until `release`.
     #[cfg(feature = "pix-curvy")]
     pub pix_deposits: Option<crate::PixDepositHold>,
-    /// What the PIX pool's next refill keeps of the Safe; channels spend only the rest.
-    #[cfg(feature = "pix-curvy")]
-    pub safe_reserve: super::strategy::SafeReserve,
+    /// What the PIX pool's next refill keeps of the Safe; the channel-lifecycle strategy sees and spends only the rest.
+    pub safe_reserve: crate::safe_policy::SafeReserve,
 }
 
 /// The mixer config an edge node runs with: the Poisson engine with a 1 ms hard delay bound.

@@ -14,8 +14,6 @@ pub use hopr_strategy::channel_lifecycle::{
 };
 // Re-exported so consumers can read strategy health without depending on `hopr_strategy`.
 pub use hopr_strategy::strategy::{AtomicStrategyState, StrategyState};
-// Re-exported so consumers can read what the PIX pool keeps of the Safe.
-pub use hopr_strategy::safe_reserve::{Reservation, SafeReserve};
 // Re-exported so consumers can fill `PixEntryConfig::state_password`; it redacts itself in `Debug`.
 #[cfg(feature = "pix")]
 pub use hopr_strategy::pix::strategy::PixRecoveryPassword;
@@ -172,9 +170,10 @@ pub struct PixEntryStrategy {
     /// The `pix-test` pool pays each deposit from the Safe (`ChainWriteAccountOperations::withdraw`,
     /// run through the Safe module), and `PixEntryPool::min_safe_hopr_reserve` keeps it off the
     /// channel budget. The Curvy pool pays from a shielded float its funding policy tops up from
-    /// the Safe, and the channel-lifecycle strategy leaves the next top-up's share of the Safe
-    /// alone (`SafeReserve`). (Code spans rather than links: `min_safe_hopr_reserve` exists only
-    /// under `pix-test`, while this type is compiled for both pools.)
+    /// the Safe, and the reactor hides the next top-up's share of the Safe from the
+    /// channel-lifecycle strategy (`SafeReserve`). (Code spans rather than links:
+    /// `min_safe_hopr_reserve` exists only under `pix-test`, while this type is compiled for both
+    /// pools.)
     ///
     /// A pool that runs dry stops depositing and the Exit closes the Session on its deposit
     /// deadline.
