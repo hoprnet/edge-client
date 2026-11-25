@@ -12,6 +12,9 @@ use tokio::sync::watch;
 
 type DepositAddress = <PoolKeypair as Keypair>::Public;
 
+/// Pings an HTTP/2 relayer connection this often while calls are in flight, and drops it after one unanswered ping.
+const RELAYER_KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The Curvy pool's HTTP client; with `relayer_via` the relayer host resolves to that local address.
 pub(crate) fn relayer_http_client(
     pool: &crate::strategy::PixEntryPool,
@@ -27,7 +30,11 @@ pub(crate) fn relayer_http_client(
         // One HTTP/2 connection is one session through the exit; a closed listener ends it, so reuse is safe.
         (Some(host), Some(via)) => reqwest::Client::builder()
             .resolve(host, via)
-            .http2_prior_knowledge(),
+            .http2_prior_knowledge()
+            // A session that stays up while its return path is gone would otherwise stall every call to its timeout.
+            .http2_keep_alive_interval(RELAYER_KEEP_ALIVE)
+            .http2_keep_alive_timeout(RELAYER_KEEP_ALIVE)
+            .http2_keep_alive_while_idle(false),
         (None, Some(_)) => {
             return Err(EdgliError::ConfigError(
                 "relayer_via is set, but the pool submits without a relayer".into(),
