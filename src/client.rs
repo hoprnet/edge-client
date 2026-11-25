@@ -382,8 +382,10 @@ impl Edgli {
 
         visitor(EdgliInitState::StartingNode);
         #[cfg(feature = "state-dump")]
-        let state_dump =
-            crate::state_dump::EdgeStateDump::new(chain_key.public().to_address().to_string());
+        let state_dump = crate::state_dump::EdgeStateDump::new(
+            chain_key.public().to_address().to_string(),
+            packet_public_key,
+        );
         let builder = HoprBuilder
             .with_identity(chain_key, packet_key)
             .with_config(cfg)
