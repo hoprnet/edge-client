@@ -96,7 +96,8 @@ fn pool_is_low(pool: HoprBalance, policy: &crate::strategy::PixFundingPolicy) ->
 
 /// Reserves a whole top-up at once; the returned future then keeps `reserve` at [`reserve_for`]
 /// the pool's balance and, while the pool is below half a top-up, sets `mode` to
-/// [`next_mode`](crate::reclaim::next_mode) for what `safe_view` reports. Never completes.
+/// [`next_mode`](crate::reclaim::next_mode) for what `safe_view` reports. After a reclaim the whole
+/// top-up stays reserved until the pool is refilled. Never completes.
 #[cfg(feature = "pix-curvy")]
 pub(crate) fn run_safe_policy<P, PFut, PErr, V, VFut, VErr>(
     pool_balance: P,
@@ -120,6 +121,8 @@ where
     async move {
         let mut ticks = tokio::time::interval(RESERVE_REFRESH);
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Channels closed for a whole top-up: all of it stays reserved until the refill.
+        let mut reclaimed = false;
         loop {
             ticks.tick().await;
             let pool = match pool_balance().await {
@@ -129,7 +132,12 @@ where
                     continue;
                 }
             };
-            let reserved = reserve_for(pool, &policy);
+            reclaimed &= pool_is_low(pool, &policy);
+            let reserved = if reclaimed {
+                policy.top_up
+            } else {
+                reserve_for(pool, &policy)
+            };
             if reserve.set(reserved) != reserved {
                 tracing::debug!(%pool, %reserved, "Safe reserve for the PIX pool updated");
             }
@@ -160,6 +168,10 @@ where
                 }
             };
             if next != current {
+                if next != LifecycleMode::Normal {
+                    reclaimed = true;
+                    reserve.set(policy.top_up);
+                }
                 mode.send_replace(next);
             }
         }
@@ -965,7 +977,7 @@ mod tests {
     async fn a_low_pool_and_a_short_safe_reclaim_channels_until_the_refill() {
         use crate::reclaim::LifecycleMode;
 
-        let (_, modes, policy) = run_policy(
+        let (reserve, modes, policy) = run_policy(
             vec![
                 Ok(HoprBalance::new_base(10)),
                 Ok(HoprBalance::new_base(10)),
@@ -975,10 +987,17 @@ mod tests {
         );
         tokio::time::sleep(RESERVE_REFRESH / 2).await;
         assert_eq!(*modes.borrow(), LifecycleMode::Reclaim { keep: 1 });
+        assert_eq!(
+            reserve.get(),
+            HoprBalance::new_base(35),
+            "the stake being freed is all for the refill"
+        );
         tokio::time::sleep(RESERVE_REFRESH).await;
         assert_eq!(*modes.borrow(), LifecycleMode::Reclaim { keep: 1 });
+        assert_eq!(reserve.get(), HoprBalance::new_base(35));
         tokio::time::sleep(RESERVE_REFRESH).await;
         assert_eq!(*modes.borrow(), LifecycleMode::Normal);
+        assert_eq!(reserve.get(), HoprBalance::zero());
         policy.abort();
     }
 
