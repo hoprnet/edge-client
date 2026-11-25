@@ -413,6 +413,11 @@ pub struct PixEntryPool {
     /// Deprecated upstream and ignored: a direct shield is one wxHOPR call through the shield
     /// router. Kept so existing configurations still parse.
     pub safe_multisend_address: Address,
+
+    /// Local address the relayer's host resolves to, e.g. a HOPR session listener that forwards to
+    /// the relayer through an Exit. TLS still runs end to end with the relayer's name. Requires
+    /// [`PixCurvySubmission::Relayer`]. `None` reaches the relayer through normal DNS.
+    pub relayer_via: Option<std::net::SocketAddr>,
 }
 
 #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
@@ -496,6 +501,7 @@ impl Default for PixEntryPool {
             submission: PixCurvySubmission::Operator,
             note_source: PixCurvyNoteSource::Blokli,
             safe_multisend_address: upstream.safe_multisend_address,
+            relayer_via: None,
         }
     }
 }
@@ -550,6 +556,8 @@ impl PixEntryPool {
             submission,
             note_source,
             safe_multisend_address,
+            // Applied to the pool's HTTP client instead, at build time.
+            relayer_via: _,
         } = self.clone();
         let (submission, relayer_url) = submission.to_upstream();
         let (note_source, curvy_indexer_url) = note_source.to_upstream();

@@ -1,4 +1,4 @@
-//! Holds the PIX pool's relayer calls until the embedder's route to the relayer is up.
+//! The PIX pool's route to the Curvy relayer: its HTTP client, and holding relayer calls until the embedder's route is up.
 
 use std::sync::Arc;
 
@@ -11,6 +11,36 @@ use hopr_strategy::pix::pools::curvy::PoolKeypair;
 use tokio::sync::watch;
 
 type DepositAddress = <PoolKeypair as Keypair>::Public;
+
+/// The HTTP client the Curvy pool reaches the relayer with.
+///
+/// With `relayer_via`, the relayer's host resolves to that local address, e.g. a HOPR session listener.
+pub(crate) fn relayer_http_client(
+    pool: &crate::strategy::PixEntryPool,
+) -> crate::errors::Result<reqwest::Client> {
+    use crate::errors::EdgliError;
+    use crate::strategy::PixCurvySubmission;
+
+    let relayer_host = match &pool.submission {
+        PixCurvySubmission::Relayer(url) => url.host_str(),
+        PixCurvySubmission::Operator => None,
+    };
+    let builder = match (relayer_host, pool.relayer_via) {
+        // A closed listener ends its connections, so reuse is safe and keeps one session to the relayer.
+        // A URL without a port keeps the override's port.
+        (Some(host), Some(via)) => reqwest::Client::builder().resolve(host, via),
+        (None, Some(_)) => {
+            return Err(EdgliError::ConfigError(
+                "relayer_via is set, but the pool submits without a relayer".into(),
+            ));
+        }
+        // An idle connection outlives the route it was opened on and hangs the next relayer call until keepalive gives up.
+        (_, None) => reqwest::Client::builder().pool_max_idle_per_host(0),
+    };
+    builder.build().map_err(|error| {
+        EdgliError::ConfigError(format!("building the Curvy HTTP client: {error}"))
+    })
+}
 
 /// Holds and releases the relayer calls of the PIX pool; starts released.
 #[derive(Clone)]
@@ -167,6 +197,92 @@ where
         self.inner
             .pool_transfer_multiple(keys, dst_id, dst, additional_dst_data)
             .await
+    }
+}
+
+#[cfg(test)]
+mod relayer_route_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::*;
+    use crate::strategy::{PixCurvySubmission, PixEntryPool};
+
+    /// Answers every request with an empty 200; `keep_open` decides whether a connection serves more than one.
+    async fn listener(keep_open: bool) -> anyhow::Result<(std::net::SocketAddr, Arc<AtomicUsize>)> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = accepted.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    while let Ok(n) = stream.read(&mut buf).await {
+                        if n == 0 {
+                            return;
+                        }
+                        let reply = b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n";
+                        if stream.write_all(reply).await.is_err() || !keep_open {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        Ok((addr, accepted))
+    }
+
+    fn pool_via(via: std::net::SocketAddr) -> anyhow::Result<PixEntryPool> {
+        Ok(PixEntryPool {
+            submission: PixCurvySubmission::Relayer("http://relayer.test".parse()?),
+            relayer_via: Some(via),
+            ..PixEntryPool::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn relayer_calls_reach_the_listener_over_one_connection() -> anyhow::Result<()> {
+        let (addr, accepted) = listener(true).await?;
+        let http = relayer_http_client(&pool_via(addr)?)?;
+        for _ in 0..3 {
+            http.get("http://relayer.test/networks")
+                .send()
+                .await?
+                .error_for_status()?;
+        }
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_closed_connection_is_replaced_without_waiting() -> anyhow::Result<()> {
+        let (addr, accepted) = listener(false).await?;
+        let http = relayer_http_client(&pool_via(addr)?)?;
+        http.get("http://relayer.test/networks").send().await?;
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            http.get("http://relayer.test/networks").send(),
+        )
+        .await??;
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn relayer_via_without_a_relayer_is_rejected() -> anyhow::Result<()> {
+        let pool = PixEntryPool {
+            submission: PixCurvySubmission::Operator,
+            relayer_via: Some("127.0.0.1:1".parse()?),
+            ..PixEntryPool::default()
+        };
+        assert!(relayer_http_client(&pool).is_err());
+        Ok(())
     }
 }
 
