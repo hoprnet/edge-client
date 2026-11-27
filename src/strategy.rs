@@ -1041,6 +1041,21 @@ where
         }
         None => false,
     };
+    compute_costs_given_binding(chain, bound, safe_deployed).await
+}
+
+/// Same as [`compute_costs_to_start`], for callers that already know whether
+/// the key is bound on-chain (for example from a direct Blokli account query).
+#[cfg(any(feature = "blokli", feature = "runtime-tokio"))]
+pub(crate) async fn compute_costs_given_binding<T>(
+    chain: &T,
+    bound: bool,
+    safe_deployed: bool,
+) -> Result<StartupCosts>
+where
+    T: ChainValues + Sync,
+    EdgliError: From<<T as ChainValues>::Error>,
+{
     let fee_to_start = if bound {
         HoprBalance::zero()
     } else {
