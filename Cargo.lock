@@ -4845,8 +4845,7 @@ dependencies = [
 [[package]]
 name = "hopr-ct-full-network"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07a2c52b431d77db92e3382a94f2a9b2d6933b0ddd8a1e06efb9f615ee8a4f9f"
+source = "git+https://github.com/hoprnet/hopr-impls?branch=feature%2Fcore-1444-a-freshly-booted-edgli-finds-no-1-hop-path#3e4d2cbd52b65d0b6c1866f512f4b5a67686f488"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -4854,7 +4853,7 @@ dependencies = [
  "futures-time",
  "hopr-api",
  "hopr-network-graph",
- "hopr-utilities 0.20.0",
+ "hopr-utilities 0.21.0",
  "smart-default",
  "tokio",
  "tracing",
@@ -4905,16 +4904,15 @@ dependencies = [
 
 [[package]]
 name = "hopr-network-graph"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d4f9e796207f6ea3812f22b7c4f16a33d0d5fbadc086e5f5d8765f00b5e017a"
+version = "0.13.1"
+source = "git+https://github.com/hoprnet/hopr-impls?branch=feature%2Fcore-1444-a-freshly-booted-edgli-finds-no-1-hop-path#3e4d2cbd52b65d0b6c1866f512f4b5a67686f488"
 dependencies = [
  "anyhow",
  "bimap",
  "futures",
  "futures-time",
  "hopr-api",
- "hopr-utilities 0.20.0",
+ "hopr-utilities 0.21.0",
  "humantime-serde",
  "indexmap 2.14.2",
  "lazy_static",
@@ -4926,6 +4924,7 @@ dependencies = [
  "smallvec",
  "smart-default",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "validator",
 ]
@@ -5414,12 +5413,10 @@ dependencies = [
  "libp2p-identity",
  "multiaddr",
  "pin-project",
- "rand 0.10.3",
  "serde_json",
  "socket2 0.6.5",
  "strum",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
 ]
 

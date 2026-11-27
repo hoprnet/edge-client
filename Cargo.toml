@@ -123,6 +123,10 @@ cynic = { version = "3.14.0", default-features = false, features = [
 reqwest = { version = "0.13.5", default-features = false }
 rustls = { version = "0.23.46", default-features = false, features = ["std"] }
 
+[patch.crates-io]
+hopr-ct-full-network = { git = "https://github.com/hoprnet/hopr-impls", branch = "feature/core-1444-a-freshly-booted-edgli-finds-no-1-hop-path" }
+hopr-network-graph = { git = "https://github.com/hoprnet/hopr-impls", branch = "feature/core-1444-a-freshly-booted-edgli-finds-no-1-hop-path" }
+
 # Target-specific dependencies for memory allocators
 [target.'cfg(target_os = "linux")'.dependencies]
 mimalloc = { version = "0.1.52", default-features = false, features = [

@@ -375,7 +375,8 @@ impl Edgli {
             .map_err(|e| EdgliError::ConfigError(format!("invalid channel graph config: {e}")))?,
         );
         // Built before the node so the control handle outlives the move into the builder.
-        let discovery = FullNetworkDiscovery::new(packet_public_key, probe_cfg, graph.clone());
+        let discovery = FullNetworkDiscovery::new(packet_public_key, probe_cfg, graph.clone())
+            .with_topology_changes(graph.subscribe_topology());
         let egress = discovery.control();
         let safe_address = cfg.safe_module.safe_address;
         let module_address = cfg.safe_module.module_address;
