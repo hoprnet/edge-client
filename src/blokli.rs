@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use blokli_client::AccountSelector;
 use hopr_chain_connector::{
     BlockchainConnectorConfig, HoprBlockchainBasicConnector,
     blokli_client::{
@@ -167,9 +168,8 @@ where
         connector_config: Option<BlockchainConnectorConfig>,
     ) -> Result<Self> {
         let cfg = connector_config.unwrap_or_default();
-        let mut connector =
+        let connector =
             create_trustful_safeless_hopr_blokli_connector(chain_key, cfg, client).await?;
-        connector.connect().await?;
 
         Ok(Self {
             connector: Arc::new(connector),
@@ -245,7 +245,13 @@ where
     pub async fn compute_costs_to_start(&self) -> Result<crate::strategy::StartupCosts> {
         let me = self.chain_key.public().to_address();
         let safe_deployed = self.retrieve_safe().await?.is_some();
-        crate::strategy::compute_costs_to_start(self.connector.as_ref(), Some(me), safe_deployed)
+        let bound = !self
+            .connector
+            .client()
+            .query_accounts(AccountSelector::Address(me.into()))
+            .await?
+            .is_empty();
+        crate::strategy::compute_costs_given_binding(self.connector.as_ref(), bound, safe_deployed)
             .await
     }
 
@@ -470,7 +476,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn new_with_client_yields_connected_interactor() -> anyhow::Result<()> {
+    async fn new_with_client_returns_without_connecting() -> anyhow::Result<()> {
         let chain_key = ChainKeypair::random();
         let me = chain_key.public().to_address();
         let recipient: Address = [0x22u8; 20].into();
@@ -478,9 +484,11 @@ mod tests {
         let client = build_test_client(me, HoprBalance::new_base(100), recipient);
         let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
 
+        assert!(!interactor.connector.is_connected());
         interactor
             .withdraw_wxhopr(recipient, HoprBalance::new_base(1))
             .await?;
+        assert!(interactor.retrieve_safe().await?.is_none());
 
         Ok(())
     }
