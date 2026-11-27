@@ -165,25 +165,18 @@ pub struct PixEntryStrategy {
     /// `price_per_byte × quota_per_ssa`, where the quota is
     /// `polys_per_ssa × (shares_per_poly + surplus_shares) × PIX_QUOTA_BYTES_PER_SHARE`.
     ///
-    /// # Deposits are paid by the Safe
+    /// # Where deposits are paid from
     ///
-    /// A deposit goes out through `ChainWriteAccountOperations::withdraw`, and since hopr-types
-    /// 4.0.0 `SafePayloadGenerator::transfer` wraps every transfer in the Safe module's
-    /// `execTransactionFromModule`. The node key signs and pays the gas; the wxHOPR comes out of
-    /// the Safe. (It was the node's own account until then, which is what earlier revisions of this
-    /// documentation said.)
+    /// The `pix-test` pool pays each deposit from the Safe (`ChainWriteAccountOperations::withdraw`,
+    /// run through the Safe module), and `PixEntryPool::min_safe_hopr_reserve` keeps it off the
+    /// channel budget. The Curvy pool pays from a shielded float its funding policy tops up from
+    /// the Safe, and the reactor hides the next top-up's share of the Safe from the
+    /// channel-lifecycle strategy (`SafeReserve`). (Code spans rather than links:
+    /// `min_safe_hopr_reserve` exists only under `pix-test`, while this type is compiled for both
+    /// pools.)
     ///
-    /// That is the account `IncentiveOperations::deploy_safe` sweeps the node's balance into during
-    /// onboarding, so the float is where it already is and there is nothing extra to fund. It is
-    /// also the account the channel-lifecycle strategy stakes channels from, which is the one thing
-    /// to size against: see `PixEntryPool::min_safe_hopr_reserve` for the floor that keeps PIX from
-    /// spending the channel budget. (A code span rather than a link: that field exists only under
-    /// `pix-test`, and this type is compiled for both pools.)
-    ///
-    /// A Safe that runs dry stops depositing and the Exit closes the Session on its deposit
-    /// deadline — with nothing logged as an error at this end.
-    /// `Edgli::describe_current_capacity_allocations` reports the remaining float as its `safe`
-    /// allocation.
+    /// A pool that runs dry stops depositing and the Exit closes the Session on its deposit
+    /// deadline.
     ///
     /// Upstream default: 1 wxHOPR, which prices a default-dimensioned SSA far past any sane
     /// ceiling. Set this against your own dimensions.
@@ -417,10 +410,8 @@ pub struct PixEntryPool {
     /// Where notes are read from. Upstream default: [`PixCurvyNoteSource::Blokli`].
     pub note_source: PixCurvyNoteSource,
 
-    /// Only consulted for [`CurvyShielding::Direct`]: the Safe's permission module delegate-calls
-    /// this MultiSend to bundle the vault approval with the shield in one transaction, so no
-    /// allowance outlives the shield it was granted for. Mirrors upstream's default, the canonical
-    /// deterministic deployment.
+    /// Deprecated upstream and ignored: a direct shield is one wxHOPR call through the shield
+    /// router. Kept so existing configurations still parse.
     pub safe_multisend_address: Address,
 }
 
@@ -856,7 +847,7 @@ pub fn xdai_fee_per_tx(max_fee_per_gas: u128) -> XDaiBalance {
 pub struct BalanceRecommendation {
     /// wxHOPR to stake the missing channels plus top-ups for half the target population.
     pub channel_stakes: HoprBalance,
-    /// wxHOPR the PIX pool shields from the Safe once, on its first deposit; zero without one.
+    /// wxHOPR the PIX pool's first top-up shields from the Safe; zero without one.
     pub pix_float: HoprBalance,
     /// Refill for drained open channels; kept out of [`total_wxhopr`](Self::total_wxhopr), which stays from-scratch.
     pub topup_headroom: HoprBalance,

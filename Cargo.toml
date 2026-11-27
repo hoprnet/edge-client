@@ -143,6 +143,11 @@ hopr-chain-connector = { version = "0.36.1", features = [
 # `test-util` for deterministic state-dump interval tests using a paused clock.
 tokio = { version = "1.53.2", features = ["full", "test-util"] }
 tempfile = "3.27.0"
+# `testing` exposes the node adapters the reclaim test runs the unchanged lifecycle strategy on.
+hopr-strategy = { version = "10.0.0", features = [
+  "strategy-channel-lifecycle",
+  "testing",
+] }
 
 # tokio-console build target for the `prof` binary. hopr-lib forces
 # `tracing/release_max_level_debug`, which compiles out TRACE callsites (incl. tokio's task

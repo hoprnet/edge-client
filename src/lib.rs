@@ -16,6 +16,12 @@ pub mod endpoint;
 #[cfg(feature = "pix-curvy")]
 pub mod pix_hold;
 
+#[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
+mod safe_policy;
+
+#[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
+mod reclaim;
+
 pub mod strategy;
 pub mod traits;
 
@@ -90,6 +96,8 @@ pub fn latency_path_planner_config(min_ack_rate: f64) -> PathPlannerConfig {
 pub use client::*;
 #[cfg(feature = "pix-curvy")]
 pub use pix_hold::PixDepositHold;
+#[cfg(all(feature = "runtime-tokio", feature = "blokli"))]
+pub use safe_policy::SafeReserve;
 pub use traits::{EdgeNodeApi, NodeBalances};
 
 // Re-export types that appear in EdgeNodeApi method signatures so consumers
