@@ -1,4 +1,4 @@
-//! Holds the PIX pool's relayer calls until the embedder's route to the relayer is up.
+//! The PIX pool's route to the Curvy relayer: its HTTP client, and holding relayer calls until the embedder's route is up.
 
 use std::sync::Arc;
 
@@ -6,20 +6,83 @@ use hopr_lib::api::chain::{
     BatchOutcomes, DepositNotification, DepositPool, PixAddressId, PoolTransferSource,
 };
 use hopr_lib::api::types::crypto::prelude::Keypair;
+use hopr_lib::api::types::primitive::errors::GeneralError;
 use hopr_lib::api::types::primitive::prelude::{Address, HoprBalance};
 use hopr_strategy::pix::pools::curvy::PoolKeypair;
 use tokio::sync::watch;
 
 type DepositAddress = <PoolKeypair as Keypair>::Public;
 
+/// Pings an HTTP/2 relayer connection this often while calls are in flight, and drops it after one unanswered ping.
+const RELAYER_KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The Curvy pool's HTTP client; with `relayer_via` the relayer host resolves to that local address.
+pub(crate) fn relayer_http_client(
+    pool: &crate::strategy::PixEntryPool,
+) -> crate::errors::Result<reqwest::Client> {
+    use crate::errors::EdgliError;
+    use crate::strategy::PixCurvySubmission;
+
+    let relayer_url = match &pool.submission {
+        PixCurvySubmission::Relayer(url) => Some(url),
+        PixCurvySubmission::Operator => None,
+    };
+    let builder = match (relayer_url, pool.relayer_via) {
+        // One HTTP/2 connection is one session through the exit; a closed listener ends it, so reuse is safe.
+        (Some(url), Some(via)) => reqwest::Client::builder()
+            .resolve(routable_relayer_host(url)?, via)
+            .http2_prior_knowledge()
+            // A session that stays up while its return path is gone would otherwise stall every call to its timeout.
+            .http2_keep_alive_interval(RELAYER_KEEP_ALIVE)
+            .http2_keep_alive_timeout(RELAYER_KEEP_ALIVE)
+            .http2_keep_alive_while_idle(false),
+        (None, Some(_)) => {
+            return Err(EdgliError::ConfigError(
+                "relayer_via is set, but the pool submits without a relayer".into(),
+            ));
+        }
+        // An idle connection outlives the route it was opened on and hangs the next relayer call until keepalive gives up.
+        (_, None) => reqwest::Client::builder().pool_max_idle_per_host(0),
+    };
+    builder.build().map_err(|error| {
+        EdgliError::ConfigError(format!("building the Curvy HTTP client: {error}"))
+    })
+}
+
+/// The relayer host `relayer_via` can reroute; reqwest skips `resolve` for IP literals and lets an explicit URL port win.
+fn routable_relayer_host(url: &url::Url) -> crate::errors::Result<&str> {
+    use crate::errors::EdgliError;
+
+    let Some(host) = url.domain() else {
+        return Err(EdgliError::ConfigError(format!(
+            "relayer_via needs a relayer URL with a domain name, got {url}"
+        )));
+    };
+    if url.port().is_some() {
+        return Err(EdgliError::ConfigError(format!(
+            "relayer_via needs a relayer URL without an explicit port, got {url}"
+        )));
+    }
+    Ok(host)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HoldState {
+    released: bool,
+    /// Bumped by [`PixDepositHold::drop_held_deposits`]; a deposit that waited across a bump is dropped.
+    drops: u64,
+}
+
 /// Holds and releases the relayer calls of the PIX pool; starts released.
 #[derive(Clone)]
-pub struct PixDepositHold(Arc<watch::Sender<bool>>);
+pub struct PixDepositHold(Arc<watch::Sender<HoldState>>);
 
 impl PixDepositHold {
     /// Relayer calls made from now on wait until [`Self::release`].
     pub fn hold(&self) {
-        let was_released = self.0.send_replace(false);
+        let mut was_released = false;
+        self.0
+            .send_modify(|state| was_released = std::mem::replace(&mut state.released, false));
         if was_released {
             tracing::info!(held = true, "pix deposits held");
         }
@@ -27,33 +90,58 @@ impl PixDepositHold {
 
     /// Lets held and future deposit calls through.
     pub fn release(&self) {
-        let was_released = self.0.send_replace(true);
+        let mut was_released = false;
+        self.0
+            .send_modify(|state| was_released = std::mem::replace(&mut state.released, true));
         if !was_released {
             tracing::info!(held = false, "pix deposits released");
         }
+    }
+
+    /// Fails the deposits waiting now, as moving no funds; for when the session they pay for has closed.
+    pub fn drop_held_deposits(&self) {
+        self.0.send_modify(|state| state.drops += 1);
+        tracing::info!("held pix deposits dropped");
     }
 }
 
 /// A deposit pool whose relayer calls wait while its [`PixDepositHold`] holds them; local and Blokli calls pass through.
 pub struct HeldDepositPool<P> {
     inner: P,
-    released: watch::Receiver<bool>,
+    state: watch::Receiver<HoldState>,
 }
 
 /// Wraps `inner` in a released hold.
 pub fn hold_deposits<P>(inner: P) -> (HeldDepositPool<P>, PixDepositHold) {
-    let (tx, rx) = watch::channel(true);
-    let pool = HeldDepositPool {
-        inner,
-        released: rx,
-    };
+    let (tx, rx) = watch::channel(HoldState {
+        released: true,
+        drops: 0,
+    });
+    let pool = HeldDepositPool { inner, state: rx };
     (pool, PixDepositHold(Arc::new(tx)))
 }
 
 impl<P> HeldDepositPool<P> {
     async fn wait_for_release(&self) {
         // A dropped hold can never release, so it stops holding.
-        let _ = self.released.clone().wait_for(|released| *released).await;
+        let _ = self.state.clone().wait_for(|state| state.released).await;
+    }
+
+    /// Like [`Self::wait_for_release`], but a drop while waiting fails the deposit.
+    async fn wait_to_deposit<E: From<GeneralError>>(&self) -> Result<(), E> {
+        let mut state = self.state.clone();
+        let entered = state.borrow().drops;
+        let Ok(now) = state
+            .wait_for(|state| state.released || state.drops != entered)
+            .await
+        else {
+            return Ok(());
+        };
+        if now.drops != entered {
+            // InvalidInput is the strategy's fund-free failure: it refunds the spend window.
+            return Err(GeneralError::InvalidInput.into());
+        }
+        Ok(())
     }
 }
 
@@ -61,6 +149,7 @@ impl<P> HeldDepositPool<P> {
 impl<P> DepositPool<PoolKeypair> for HeldDepositPool<P>
 where
     P: DepositPool<PoolKeypair> + Send + Sync,
+    P::Error: From<GeneralError>,
 {
     type Error = P::Error;
     type Receipt = P::Receipt;
@@ -94,7 +183,7 @@ where
         amount: HoprBalance,
         additional_data: Self::PoolDepositData,
     ) -> Result<Self::Receipt, Self::Error> {
-        self.wait_for_release().await;
+        self.wait_to_deposit().await?;
         self.inner
             .deposit_funds_to(id, dst, amount, additional_data)
             .await
@@ -109,7 +198,7 @@ where
             Self::PoolDepositData,
         )],
     ) -> Result<BatchOutcomes<Self::Receipt, Self::Error>, Self::Error> {
-        self.wait_for_release().await;
+        self.wait_to_deposit().await?;
         self.inner.deposit_funds_to_multiple(deposits).await
     }
 
@@ -171,8 +260,101 @@ where
 }
 
 #[cfg(test)]
+mod relayer_route_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use tokio::net::TcpListener;
+
+    use super::*;
+    use crate::strategy::{PixCurvySubmission, PixEntryPool};
+
+    /// Counts accepted connections and never answers; `hold` keeps them open, otherwise each is closed at once.
+    async fn listener(hold: bool) -> anyhow::Result<(std::net::SocketAddr, Arc<AtomicUsize>)> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = accepted.clone();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                if hold {
+                    held.push(stream);
+                }
+            }
+        });
+        Ok((addr, accepted))
+    }
+
+    fn pool_via(via: std::net::SocketAddr) -> anyhow::Result<PixEntryPool> {
+        Ok(PixEntryPool {
+            submission: PixCurvySubmission::Relayer("http://relayer.test".parse()?),
+            relayer_via: Some(via),
+            ..PixEntryPool::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn concurrent_relayer_calls_share_one_connection() -> anyhow::Result<()> {
+        let (addr, accepted) = listener(true).await?;
+        let http = relayer_http_client(&pool_via(addr)?)?;
+        let calls = (0..4).map(|_| {
+            http.get("http://relayer.test/quote")
+                .timeout(Duration::from_millis(500))
+                .send()
+        });
+        let _ = futures::future::join_all(calls).await;
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_closed_connection_is_replaced_without_waiting() -> anyhow::Result<()> {
+        let (addr, accepted) = listener(false).await?;
+        let http = relayer_http_client(&pool_via(addr)?)?;
+        for _ in 0..2 {
+            let call = http.get("http://relayer.test/networks").send();
+            tokio::time::timeout(Duration::from_secs(2), call)
+                .await?
+                .ok();
+        }
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn relayer_via_without_a_relayer_is_rejected() -> anyhow::Result<()> {
+        let pool = PixEntryPool {
+            submission: PixCurvySubmission::Operator,
+            relayer_via: Some("127.0.0.1:1".parse()?),
+            ..PixEntryPool::default()
+        };
+        assert!(relayer_http_client(&pool).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn relayer_via_rejects_urls_it_cannot_reroute() -> anyhow::Result<()> {
+        for url in [
+            "http://203.0.113.7",
+            "http://[2001:db8::1]",
+            "https://relayer.test:8443",
+        ] {
+            let pool = PixEntryPool {
+                submission: PixCurvySubmission::Relayer(url.parse()?),
+                relayer_via: Some("127.0.0.1:1".parse()?),
+                ..PixEntryPool::default()
+            };
+            assert!(relayer_http_client(&pool).is_err(), "{url} was accepted");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
     use std::num::NonZeroU32;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -189,7 +371,7 @@ mod tests {
     }
 
     impl CountingPool {
-        fn count(&self) -> Result<(), Infallible> {
+        fn count(&self) -> Result<(), GeneralError> {
             self.relayer_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -197,22 +379,22 @@ mod tests {
 
     #[async_trait::async_trait]
     impl DepositPool<PoolKeypair> for CountingPool {
-        type Error = Infallible;
+        type Error = GeneralError;
         type Receipt = ();
-        type PoolDepositData = PixDepositData;
+        type PoolDepositData = TestDepositData;
 
         async fn generate_deposit_data(
             &self,
             id: &PixAddressId,
-        ) -> Result<PixDepositData, Infallible> {
+        ) -> Result<TestDepositData, GeneralError> {
             Ok(deposit_data(*id))
         }
 
-        async fn fund(&self, _amount: HoprBalance) -> Result<(), Infallible> {
+        async fn fund(&self, _amount: HoprBalance) -> Result<(), GeneralError> {
             self.count()
         }
 
-        async fn available_balance(&self) -> Result<HoprBalance, Infallible> {
+        async fn available_balance(&self) -> Result<HoprBalance, GeneralError> {
             Ok(HoprBalance::zero())
         }
 
@@ -221,8 +403,8 @@ mod tests {
             _id: &PixAddressId,
             _dst: &DepositAddress,
             _amount: HoprBalance,
-            _data: PixDepositData,
-        ) -> Result<(), Infallible> {
+            _data: TestDepositData,
+        ) -> Result<(), GeneralError> {
             self.count()
         }
 
@@ -231,7 +413,8 @@ mod tests {
             id: PixAddressId,
             dst: DepositAddress,
             min_amount: HoprBalance,
-        ) -> Result<DepositNotification<'static, DepositAddress, Infallible>, Infallible> {
+        ) -> Result<DepositNotification<'static, DepositAddress, GeneralError>, GeneralError>
+        {
             Ok(Box::pin(async move { Ok((id, dst, min_amount)) }))
         }
 
@@ -241,7 +424,7 @@ mod tests {
             _key: &PoolKeypair,
             _dst: Address,
             _amount: Option<HoprBalance>,
-        ) -> Result<(), Infallible> {
+        ) -> Result<(), GeneralError> {
             self.count()
         }
 
@@ -250,9 +433,9 @@ mod tests {
             _src: PoolTransferSource<'_, PoolKeypair>,
             _dst_id: &PixAddressId,
             _dst: DepositAddress,
-            _data: PixDepositData,
+            _data: TestDepositData,
             _amount: Option<HoprBalance>,
-        ) -> Result<(), Infallible> {
+        ) -> Result<(), GeneralError> {
             self.count()
         }
     }
@@ -270,19 +453,39 @@ mod tests {
         TransferMultiple,
     }
 
-    fn deposit_data(id: PixAddressId) -> PixDepositData {
-        PixDepositData {
-            id,
-            data: Box::new([]),
+    /// The pool's error must be its payload conversion's, so the payload converts with the error the hold raises.
+    #[derive(Clone, Debug)]
+    struct TestDepositData(PixDepositData);
+
+    impl TryFrom<PixDepositData> for TestDepositData {
+        type Error = GeneralError;
+
+        fn try_from(data: PixDepositData) -> Result<Self, GeneralError> {
+            Ok(Self(data))
         }
     }
 
-    async fn call(pool: Pool, call: RelayerCall) {
+    impl TryFrom<TestDepositData> for PixDepositData {
+        type Error = GeneralError;
+
+        fn try_from(data: TestDepositData) -> Result<Self, GeneralError> {
+            Ok(data.0)
+        }
+    }
+
+    fn deposit_data(id: PixAddressId) -> TestDepositData {
+        TestDepositData(PixDepositData {
+            id,
+            data: Box::new([]),
+        })
+    }
+
+    async fn call(pool: Pool, call: RelayerCall) -> Result<(), GeneralError> {
         let id = PixAddressId::new(&SimplePseudonym::random(), NonZeroU32::MIN);
         let key = PoolKeypair::random();
         let dst = *PoolKeypair::random().public();
         let zero = HoprBalance::zero();
-        let _ = match call {
+        match call {
             RelayerCall::Fund => pool.fund(zero).await,
             RelayerCall::Deposit => pool
                 .deposit_funds_to(&id, &dst, zero, deposit_data(id))
@@ -314,7 +517,7 @@ mod tests {
                 .pool_transfer_multiple(&[(id, key)], &id, dst, deposit_data(id))
                 .await
                 .map(drop),
-        };
+        }
     }
 
     #[tokio::test]
@@ -322,7 +525,9 @@ mod tests {
         let inner = Arc::new(CountingPool::default());
         let (pool, _hold) = hold_deposits(Arc::clone(&inner));
 
-        call(Arc::new(pool), RelayerCall::Deposit).await;
+        call(Arc::new(pool), RelayerCall::Deposit)
+            .await
+            .expect("deposit");
 
         assert_eq!(inner.relayer_calls.load(Ordering::SeqCst), 1);
     }
@@ -349,7 +554,10 @@ mod tests {
             assert_eq!(calls_while_held, 0, "{relayer_call:?} ran while held");
 
             hold.release();
-            pending.await.expect("relayer call task");
+            pending
+                .await
+                .expect("relayer call task")
+                .expect("relayer call");
             let calls_after_release = inner.relayer_calls.load(Ordering::SeqCst);
             assert_eq!(calls_after_release, 1, "{relayer_call:?} after release");
         }
@@ -364,12 +572,64 @@ mod tests {
         assert!(pool.accepts_funding());
         assert_eq!(pool.available_balance().await, Ok(HoprBalance::zero()));
         let data = pool.generate_deposit_data(&id).await.expect("deposit data");
-        assert_eq!(data.id, id);
+        assert_eq!(data.0.id, id);
         let dst = *PoolKeypair::random().public();
         let notification = pool
             .notify_deposit(id, dst, HoprBalance::zero())
             .expect("deposit notification");
         assert_eq!(notification.await, Ok((id, dst, HoprBalance::zero())));
+    }
+
+    #[tokio::test]
+    async fn dropping_fails_the_waiting_deposits_as_fund_free() {
+        for deposit_call in [RelayerCall::Deposit, RelayerCall::DepositMultiple] {
+            let inner = Arc::new(CountingPool::default());
+            let (pool, hold) = hold_deposits(Arc::clone(&inner));
+            let pool = Arc::new(pool);
+            hold.hold();
+
+            let waiting = tokio::spawn(call(Arc::clone(&pool), deposit_call));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            // Released right after, as a disconnect does: the waiting deposit must still see the drop.
+            hold.drop_held_deposits();
+            hold.release();
+            let outcome = waiting.await.expect("deposit task");
+
+            assert_eq!(outcome, Err(GeneralError::InvalidInput), "{deposit_call:?}");
+            assert_eq!(
+                inner.relayer_calls.load(Ordering::SeqCst),
+                0,
+                "{deposit_call:?}"
+            );
+            call(pool, deposit_call)
+                .await
+                .expect("a deposit after the drop");
+            assert_eq!(
+                inner.relayer_calls.load(Ordering::SeqCst),
+                1,
+                "{deposit_call:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_leaves_funding_waiting() {
+        let inner = Arc::new(CountingPool::default());
+        let (pool, hold) = hold_deposits(Arc::clone(&inner));
+        hold.hold();
+
+        let waiting = tokio::spawn(call(Arc::new(pool), RelayerCall::Fund));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        hold.drop_held_deposits();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(inner.relayer_calls.load(Ordering::SeqCst), 0);
+
+        hold.release();
+        waiting
+            .await
+            .expect("fund task")
+            .expect("funding after release");
+        assert_eq!(inner.relayer_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -379,7 +639,9 @@ mod tests {
         hold.hold();
         drop(hold);
 
-        call(Arc::new(pool), RelayerCall::Deposit).await;
+        call(Arc::new(pool), RelayerCall::Deposit)
+            .await
+            .expect("deposit");
 
         assert_eq!(inner.relayer_calls.load(Ordering::SeqCst), 1);
     }

@@ -745,15 +745,7 @@ impl Edgli {
                         let password = upstream.pix_recovery_password(
                             "the Curvy pool's state file is sealed under it",
                         )?;
-                        // An idle connection outlives the route it was opened on and hangs the next relayer call until keepalive gives up.
-                        let relayer_http = reqwest::Client::builder()
-                            .pool_max_idle_per_host(0)
-                            .build()
-                            .map_err(|error| {
-                                EdgliError::ConfigError(format!(
-                                    "building the Curvy HTTP client: {error}"
-                                ))
-                            })?;
+                        let relayer_http = crate::pix_hold::relayer_http_client(&sub_cfg.pool)?;
                         let pool = Arc::new(CurvyDepositPool::with_http_client(
                             Arc::clone(&node),
                             sub_cfg
