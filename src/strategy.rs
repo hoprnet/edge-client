@@ -535,11 +535,11 @@ impl PixEntryPool {
         }
     }
 
-    /// The upstream form. Every field is carried, since none of them is Exit-side; `blokli_url` is
+    /// The upstream form. Every field is carried, since none of them is Exit-side; `blokli` is
     /// the node's own and `state_dir` the caller's [`PixEntryConfig::state_dir`].
     pub(crate) fn to_upstream(
         &self,
-        blokli_url: &url::Url,
+        blokli: &crate::endpoint::BlokliEndpoint,
         state_dir: Option<&std::path::Path>,
     ) -> hopr_strategy::pix::pools::curvy::PoolConfig {
         let Self {
@@ -561,7 +561,11 @@ impl PixEntryPool {
         let (note_source, curvy_indexer_url) = note_source.to_upstream();
         let upstream_default = hopr_strategy::pix::pools::curvy::PoolConfig::default();
         hopr_strategy::pix::pools::curvy::PoolConfig {
-            blokli_url: blokli_url.clone(),
+            blokli_url: blokli.url.clone(),
+            // The embedder holds system DNS behind its tunnel while a deposit is due; port 0 = the URL's port.
+            blokli_dns_override: blokli
+                .dns_override
+                .map(|o| std::net::SocketAddr::new(o.ip, o.port.unwrap_or(0))),
             max_deposit_tracking_time,
             max_funding_time,
             direct_shield_settle_grace,
@@ -1141,6 +1145,8 @@ mod tests {
     use hopr_lib::api::types::primitive::prelude::HoprBalance;
 
     use super::*;
+    #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+    use crate::endpoint::{BlokliDnsOverride, BlokliEndpoint};
 
     /// Fully set-up node: no fee owed, no startup transactions left.
     fn no_startup_costs() -> StartupCosts {
@@ -2067,7 +2073,8 @@ mod tests {
         assert_eq!(upstream.relayer_url, None);
 
         assert_eq!(
-            PixEntryPool::default().to_upstream(&upstream.blokli_url, None),
+            PixEntryPool::default()
+                .to_upstream(&BlokliEndpoint::new(upstream.blokli_url.clone()), None),
             PoolConfig {
                 submission: CurvySubmission::Operator,
                 ..upstream
@@ -2091,7 +2098,7 @@ mod tests {
             note_source: PixCurvyNoteSource::CurvyIndexer(indexer.clone()),
             ..Default::default()
         }
-        .to_upstream(&blokli, None);
+        .to_upstream(&BlokliEndpoint::new(blokli.clone()), None);
         assert_eq!(upstream.submission, CurvySubmission::Relayer);
         assert_eq!(upstream.relayer_url, Some(relayer));
         assert_eq!(upstream.note_source, CurvyNoteSource::CurvyIndexer);
@@ -2102,7 +2109,7 @@ mod tests {
             note_source: PixCurvyNoteSource::Blokli,
             ..Default::default()
         }
-        .to_upstream(&blokli, None);
+        .to_upstream(&BlokliEndpoint::new(blokli), None);
         assert_eq!(upstream.submission, CurvySubmission::Operator);
         assert_eq!(upstream.relayer_url, None);
         assert_eq!(upstream.note_source, CurvyNoteSource::Blokli);
@@ -2123,7 +2130,10 @@ mod tests {
             submission: PixCurvySubmission::Relayer(relayer.clone()),
             ..Default::default()
         }
-        .to_upstream(&blokli, Some(std::path::Path::new("/var/lib/node")));
+        .to_upstream(
+            &BlokliEndpoint::new(blokli.clone()),
+            Some(std::path::Path::new("/var/lib/node")),
+        );
 
         assert_eq!(upstream.blokli_url, blokli);
         assert_eq!(upstream.max_deposit_tracking_time, Duration::from_secs(300));
@@ -2138,6 +2148,33 @@ mod tests {
             hopr_strategy::pix::pools::curvy::CurvySubmission::Relayer
         );
         assert_eq!(upstream.relayer_url, Some(relayer));
+    }
+
+    /// The node's Blokli DNS override reaches the pool's own Blokli clients (CORE-1450).
+    #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
+    #[test]
+    fn pix_entry_pool_carries_the_blokli_dns_override() {
+        let blokli: url::Url = "https://blokli.example/".parse().unwrap();
+        let ip = std::net::IpAddr::from([10, 1, 2, 1]);
+
+        let pinned_port = BlokliEndpoint::new(blokli.clone())
+            .with_dns_override(BlokliDnsOverride::new(ip, Some(3002)));
+        let upstream = PixEntryPool::default().to_upstream(&pinned_port, None);
+        assert_eq!(
+            upstream.blokli_dns_override,
+            Some(std::net::SocketAddr::new(ip, 3002))
+        );
+
+        let url_port =
+            BlokliEndpoint::new(blokli.clone()).with_dns_override(BlokliDnsOverride::new(ip, None));
+        let upstream = PixEntryPool::default().to_upstream(&url_port, None);
+        assert_eq!(
+            upstream.blokli_dns_override,
+            Some(std::net::SocketAddr::new(ip, 0))
+        );
+
+        let upstream = PixEntryPool::default().to_upstream(&BlokliEndpoint::new(blokli), None);
+        assert_eq!(upstream.blokli_dns_override, None);
     }
 
     /// The debounce windows are the ones to watch: a bare `serde(default)` on them upstream once

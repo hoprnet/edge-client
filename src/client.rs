@@ -246,7 +246,7 @@ pub struct Edgli {
     /// Held so a caller never passes the same URL twice: it is not configurable per pool, since a
     /// pool pointed at a different Blokli than its node's would see a different chain view.
     #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
-    blokli_url: url::Url,
+    blokli: BlokliEndpoint,
 }
 
 impl std::ops::Deref for Edgli {
@@ -436,7 +436,7 @@ impl Edgli {
             #[cfg(all(feature = "pix-test", not(feature = "pix-curvy")))]
             chain_key: hopr_keys.chain_key,
             #[cfg(all(feature = "pix-curvy", not(feature = "pix-test")))]
-            blokli_url: blokli_endpoint.url,
+            blokli: blokli_endpoint,
         })
     }
 
@@ -750,7 +750,7 @@ impl Edgli {
                             Arc::clone(&node),
                             sub_cfg
                                 .pool
-                                .to_upstream(&self.blokli_url, sub_cfg.state_dir.as_deref()),
+                                .to_upstream(&self.blokli, sub_cfg.state_dir.as_deref()),
                             &password,
                             relayer_http,
                         )?);
