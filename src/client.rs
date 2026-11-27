@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use futures::future::{AbortHandle, abortable};
-use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector_in_memory};
+use hopr_chain_connector::{
+    BlockchainConnectorConfig, create_trustful_hopr_blokli_connector_in_memory,
+};
 use hopr_ct_full_network::{EgressConfig, EgressControl, FullNetworkDiscovery};
 use hopr_lib::api::{
     chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
