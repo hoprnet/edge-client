@@ -685,9 +685,12 @@ impl Edgli {
         let mut pix_funding: Option<super::strategy::PixFundingPolicy> = None;
         // Zero unless a funded PIX pool claims part of the Safe from the channels.
         let safe_reserve = crate::safe_policy::SafeReserve::default();
+        let (lifecycle_mode, lifecycle_modes) =
+            tokio::sync::watch::channel(crate::reclaim::LifecycleMode::Normal);
         let policy_node = Arc::new(crate::safe_policy::PolicyNode::new(
             Arc::clone(&node),
             safe_reserve.clone(),
+            lifecycle_modes.clone(),
         ));
         for kind in cfg.strategies {
             let built: Option<Box<dyn Strategy + Send>> = match kind {
@@ -780,8 +783,9 @@ impl Edgli {
             )
         })?;
         let strategy_state = StrategyStateHandle::new(lifecycle.state_handle());
-        let (lifecycle_mode, lifecycle_modes) =
-            tokio::sync::watch::channel(crate::reclaim::LifecycleMode::Normal);
+        let channel_writes = policy_node.channel_writes();
+        // Past its lease the strategy itself gives a write up.
+        let settle_within = lifecycle_cfg.concurrency.action_lease_timeout;
         let lifecycle = crate::reclaim::supervise_lifecycle(
             lifecycle,
             move |mode| {
@@ -790,6 +794,20 @@ impl Edgli {
                     mode,
                 ))
                 .build(Arc::clone(&policy_node))
+            },
+            move || {
+                let channel_writes = channel_writes.clone();
+                async move {
+                    if tokio::time::timeout(settle_within, channel_writes.settled())
+                        .await
+                        .is_err()
+                    {
+                        tracing::warn!(
+                            ?settle_within,
+                            "channel writes still unconfirmed; rebuilding the channel-lifecycle strategy anyway"
+                        );
+                    }
+                }
             },
             lifecycle_modes,
             strategy_state.clone(),

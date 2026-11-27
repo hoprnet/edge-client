@@ -7,6 +7,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use futures::FutureExt;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use hopr_lib::api::chain::{
@@ -29,6 +30,9 @@ use hopr_lib::api::node::{
 use hopr_lib::api::types::chain::prelude::Erc777Payload;
 use hopr_lib::api::types::crypto::prelude::{ChainKeypair, OffchainKeypair, OffchainPublicKey};
 use hopr_lib::api::types::primitive::prelude::{Address, Balance, Currency, HoprBalance, WxHOPR};
+use tokio::sync::watch;
+
+use crate::reclaim::LifecycleMode;
 
 /// The Safe wxHOPR held back from the channel-lifecycle strategy for the next PIX pool refill.
 ///
@@ -67,23 +71,38 @@ impl From<SafeReserved> for hopr_chain_connector::errors::ConnectorError {
     }
 }
 
-/// What the next refill of a pool holding `pool` claims of the Safe: nothing at a whole top-up,
-/// the whole top-up once the pool is down to its refill floor.
+/// What the next refill of a pool holding `pool` claims of the Safe: nothing at `full`, what a
+/// refill leaves in the pool, and the whole top-up once the pool is down to its refill floor.
 #[cfg(feature = "pix-curvy")]
 pub(crate) fn reserve_for(
     pool: HoprBalance,
+    full: HoprBalance,
     policy: &crate::strategy::PixFundingPolicy,
 ) -> HoprBalance {
     let top_up = policy.top_up.amount();
+    let full = full.amount().min(top_up);
     let pool = pool.amount();
-    if pool >= top_up {
+    if pool >= full {
         return HoprBalance::zero();
     }
-    let span = top_up.saturating_sub(policy.min_available.amount());
+    let span = full.saturating_sub(policy.min_available.amount());
     if span.is_zero() {
         return policy.top_up;
     }
-    HoprBalance::from((top_up.saturating_mul(top_up - pool) / span).min(top_up))
+    HoprBalance::from((top_up.saturating_mul(full - pool) / span).min(top_up))
+}
+
+/// What a refill between two pool reads left in the pool, net of the shield fee; a refill is a
+/// rise by over half a top-up.
+#[cfg(feature = "pix-curvy")]
+fn refilled_to(
+    before: HoprBalance,
+    after: HoprBalance,
+    policy: &crate::strategy::PixFundingPolicy,
+) -> Option<HoprBalance> {
+    let top_up = policy.top_up.amount();
+    let rise = after.amount().checked_sub(before.amount())?;
+    (rise > top_up / 2).then(|| HoprBalance::from(after.amount().min(top_up)))
 }
 
 #[cfg(feature = "pix-curvy")]
@@ -97,14 +116,15 @@ fn pool_is_low(pool: HoprBalance, policy: &crate::strategy::PixFundingPolicy) ->
 /// Reserves a whole top-up at once; the returned future then keeps `reserve` at [`reserve_for`]
 /// the pool's balance and, while the pool is below half a top-up or its refill floor, sets `mode` to
 /// [`next_mode`](crate::reclaim::next_mode) for what `safe_view` reports. After a reclaim the whole
-/// top-up stays reserved until the pool is refilled. Never completes.
+/// top-up stays reserved until the pool is refilled, across a restart too while its stake is still
+/// closing. Never completes.
 #[cfg(feature = "pix-curvy")]
 pub(crate) fn run_safe_policy<P, PFut, PErr, V, VFut, VErr>(
     pool_balance: P,
     safe_view: V,
     policy: crate::strategy::PixFundingPolicy,
     reserve: SafeReserve,
-    mode: tokio::sync::watch::Sender<crate::reclaim::LifecycleMode>,
+    mode: watch::Sender<LifecycleMode>,
 ) -> impl Future<Output = ()>
 where
     P: Fn() -> PFut,
@@ -114,7 +134,7 @@ where
     VFut: Future<Output = Result<crate::reclaim::SafeView, VErr>>,
     VErr: std::fmt::Display,
 {
-    use crate::reclaim::{LifecycleMode, next_mode};
+    use crate::reclaim::next_mode;
 
     // The channel strategy reads the Safe as soon as it starts, before the pool has been read.
     reserve.set(policy.top_up);
@@ -123,6 +143,11 @@ where
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Channels closed for a whole top-up: all of it stays reserved until the refill.
         let mut reclaimed = false;
+        // A restart forgets `reclaimed`: stake closing under a low pool is taken as a reclaim's.
+        let mut recovering = true;
+        // The fee is unknown until a shield is seen, so a pool counts as full at a whole top-up.
+        let mut full = policy.top_up;
+        let mut last_pool: Option<HoprBalance> = None;
         loop {
             ticks.tick().await;
             let pool = match pool_balance().await {
@@ -132,48 +157,73 @@ where
                     continue;
                 }
             };
-            reclaimed &= pool_is_low(pool, &policy);
-            let reserved = if reclaimed {
+            if let Some(refilled) = last_pool
+                .replace(pool)
+                .and_then(|last| refilled_to(last, pool, &policy))
+            {
+                full = refilled;
+            }
+            let low = pool_is_low(pool, &policy);
+            reclaimed &= low;
+            recovering &= low;
+            let view = if low {
+                safe_view()
+                    .await
+                    .inspect_err(|error| {
+                        tracing::debug!(%error, "Safe or channels unreadable; channel mode unchanged");
+                    })
+                    .ok()
+            } else {
+                None
+            };
+            if recovering && let Some(view) = &view {
+                reclaimed = !view.closing.is_zero();
+                recovering = false;
+            }
+            let reserved = if reclaimed || recovering {
                 policy.top_up
             } else {
-                reserve_for(pool, &policy)
+                reserve_for(pool, full, &policy)
             };
             if reserve.set(reserved) != reserved {
                 tracing::debug!(%pool, %reserved, "Safe reserve for the PIX pool updated");
             }
 
             let current = *mode.borrow();
-            let next = if !pool_is_low(pool, &policy) {
-                if current != LifecycleMode::Normal {
-                    tracing::info!(%pool, ?current, "PIX pool refilled; channels back to normal");
-                }
-                LifecycleMode::Normal
+            let next = match &view {
+                Some(view) => next_mode(current, reserved, policy.top_up, view),
+                None if low => current,
+                None => LifecycleMode::Normal,
+            };
+            if next == current {
+                continue;
+            }
+            if next == LifecycleMode::Normal {
+                tracing::info!(%pool, ?current, "PIX refill covered; channels back to normal");
             } else {
-                match safe_view().await {
-                    Ok(view) => {
-                        let next = next_mode(current, reserved, policy.top_up, &view);
-                        if next != current {
-                            tracing::info!(
-                                %pool, %reserved, safe = %view.safe, closing = %view.closing,
-                                open = view.open.len(), ?current, ?next,
-                                "channel mode changed for the PIX pool refill"
-                            );
-                        }
-                        next
+                // A refill between the two reads debits the Safe that was read, not the pool that was.
+                match pool_balance().await {
+                    Ok(pool) if pool_is_low(pool, &policy) => {}
+                    Ok(pool) => {
+                        tracing::debug!(%pool, "PIX pool refilled meanwhile; no channel closed");
+                        continue;
                     }
                     Err(error) => {
-                        tracing::debug!(%error, "Safe or channels unreadable; channel mode unchanged");
-                        current
+                        tracing::debug!(%error, "PIX pool balance unreadable; channel mode unchanged");
+                        continue;
                     }
                 }
-            };
-            if next != current {
-                if next != LifecycleMode::Normal {
-                    reclaimed = true;
-                    reserve.set(policy.top_up);
+                reclaimed = true;
+                reserve.set(policy.top_up);
+                if let Some(view) = &view {
+                    tracing::info!(
+                        %pool, %reserved, safe = %view.safe, closing = %view.closing,
+                        open = view.open.len(), ?current, ?next,
+                        "channel mode changed for the PIX pool refill"
+                    );
                 }
-                mode.send_replace(next);
             }
+            mode.send_replace(next);
         }
     }
 }
@@ -213,21 +263,104 @@ where
     Ok(view)
 }
 
-/// A chain API that hides `reserve` of the Safe's wxHOPR and refuses to spend it.
+#[derive(Clone, Copy, Debug, Default)]
+struct Pending {
+    writes: usize,
+    spend: HoprBalance,
+}
+
+/// The channel writes sent through a [`PolicyChain`] and not yet confirmed or failed.
+#[derive(Clone, Debug)]
+pub(crate) struct ChannelWrites {
+    pending: Arc<watch::Sender<Pending>>,
+    admitting: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Default for ChannelWrites {
+    fn default() -> Self {
+        Self {
+            pending: Arc::new(watch::Sender::new(Pending::default())),
+            admitting: Arc::default(),
+        }
+    }
+}
+
+impl ChannelWrites {
+    fn begin(&self, spend: HoprBalance) -> ChannelWrite {
+        self.pending.send_modify(|pending| {
+            pending.writes += 1;
+            pending.spend += spend;
+        });
+        ChannelWrite {
+            pending: Arc::clone(&self.pending),
+            spend,
+        }
+    }
+
+    /// Resolves once nothing is awaiting confirmation: the chain then shows every write sent.
+    pub(crate) async fn settled(&self) {
+        let _ = self
+            .pending
+            .subscribe()
+            .wait_for(|pending| pending.writes == 0)
+            .await;
+    }
+}
+
+/// Counts as pending until dropped.
+struct ChannelWrite {
+    pending: Arc<watch::Sender<Pending>>,
+    spend: HoprBalance,
+}
+
+impl ChannelWrite {
+    fn until<'a, T: Send + 'a>(self, confirmation: BoxFuture<'a, T>) -> BoxFuture<'a, T> {
+        async move {
+            let _pending = self;
+            confirmation.await
+        }
+        .boxed()
+    }
+}
+
+impl Drop for ChannelWrite {
+    fn drop(&mut self) {
+        self.pending.send_modify(|pending| {
+            pending.writes -= 1;
+            pending.spend -= self.spend;
+        });
+    }
+}
+
+/// A chain API that hides `reserve` of the Safe's wxHOPR and refuses to spend it; while `mode`
+/// reclaims channels the Safe reads as empty and nothing is spent.
 #[derive(Clone)]
 pub(crate) struct PolicyChain<C> {
     inner: C,
     safe: Address,
     reserve: SafeReserve,
+    mode: watch::Receiver<LifecycleMode>,
+    writes: ChannelWrites,
 }
 
 impl<C> PolicyChain<C> {
-    pub(crate) fn new(inner: C, safe: Address, reserve: SafeReserve) -> Self {
+    pub(crate) fn new(
+        inner: C,
+        safe: Address,
+        reserve: SafeReserve,
+        mode: watch::Receiver<LifecycleMode>,
+    ) -> Self {
         Self {
             inner,
             safe,
             reserve,
+            mode,
+            writes: ChannelWrites::default(),
         }
+    }
+
+    fn reclaiming(&self) -> bool {
+        *self.mode.borrow() != LifecycleMode::Normal
     }
 }
 
@@ -236,18 +369,27 @@ where
     C: HoprChainApi + Send + Sync,
     C::ChainError: From<SafeReserved>,
 {
-    // Re-reads the Safe: the reserve may have grown since the strategy read its balance.
-    async fn ensure_spendable(&self, amount: HoprBalance) -> Result<(), C::ChainError> {
-        let reserved = self.reserve.get();
-        if reserved.is_zero() {
-            return Ok(());
-        }
-        let safe: HoprBalance = self.inner.balance(self.safe).await?;
-        if safe < reserved + amount {
-            tracing::debug!(%safe, %reserved, %amount, "{SAFE_RESERVED}: channel spend refused");
+    // One at a time, counting spends not yet confirmed: the Safe doesn't show those.
+    async fn admit_spend(&self, amount: HoprBalance) -> Result<ChannelWrite, C::ChainError> {
+        let _admitting = self.writes.admitting.lock().await;
+        if self.reclaiming() {
+            tracing::debug!(%amount, "{SAFE_RESERVED}: channels are being closed for it");
             return Err(SafeReserved.into());
         }
-        Ok(())
+        if !self.reserve.get().is_zero() {
+            let safe: HoprBalance = self.inner.balance(self.safe).await?;
+            // Read after the Safe: both may have changed since the strategy read its balance.
+            let reserved = self.reserve.get();
+            let pending = self.writes.pending.borrow().spend;
+            if safe < reserved + pending + amount {
+                tracing::debug!(
+                    %safe, %reserved, %pending, %amount,
+                    "{SAFE_RESERVED}: channel spend refused"
+                );
+                return Err(SafeReserved.into());
+            }
+        }
+        Ok(self.writes.begin(amount))
     }
 }
 
@@ -271,6 +413,9 @@ where
         let address = address.into();
         let balance: Balance<Cur> = self.inner.balance(address).await?;
         if address == self.safe && Cur::is::<WxHOPR>() {
+            if self.reclaiming() {
+                return Ok(Balance::zero());
+            }
             return Ok(balance - self.reserve.get().amount());
         }
         Ok(balance)
@@ -325,8 +470,8 @@ where
         dst: &'a Address,
         amount: HoprBalance,
     ) -> Result<BoxFuture<'a, Result<ChainReceipt, Self::Error>>, Self::Error> {
-        self.ensure_spendable(amount).await?;
-        self.inner.open_channel(dst, amount).await
+        let write = self.admit_spend(amount).await?;
+        Ok(write.until(self.inner.open_channel(dst, amount).await?))
     }
 
     async fn fund_channel<'a>(
@@ -334,15 +479,16 @@ where
         channel_id: &'a ChannelId,
         amount: HoprBalance,
     ) -> Result<BoxFuture<'a, Result<ChainReceipt, Self::Error>>, Self::Error> {
-        self.ensure_spendable(amount).await?;
-        self.inner.fund_channel(channel_id, amount).await
+        let write = self.admit_spend(amount).await?;
+        Ok(write.until(self.inner.fund_channel(channel_id, amount).await?))
     }
 
     async fn close_channel<'a>(
         &'a self,
         channel_id: &'a ChannelId,
     ) -> Result<BoxFuture<'a, Result<ChainReceipt, Self::Error>>, Self::Error> {
-        self.inner.close_channel(channel_id).await
+        let write = self.writes.begin(HoprBalance::zero());
+        Ok(write.until(self.inner.close_channel(channel_id).await?))
     }
 }
 
@@ -667,13 +813,22 @@ pub(crate) struct PolicyNode<N: HasChainApi> {
 }
 
 impl<N: HasChainApi> PolicyNode<N> {
-    pub(crate) fn new(node: Arc<N>, reserve: SafeReserve) -> Self {
+    pub(crate) fn new(
+        node: Arc<N>,
+        reserve: SafeReserve,
+        mode: watch::Receiver<LifecycleMode>,
+    ) -> Self {
         let chain = PolicyChain::new(
             node.chain_api().clone(),
             node.identity().safe_address,
             reserve,
+            mode,
         );
         Self { node, chain }
+    }
+
+    pub(crate) fn channel_writes(&self) -> ChannelWrites {
+        self.chain.writes.clone()
     }
 }
 
@@ -770,9 +925,7 @@ mod tests {
     const SAFE: [u8; 20] = [0x5a; 20];
     const PEER: [u8; 20] = [0x22; 20];
     const PEER_SAFE: [u8; 20] = [0x2a; 20];
-    #[cfg(feature = "pix-curvy")]
     const OTHER_PEER: [u8; 20] = [0x33; 20];
-    #[cfg(feature = "pix-curvy")]
     const OTHER_PEER_SAFE: [u8; 20] = [0x3a; 20];
     const MODULE: [u8; 20] = [0x11; 20];
 
@@ -788,10 +941,20 @@ mod tests {
         }
     }
 
-    /// The node's Safe and a peer's each hold `safe_wxhopr`.
     async fn chain_with_safe(
         safe_wxhopr: u64,
         reserved: u64,
+    ) -> anyhow::Result<(TestChain, ChannelId)> {
+        // A dropped sender leaves the mode at normal.
+        let mode = watch::Sender::new(LifecycleMode::Normal).subscribe();
+        chain_with_mode(safe_wxhopr, reserved, mode).await
+    }
+
+    /// The node's Safe and each peer's hold `safe_wxhopr`.
+    async fn chain_with_mode(
+        safe_wxhopr: u64,
+        reserved: u64,
+        mode: watch::Receiver<LifecycleMode>,
     ) -> anyhow::Result<(TestChain, ChannelId)> {
         let key = ChainKeypair::random();
         let me = key.public().to_address();
@@ -801,6 +964,7 @@ mod tests {
             .with_accounts([
                 (account(me, SAFE, 1), wxhopr, xdai),
                 (account(PEER.into(), PEER_SAFE, 2), wxhopr, xdai),
+                (account(OTHER_PEER.into(), OTHER_PEER_SAFE, 3), wxhopr, xdai),
             ])
             .with_balances([(Address::from(SAFE), XDaiBalance::new_base(1))])
             .with_hopr_network_chain_info("anvil-localhost")
@@ -808,7 +972,7 @@ mod tests {
         let connector = create_test_blokli_connector(&key, client, MODULE.into()).await?;
         let reserve = SafeReserve::default();
         reserve.set(HoprBalance::new_base(reserved));
-        let chain = PolicyChain::new(Arc::new(connector), SAFE.into(), reserve);
+        let chain = PolicyChain::new(Arc::new(connector), SAFE.into(), reserve, mode);
         Ok((chain, generate_channel_id(&me, &PEER.into())))
     }
 
@@ -836,11 +1000,11 @@ mod tests {
     fn a_pool_holding_a_whole_top_up_reserves_nothing() {
         let policy = policy(2, 35);
         assert_eq!(
-            reserve_for(HoprBalance::new_base(35), &policy),
+            reserve_for(HoprBalance::new_base(35), policy.top_up, &policy),
             HoprBalance::zero()
         );
         assert_eq!(
-            reserve_for(HoprBalance::new_base(40), &policy),
+            reserve_for(HoprBalance::new_base(40), policy.top_up, &policy),
             HoprBalance::zero()
         );
     }
@@ -850,10 +1014,13 @@ mod tests {
     fn a_pool_at_its_refill_floor_reserves_a_whole_top_up() {
         let policy = policy(2, 35);
         assert_eq!(
-            reserve_for(HoprBalance::new_base(2), &policy),
+            reserve_for(HoprBalance::new_base(2), policy.top_up, &policy),
             policy.top_up
         );
-        assert_eq!(reserve_for(HoprBalance::zero(), &policy), policy.top_up);
+        assert_eq!(
+            reserve_for(HoprBalance::zero(), policy.top_up, &policy),
+            policy.top_up
+        );
     }
 
     #[cfg(feature = "pix-curvy")]
@@ -863,13 +1030,14 @@ mod tests {
         assert_eq!(
             reserve_for(
                 HoprBalance::new_base(18) + HoprBalance::from(5u64 * 10u64.pow(17)),
+                policy.top_up,
                 &policy
             ),
             HoprBalance::new_base(17) + HoprBalance::from(5u64 * 10u64.pow(17)),
         );
         let reserves: Vec<_> = (0..=36)
             .rev()
-            .map(|pool| reserve_for(HoprBalance::new_base(pool), &policy))
+            .map(|pool| reserve_for(HoprBalance::new_base(pool), policy.top_up, &policy))
             .collect();
         assert!(reserves.windows(2).all(|w| w[0] <= w[1]));
     }
@@ -879,11 +1047,11 @@ mod tests {
     fn a_floor_at_the_top_up_reserves_it_whole_below_it() {
         let policy = policy(35, 35);
         assert_eq!(
-            reserve_for(HoprBalance::new_base(34), &policy),
+            reserve_for(HoprBalance::new_base(34), policy.top_up, &policy),
             policy.top_up
         );
         assert_eq!(
-            reserve_for(HoprBalance::new_base(35), &policy),
+            reserve_for(HoprBalance::new_base(35), policy.top_up, &policy),
             HoprBalance::zero()
         );
     }
@@ -980,6 +1148,8 @@ mod tests {
         let (reserve, modes, policy) = run_policy(
             vec![
                 Ok(HoprBalance::new_base(10)),
+                // Read again before any channel is closed.
+                Ok(HoprBalance::new_base(10)),
                 Ok(HoprBalance::new_base(10)),
                 Ok(HoprBalance::new_base(35)),
             ],
@@ -1010,6 +1180,61 @@ mod tests {
         );
         tokio::time::sleep(RESERVE_REFRESH / 2).await;
         assert_eq!(*modes.borrow(), crate::reclaim::LifecycleMode::Normal);
+        policy.abort();
+    }
+
+    #[cfg(feature = "pix-curvy")]
+    #[tokio::test(start_paused = true)]
+    async fn a_refill_landing_between_the_reads_closes_no_channel() {
+        // The Safe is read already debited by a refill the first pool read predates.
+        let (_, modes, policy) = run_policy(
+            vec![Ok(HoprBalance::new_base(1)), Ok(HoprBalance::new_base(36))],
+            safe_view(5, &[10, 20, 30], 0),
+        );
+        tokio::time::sleep(RESERVE_REFRESH / 2).await;
+        assert_eq!(*modes.borrow(), crate::reclaim::LifecycleMode::Normal);
+        policy.abort();
+    }
+
+    #[cfg(feature = "pix-curvy")]
+    #[tokio::test(start_paused = true)]
+    async fn stake_closing_under_a_low_pool_at_startup_keeps_a_whole_top_up_reserved() {
+        let (reserve, modes, policy) = run_policy(
+            vec![Ok(HoprBalance::new_base(10)), Ok(HoprBalance::new_base(10))],
+            safe_view(5, &[20], 30),
+        );
+        tokio::time::sleep(RESERVE_REFRESH / 2).await;
+        assert_eq!(reserve.get(), HoprBalance::new_base(35));
+        assert_eq!(*modes.borrow(), crate::reclaim::LifecycleMode::Normal);
+        tokio::time::sleep(RESERVE_REFRESH).await;
+        assert_eq!(reserve.get(), HoprBalance::new_base(35), "until the refill");
+        policy.abort();
+    }
+
+    #[cfg(feature = "pix-curvy")]
+    #[tokio::test(start_paused = true)]
+    async fn a_refill_short_of_the_top_up_by_its_fee_still_frees_the_safe() {
+        let (reserve, _, policy) = run_policy(
+            vec![
+                Ok(HoprBalance::zero()),
+                Ok(HoprBalance::new_base(34)),
+                Ok(HoprBalance::new_base(18)),
+                Ok(HoprBalance::new_base(2)),
+            ],
+            safe_view(100, &[], 0),
+        );
+        tokio::time::sleep(RESERVE_REFRESH / 2).await;
+        assert_eq!(reserve.get(), HoprBalance::new_base(35));
+        tokio::time::sleep(RESERVE_REFRESH).await;
+        assert_eq!(reserve.get(), HoprBalance::zero(), "34 is a full pool");
+        tokio::time::sleep(RESERVE_REFRESH).await;
+        assert_eq!(
+            reserve.get(),
+            HoprBalance::new_base(17) + HoprBalance::from(5u64 * 10u64.pow(17)),
+            "halfway from 34 to the floor"
+        );
+        tokio::time::sleep(RESERVE_REFRESH).await;
+        assert_eq!(reserve.get(), HoprBalance::new_base(35), "the gross top-up");
         policy.abort();
     }
 
@@ -1116,6 +1341,84 @@ mod tests {
         assert!(refused(
             chain.fund_channel(&channel, HoprBalance::new_base(1)).await
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn overlapping_spends_share_what_is_above_the_reserve() -> anyhow::Result<()> {
+        let (chain, channel) = chain_with_safe(100, 35).await?;
+        let (peer, other) = (Address::from(PEER), Address::from(OTHER_PEER));
+        let amount = HoprBalance::new_base(40);
+
+        let (first, second) = futures::join!(
+            chain.open_channel(&peer, amount),
+            chain.open_channel(&other, amount),
+        );
+        let second_refused = refused(second);
+        assert!(second_refused, "100 − 35 covers one open of 40, not two");
+        first?.await?;
+        assert_eq!(safe_wxhopr(&chain).await?, HoprBalance::new_base(25));
+
+        // Confirmed, the first open no longer counts twice.
+        chain
+            .fund_channel(&channel, HoprBalance::new_base(25))
+            .await?
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_spend_awaiting_confirmation_counts_without_a_reserve_too() -> anyhow::Result<()> {
+        let (chain, _) = chain_with_safe(100, 0).await?;
+        let (peer, other) = (Address::from(PEER), Address::from(OTHER_PEER));
+        let unconfirmed = chain.open_channel(&peer, HoprBalance::new_base(80)).await?;
+
+        chain.reserve.set(HoprBalance::new_base(35));
+        assert!(refused(
+            chain.open_channel(&other, HoprBalance::new_base(1)).await
+        ));
+        unconfirmed.await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn nothing_is_spent_while_channels_are_reclaimed() -> anyhow::Result<()> {
+        let mode = watch::Sender::new(LifecycleMode::Normal);
+        let (chain, channel) = chain_with_mode(100, 0, mode.subscribe()).await?;
+        chain
+            .open_channel(&PEER.into(), HoprBalance::new_base(10))
+            .await?
+            .await?;
+
+        mode.send_replace(LifecycleMode::Reclaim { keep: 1 });
+        assert_eq!(safe_wxhopr(&chain).await?, HoprBalance::zero());
+        assert!(refused(
+            chain.fund_channel(&channel, HoprBalance::new_base(1)).await
+        ));
+        let other = Address::from(OTHER_PEER);
+        assert!(refused(
+            chain.open_channel(&other, HoprBalance::new_base(1)).await
+        ));
+        chain.close_channel(&channel).await?.await?;
+
+        mode.send_replace(LifecycleMode::Normal);
+        assert_eq!(safe_wxhopr(&chain).await?, HoprBalance::new_base(90));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn writes_are_settled_once_confirmed() -> anyhow::Result<()> {
+        let (chain, channel) = chain_with_safe(100, 0).await?;
+        chain
+            .open_channel(&PEER.into(), HoprBalance::new_base(10))
+            .await?
+            .await?;
+        assert!(chain.writes.settled().now_or_never().is_some());
+
+        let unconfirmed = chain.close_channel(&channel).await?;
+        assert!(chain.writes.settled().now_or_never().is_none());
+        unconfirmed.await?;
+        assert!(chain.writes.settled().now_or_never().is_some());
         Ok(())
     }
 

@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use futures::future::Either;
 use hopr_lib::api::types::primitive::prelude::{HoprBalance, U256};
-use hopr_strategy::channel_lifecycle::{ChannelLifecycleConfig, RestartGuardConfig};
+use hopr_strategy::channel_lifecycle::{
+    ChannelLifecycleConfig, RestartGuardConfig, SelectorProfile,
+};
 use hopr_strategy::strategy::Strategy;
 use tokio::sync::watch;
 
@@ -28,7 +30,8 @@ pub(crate) enum LifecycleMode {
 }
 
 /// `base` for [`LifecycleMode::Normal`]; for [`LifecycleMode::Reclaim`], `base` with every channel
-/// marked drained, the population pinned to `keep` and no startup close guard.
+/// marked drained, the population pinned to `keep`, no startup close guard and a selector that
+/// ranks its closes.
 pub(crate) fn lifecycle_config(
     base: &ChannelLifecycleConfig,
     mode: LifecycleMode,
@@ -39,6 +42,10 @@ pub(crate) fn lifecycle_config(
         cfg.closure.close_when_drained_below = HoprBalance::from(U256::MAX);
         cfg.population.min_open_channels = keep;
         cfg.population.target_open_channels = keep;
+        // The default selector closes in connector order, which can retire the best relay.
+        if cfg.selector == SelectorProfile::Default {
+            cfg.selector = SelectorProfile::Balanced;
+        }
         // The node's view is warm; only this strategy instance is new.
         cfg.restart = RestartGuardConfig {
             startup_observation_period: Duration::ZERO,
@@ -113,13 +120,19 @@ enum Wake {
 
 /// Runs `strategy` and replaces it with `build(mode)` whenever `mode` changes; never returns while
 /// `mode` can still change.
-pub(crate) async fn supervise_lifecycle<B>(
+///
+/// Awaits `settled` between the two: a new strategy knows nothing of the writes the old one left
+/// unconfirmed, and would close or open over them.
+pub(crate) async fn supervise_lifecycle<B, S, SFut>(
     mut strategy: Box<dyn Strategy + Send>,
     build: B,
+    settled: S,
     mut mode: watch::Receiver<LifecycleMode>,
     state: StrategyStateHandle,
 ) where
     B: Fn(LifecycleMode) -> hopr_strategy::errors::Result<Box<dyn Strategy + Send>>,
+    S: Fn() -> SFut,
+    SFut: Future<Output = ()>,
 {
     loop {
         let wake = {
@@ -150,6 +163,7 @@ pub(crate) async fn supervise_lifecycle<B>(
             }
             Wake::ModeChanged => {}
         }
+        settled().await;
         let next = *mode.borrow_and_update();
         match build(next) {
             Ok(rebuilt) => {
@@ -294,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn the_reclaim_config_changes_only_drain_population_and_restart() {
+    fn the_reclaim_config_changes_only_drain_population_restart_and_selector() {
         let base = ChannelLifecycleConfig::default();
         let reclaim = lifecycle_config(&base, LifecycleMode::Reclaim { keep: 3 });
 
@@ -306,12 +320,24 @@ mod tests {
         assert_eq!(reclaim.population.target_open_channels, 3);
         assert_eq!(reclaim.restart.startup_observation_period, Duration::ZERO);
         assert_eq!(reclaim.restart.startup_close_grace_period, Duration::ZERO);
+        assert_eq!(reclaim.selector, SelectorProfile::Balanced);
 
         let mut restored = reclaim.clone();
         restored.closure.close_when_drained_below = base.closure.close_when_drained_below;
         restored.population = base.population.clone();
         restored.restart = base.restart.clone();
+        restored.selector = base.selector.clone();
         assert_eq!(restored, base);
+    }
+
+    #[test]
+    fn the_reclaim_config_keeps_a_selector_that_already_ranks_closes() {
+        let base = ChannelLifecycleConfig {
+            selector: SelectorProfile::LowLatency,
+            ..Default::default()
+        };
+        let reclaim = lifecycle_config(&base, LifecycleMode::Reclaim { keep: 3 });
+        assert_eq!(reclaim.selector, SelectorProfile::LowLatency);
     }
 
     struct Fake {
@@ -367,8 +393,20 @@ mod tests {
         Ok((open.len(), closing, open))
     }
 
-    #[tokio::test]
-    async fn the_unchanged_strategy_closes_down_to_keep_and_funds_nothing() -> anyhow::Result<()> {
+    type TestConnector = hopr_chain_connector::testing::TestChainConnector<
+        hopr_chain_connector::testing::BlokliTestClient<
+            hopr_chain_connector::testing::FullStateEmulator,
+        >,
+    >;
+
+    /// A node with a registered Safe of 1000 wxHOPR and an open channel of `stake` to each peer.
+    async fn node_with_channels(
+        peers: &[hopr_lib::api::types::primitive::prelude::Address],
+        stake: HoprBalance,
+    ) -> anyhow::Result<(
+        Arc<TestConnector>,
+        hopr_lib::api::types::primitive::prelude::Address,
+    )> {
         use hopr_chain_connector::testing::{
             BlokliTestStateBuilder, create_test_blokli_connector, register_test_safe,
         };
@@ -376,13 +414,9 @@ mod tests {
         use hopr_lib::api::types::crypto::prelude::{ChainKeypair, Keypair};
         use hopr_lib::api::types::internal::channels::ChannelStatus;
         use hopr_lib::api::types::primitive::prelude::{Address, XDaiBalance};
-        use hopr_strategy::channel_lifecycle::{ChannelLifecycleStrategy, SelectorProfile};
-        use hopr_strategy::testing::LifecycleNode;
 
         let key = ChainKeypair::random();
         let me = key.public().to_address();
-        let peers: Vec<Address> = (1..=5u8).map(|i| Address::from([i; 20])).collect();
-        let stake = HoprBalance::new_base(1);
         let channels = peers
             .iter()
             .map(|peer| {
@@ -400,7 +434,8 @@ mod tests {
         let client = BlokliTestStateBuilder::default()
             .with_generated_accounts(
                 &accounts,
-                false,
+                // Announced: the strategy resolves a peer's graph edge by its published key.
+                true,
                 XDaiBalance::new_base(1),
                 HoprBalance::new_base(1000),
             )
@@ -409,6 +444,18 @@ mod tests {
             .with_tx_simulation_delay(Duration::ZERO);
         let connector = Arc::new(create_test_blokli_connector(&key, client, module).await?);
         register_test_safe(&*connector, me).await?;
+        Ok((connector, me))
+    }
+
+    #[tokio::test]
+    async fn the_unchanged_strategy_closes_down_to_keep_and_funds_nothing() -> anyhow::Result<()> {
+        use hopr_lib::api::types::primitive::prelude::Address;
+        use hopr_strategy::channel_lifecycle::ChannelLifecycleStrategy;
+        use hopr_strategy::testing::LifecycleNode;
+
+        let peers: Vec<Address> = (1..=5u8).map(|i| Address::from([i; 20])).collect();
+        let stake = HoprBalance::new_base(1);
+        let (connector, _) = node_with_channels(&peers, stake).await?;
 
         let base = ChannelLifecycleConfig {
             selector: SelectorProfile::LowLatency,
@@ -444,6 +491,242 @@ mod tests {
         Ok(())
     }
 
+    /// A graph that has probed each peer at the given success rate.
+    mod probed {
+        use std::collections::HashMap;
+        use std::time::Duration;
+
+        use futures::StreamExt;
+        use futures::stream::BoxStream;
+        use hopr_lib::api::graph::traits::{
+            Balance, EdgeNetworkObservableRead, EdgeObservableWrite, EdgeProtocolObservable,
+            EdgeTransportMeasurement, EdgeWeightType,
+        };
+        use hopr_lib::api::graph::{
+            EdgeImmediateProtocolObservable, EdgeLinkObservable, EdgeObservableRead,
+            NetworkGraphConnectivity, NetworkGraphTraverse, NetworkGraphView, ValueFn,
+        };
+        use hopr_lib::api::types::crypto::prelude::OffchainPublicKey;
+
+        pub struct Graph {
+            pub identity: OffchainPublicKey,
+            pub success_rates: HashMap<OffchainPublicKey, f64>,
+        }
+
+        #[derive(Clone)]
+        pub struct Edge(Probes);
+
+        #[derive(Clone)]
+        pub struct Probes(f64);
+
+        impl NetworkGraphView for Graph {
+            type NodeId = OffchainPublicKey;
+            type Observed = Edge;
+
+            fn ticket_face_value(&self) -> Option<Balance> {
+                None
+            }
+
+            fn path_slot(&self, _key: &Self::NodeId) -> Option<u64> {
+                None
+            }
+
+            fn node_count(&self) -> usize {
+                self.success_rates.len()
+            }
+
+            fn contains_node(&self, key: &Self::NodeId) -> bool {
+                self.success_rates.contains_key(key)
+            }
+
+            fn nodes(&self) -> BoxStream<'static, Self::NodeId> {
+                let nodes: Vec<_> = self.success_rates.keys().copied().collect();
+                futures::stream::iter(nodes).boxed()
+            }
+
+            fn edge(&self, src: &Self::NodeId, dest: &Self::NodeId) -> Option<Self::Observed> {
+                let rate = self.success_rates.get(dest)?;
+                (*src == self.identity).then_some(Edge(Probes(*rate)))
+            }
+
+            fn identity(&self) -> &Self::NodeId {
+                &self.identity
+            }
+        }
+
+        impl NetworkGraphConnectivity for Graph {
+            type NodeId = OffchainPublicKey;
+            type Observed = Edge;
+
+            fn connected_edges(&self) -> Vec<(Self::NodeId, Self::NodeId, Self::Observed)> {
+                Vec::new()
+            }
+
+            fn reachable_edges(&self) -> Vec<(Self::NodeId, Self::NodeId, Self::Observed)> {
+                Vec::new()
+            }
+        }
+
+        impl NetworkGraphTraverse for Graph {
+            type NodeId = OffchainPublicKey;
+            type Observed = Edge;
+
+            fn simple_paths<V: ValueFn<Weight = Self::Observed>>(
+                &self,
+                _source: &Self::NodeId,
+                _destination: &Self::NodeId,
+                _length: usize,
+                _take_count: Option<usize>,
+                _value_fn: V,
+            ) -> Vec<(Vec<Self::NodeId>, [u64; 5], V::Value)> {
+                Vec::new()
+            }
+
+            fn simple_paths_from<V: ValueFn<Weight = Self::Observed>>(
+                &self,
+                _source: &Self::NodeId,
+                _length: usize,
+                _take_count: Option<usize>,
+                _value_fn: V,
+            ) -> Vec<(Vec<Self::NodeId>, [u64; 5], V::Value)> {
+                Vec::new()
+            }
+
+            fn simple_loopback_to_self(
+                &self,
+                _length: usize,
+                _take_count: Option<usize>,
+            ) -> Vec<(Vec<Self::NodeId>, [u64; 5])> {
+                Vec::new()
+            }
+        }
+
+        impl EdgeObservableRead for Edge {
+            type ImmediateMeasurement = Probes;
+            type IntermediateMeasurement = Probes;
+
+            fn last_update(&self) -> Duration {
+                Duration::from_secs(1)
+            }
+
+            fn immediate_qos(&self) -> Option<&Self::ImmediateMeasurement> {
+                Some(&self.0)
+            }
+
+            fn intermediate_qos(&self) -> Option<&Self::IntermediateMeasurement> {
+                None
+            }
+
+            fn score(&self) -> Option<f64> {
+                Some(self.0.0)
+            }
+        }
+
+        impl EdgeObservableWrite for Edge {
+            fn record(&mut self, _measurement: EdgeWeightType) {}
+        }
+
+        impl EdgeLinkObservable for Probes {
+            fn record(&mut self, _measurement: EdgeTransportMeasurement) {}
+
+            fn average_latency(&self) -> Option<Duration> {
+                Some(Duration::from_millis(50))
+            }
+
+            fn average_probe_rate(&self) -> Option<f64> {
+                Some(self.0)
+            }
+
+            fn score(&self) -> Option<f64> {
+                Some(self.0)
+            }
+        }
+
+        impl EdgeNetworkObservableRead for Probes {
+            fn is_connected(&self) -> Option<bool> {
+                None
+            }
+        }
+
+        impl EdgeImmediateProtocolObservable for Probes {
+            fn ack_rate(&self) -> Option<f64> {
+                Some(self.0)
+            }
+        }
+
+        impl EdgeProtocolObservable for Probes {
+            fn balance(&self) -> Option<Balance> {
+                None
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn reclaiming_under_the_default_selector_keeps_the_best_relay() -> anyhow::Result<()> {
+        use hopr_lib::api::types::primitive::prelude::Address;
+        use hopr_strategy::channel_lifecycle::ChannelLifecycleStrategy;
+        use hopr_strategy::testing::{EmptyNetworkView, LifecycleNode, test_offchain_key};
+
+        let peers: Vec<Address> = (1..=3u8).map(|i| Address::from([i; 20])).collect();
+        // Whatever order the connector lists the channels in, one of these runs has the best first.
+        for best in &peers {
+            let (connector, me) = node_with_channels(&peers, HoprBalance::new_base(1)).await?;
+            let graph = probed::Graph {
+                identity: test_offchain_key(&me),
+                success_rates: peers
+                    .iter()
+                    .map(|peer| {
+                        (
+                            test_offchain_key(peer),
+                            if peer == best { 1.0 } else { 0.2 },
+                        )
+                    })
+                    .collect(),
+            };
+            let base = ChannelLifecycleConfig {
+                tick_interval: Duration::from_millis(100),
+                jitter: Duration::ZERO,
+                ..Default::default()
+            };
+            assert_eq!(base.selector, SelectorProfile::Default);
+            let mut strategy = ChannelLifecycleStrategy::new(lifecycle_config(
+                &base,
+                LifecycleMode::Reclaim { keep: 1 },
+            ))
+            .build(Arc::new(LifecycleNode::with_views(
+                Arc::clone(&connector),
+                graph,
+                EmptyNetworkView,
+            )))?;
+            let run = tokio::spawn(async move { strategy.run().await });
+
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            while outgoing(&*connector).await?.1 < 2 && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            run.abort();
+
+            let kept = open_destinations(&*connector).await?;
+            assert_eq!(kept, vec![*best], "the best-probed relay is the one kept");
+        }
+        Ok(())
+    }
+
+    async fn open_destinations<C: hopr_lib::api::chain::HoprChainApi>(
+        chain: &C,
+    ) -> anyhow::Result<Vec<hopr_lib::api::types::primitive::prelude::Address>> {
+        use futures::StreamExt;
+        use hopr_lib::api::chain::ChannelSelector;
+        use hopr_lib::api::types::internal::channels::ChannelStatus;
+
+        Ok(chain
+            .stream_channels(ChannelSelector::default().with_source(*chain.me()))?
+            .filter(|channel| std::future::ready(channel.status == ChannelStatus::Open))
+            .map(|channel| channel.destination)
+            .collect()
+            .await)
+    }
+
     #[tokio::test]
     async fn a_mode_change_rebuilds_and_the_state_follows() {
         let initial = fake(LifecycleMode::Normal, StrategyState::Running);
@@ -458,6 +741,7 @@ mod tests {
                 counted.fetch_add(1, Ordering::SeqCst);
                 Ok(fake(mode, StrategyState::Degraded))
             },
+            || std::future::ready(()),
             modes,
             state.clone(),
         ));
@@ -475,6 +759,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_rebuild_waits_for_the_writes_of_the_strategy_it_replaces() {
+        let initial = fake(LifecycleMode::Normal, StrategyState::Running);
+        let state = StrategyStateHandle::new(initial.state_handle());
+        let builds = Arc::new(AtomicUsize::new(0));
+        let (mode, modes) = watch::channel(LifecycleMode::Normal);
+        let (confirm, confirmed) = watch::channel(false);
+
+        let counted = Arc::clone(&builds);
+        let supervisor = tokio::spawn(supervise_lifecycle(
+            initial,
+            move |mode| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Ok(fake(mode, StrategyState::Running))
+            },
+            move || {
+                let mut confirmed = confirmed.clone();
+                async move {
+                    let _ = confirmed.wait_for(|confirmed| *confirmed).await;
+                }
+            },
+            modes,
+            state,
+        ));
+
+        mode.send_replace(LifecycleMode::Reclaim { keep: 1 });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(builds.load(Ordering::SeqCst), 0);
+
+        confirm.send_replace(true);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(builds.load(Ordering::SeqCst), 1);
+
+        supervisor.abort();
+    }
+
+    #[tokio::test]
     async fn a_failed_rebuild_keeps_the_current_strategy() {
         let initial = fake(LifecycleMode::Normal, StrategyState::Running);
         let state = StrategyStateHandle::new(initial.state_handle());
@@ -487,6 +807,7 @@ mod tests {
                     "refused".into(),
                 ))
             },
+            || std::future::ready(()),
             modes,
             state.clone(),
         ));
@@ -509,6 +830,7 @@ mod tests {
         let supervisor = tokio::spawn(supervise_lifecycle(
             initial,
             |_| panic!("nothing to rebuild for"),
+            || std::future::ready(()),
             modes,
             state,
         ));
