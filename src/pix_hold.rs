@@ -23,14 +23,14 @@ pub(crate) fn relayer_http_client(
     use crate::errors::EdgliError;
     use crate::strategy::PixCurvySubmission;
 
-    let relayer_host = match &pool.submission {
-        PixCurvySubmission::Relayer(url) => url.host_str(),
+    let relayer_url = match &pool.submission {
+        PixCurvySubmission::Relayer(url) => Some(url),
         PixCurvySubmission::Operator => None,
     };
-    let builder = match (relayer_host, pool.relayer_via) {
+    let builder = match (relayer_url, pool.relayer_via) {
         // One HTTP/2 connection is one session through the exit; a closed listener ends it, so reuse is safe.
-        (Some(host), Some(via)) => reqwest::Client::builder()
-            .resolve(host, via)
+        (Some(url), Some(via)) => reqwest::Client::builder()
+            .resolve(routable_relayer_host(url)?, via)
             .http2_prior_knowledge()
             // A session that stays up while its return path is gone would otherwise stall every call to its timeout.
             .http2_keep_alive_interval(RELAYER_KEEP_ALIVE)
@@ -47,6 +47,23 @@ pub(crate) fn relayer_http_client(
     builder.build().map_err(|error| {
         EdgliError::ConfigError(format!("building the Curvy HTTP client: {error}"))
     })
+}
+
+/// The relayer host `relayer_via` can reroute; reqwest skips `resolve` for IP literals and lets an explicit URL port win.
+fn routable_relayer_host(url: &url::Url) -> crate::errors::Result<&str> {
+    use crate::errors::EdgliError;
+
+    let Some(host) = url.domain() else {
+        return Err(EdgliError::ConfigError(format!(
+            "relayer_via needs a relayer URL with a domain name, got {url}"
+        )));
+    };
+    if url.port().is_some() {
+        return Err(EdgliError::ConfigError(format!(
+            "relayer_via needs a relayer URL without an explicit port, got {url}"
+        )));
+    }
+    Ok(host)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -315,6 +332,23 @@ mod relayer_route_tests {
             ..PixEntryPool::default()
         };
         assert!(relayer_http_client(&pool).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn relayer_via_rejects_urls_it_cannot_reroute() -> anyhow::Result<()> {
+        for url in [
+            "http://203.0.113.7",
+            "http://[2001:db8::1]",
+            "https://relayer.test:8443",
+        ] {
+            let pool = PixEntryPool {
+                submission: PixCurvySubmission::Relayer(url.parse()?),
+                relayer_via: Some("127.0.0.1:1".parse()?),
+                ..PixEntryPool::default()
+            };
+            assert!(relayer_http_client(&pool).is_err(), "{url} was accepted");
+        }
         Ok(())
     }
 }

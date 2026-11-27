@@ -414,7 +414,7 @@ pub struct PixEntryPool {
     /// router. Kept so existing configurations still parse.
     pub safe_multisend_address: Address,
 
-    /// Local address the relayer host resolves to (e.g. a HOPR session listener); requires [`PixCurvySubmission::Relayer`].
+    /// Local address the relayer host resolves to (e.g. a HOPR session listener); requires [`PixCurvySubmission::Relayer`] with a domain and no explicit port.
     pub relayer_via: Option<std::net::SocketAddr>,
 }
 
