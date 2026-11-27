@@ -168,8 +168,6 @@ where
         connector_config: Option<BlockchainConnectorConfig>,
     ) -> Result<Self> {
         let cfg = connector_config.unwrap_or_default();
-        // No `connect()`: every operation here is a direct Blokli query or
-        // transaction, so syncing the on-chain graph would only add start-up latency.
         let connector =
             create_trustful_safeless_hopr_blokli_connector(chain_key, cfg, client).await?;
 
@@ -486,7 +484,6 @@ mod tests {
         let client = build_test_client(me, HoprBalance::new_base(100), recipient);
         let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
 
-        // No graph sync happened, and direct Blokli operations still work.
         assert!(!interactor.connector.is_connected());
         interactor
             .withdraw_wxhopr(recipient, HoprBalance::new_base(1))
