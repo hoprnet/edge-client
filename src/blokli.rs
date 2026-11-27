@@ -486,7 +486,8 @@ mod tests {
         let client = build_test_client(me, HoprBalance::new_base(100), recipient);
         let interactor = SafelessInteractor::new_with_client(client, &chain_key, None).await?;
 
-        // Direct Blokli operations work without the connector having synced the graph.
+        // No graph sync happened, and direct Blokli operations still work.
+        assert!(!interactor.connector.is_connected());
         interactor
             .withdraw_wxhopr(recipient, HoprBalance::new_base(1))
             .await?;
