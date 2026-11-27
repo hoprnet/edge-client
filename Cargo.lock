@@ -4792,9 +4792,9 @@ dependencies = [
 
 [[package]]
 name = "hopr-chain-connector"
-version = "0.36.1"
+version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcc23cbbd381916ccf6f0cb5eaab22ff1c2673ff002a5dddb12e81e24c256bec"
+checksum = "292fb334cf42162a75b8529c63c4a1868c66c00e3ed5045b900b88ab012edb17"
 dependencies = [
  "ahash",
  "anyhow",
@@ -4803,7 +4803,6 @@ dependencies = [
  "atomic_enum",
  "blokli-client",
  "const-hex",
- "dashmap",
  "futures",
  "futures-concurrency",
  "futures-time",
@@ -7863,7 +7862,7 @@ dependencies = [
  "quinn-udp 0.5.16",
  "rustc-hash",
  "rustls",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -7903,7 +7902,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -7916,7 +7915,7 @@ checksum = "47091c86514c2e11452cb228dee77037334b99d92a23e4c69aa5982261f39247"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "windows-sys 0.61.2",
 ]
 
