@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use futures::future::{AbortHandle, abortable};
-use hopr_chain_connector::{BlockchainConnectorConfig, create_trustful_hopr_blokli_connector};
+use hopr_chain_connector::{
+    BlockchainConnectorConfig, create_trustful_hopr_blokli_connector_in_memory,
+};
 use hopr_ct_full_network::{EgressConfig, EgressControl, FullNetworkDiscovery};
 use hopr_lib::api::{
     chain::{ChainReadSafeOperations, ChainValues as _, SafeSelector},
@@ -50,7 +52,7 @@ const PIX_POOL: &str = "non-anonymous-secp256k1";
 const PIX_POOL: &str = "curvy";
 
 /// The chain connector this client talks to Blokli with.
-pub type EdgeChainConnector = hopr_chain_connector::HoprBlockchainSafeConnector<
+pub type EdgeChainConnector = hopr_chain_connector::HoprBlockchainSafeInMemoryConnector<
     hopr_chain_connector::blokli_client::BlokliClient,
 >;
 
@@ -316,7 +318,7 @@ impl Edgli {
         let chain_connector = {
             let blokli_config = blokli_connector_config.unwrap_or_default();
             visitor(EdgliInitState::ConnectingBlockchain);
-            let mut connector = create_trustful_hopr_blokli_connector(
+            let mut connector = create_trustful_hopr_blokli_connector_in_memory(
                 chain_key,
                 blokli_config,
                 blokli_endpoint.build_client(),
