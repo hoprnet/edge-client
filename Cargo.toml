@@ -109,7 +109,9 @@ hopr-lib = { git = "https://github.com/hoprnet/hoprnet", branch = "master", feat
 # Version requirements are kept compatible with the pinned hoprnet rev's own workspace Cargo.toml -- a skew here puts two `hopr-api` majors on either side of the strategy boundary, which are two unrelated traits.
 hopr-chain-connector = { version = "0.36.1", features = ["runtime-tokio"] }
 hopr-ct-full-network = { version = "0.12.0" }
-hopr-strategy = { version = "9.2.3", features = ["strategy-channel-lifecycle"] }
+hopr-strategy = { version = "10.0.0", features = [
+  "strategy-channel-lifecycle",
+] }
 hopr-ticket-manager = { version = "0.11.1" }
 hopr-network-graph = { version = "0.13.0" }
 hopr-transport-p2p = { version = "0.15.0" }
